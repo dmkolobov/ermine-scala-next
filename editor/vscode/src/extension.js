@@ -860,43 +860,547 @@ async function readParamsFileBounded(fsPath, ms) {
  *                                    made an EMPTY file a refusal rather
  *                                    than `{}`.
  */
+/**
+ * **EVERY RETURN GOES THROUGH `core.preparedParams`, AND THAT IS THE S3
+ * REVIEW'S M-1.** This function used to build four separate object literals,
+ * while the model built its own from the same prose; deleting the one word
+ * `paths,` from the missing-file literal turned the WHOLE STAGE off -- no
+ * file ever written, no schema ever asked for -- with 249 of 249 tests green
+ * (MEASURED by the review, reproduced here). The builder is pure, exported,
+ * and is what the MODEL settles its reads with, so a field cannot exist on
+ * one side and not the other.
+ */
 async function prepareParams(pick) {
   const paths = paramsPathsFor(pick);
-  if (paths.problem) {
-    return { params: {}, notice: { reason: paths.problem.reason, line: paths.problem.message } };
-  }
+  if (paths.problem) return core.preparedParams(paths, { kind: core.PREPARED_PATH_PROBLEM });
   // THE CAP, BEFORE THE FILE IS MATERIALISED (review nit 3): `readFile`
   // pulls the whole thing into the extension host, and a 1 GiB params file
   // would kill the host the way a 64 MiB frame kills the server.
   const tooBig = core.paramsTooLargeToRead(await paramsFileSize(paths.paramsPath));
-  if (tooBig) return { path: paths.paramsPath, refusal: tooBig };
+  if (tooBig) return core.preparedParams(paths, { kind: core.PREPARED_REFUSAL, problem: tooBig });
 
   const outcome0 = await readParamsFileBounded(paths.paramsPath);
   if (outcome0.timedOut) {
-    return { path: paths.paramsPath, refusal: core.paramsReadTimedOut(paths.paramsPath) };
+    return core.preparedParams(paths, { kind: core.PREPARED_REFUSAL,
+                                        problem: core.paramsReadTimedOut(paths.paramsPath) });
   }
   if (outcome0.err) {
     const err = outcome0.err;
-    if (core.meansFileMissing(err)) {
-      return {
-        params: {},
-        path: paths.paramsPath,
-        notice: { reason: "missing", line: core.paramsMissingNotice(paths.paramsPath) },
-      };
-    }
-    return {
-      path: paths.paramsPath,
-      refusal: {
+    if (core.meansFileMissing(err)) return core.preparedParams(paths, { kind: core.PREPARED_MISSING });
+    return core.preparedParams(paths, {
+      kind: core.PREPARED_REFUSAL,
+      problem: {
         reason: "unreadable",
         message: 'The params file "' + paths.paramsPath + '" exists but could not be read (' +
                  (err && err.message ? err.message : String(err)) + "), so the report was NOT rendered: " +
                  "rendering it with empty parameters would show a document that looks right and is not.",
       },
-    };
+    });
   }
   const outcome = core.paramsToSend(outcome0.text);
-  if (outcome.problem) return { path: paths.paramsPath, refusal: outcome.problem };
-  return { params: outcome.params, warnings: outcome.warnings, path: paths.paramsPath, read: true };
+  if (outcome.problem) {
+    return core.preparedParams(paths, { kind: core.PREPARED_REFUSAL, problem: outcome.problem });
+  }
+  return core.preparedParams(paths, { kind: core.PREPARED_READ,
+                                      params: outcome.params, warnings: outcome.warnings });
+}
+
+// ------------------------------------------------- params files (WP-8, S3)
+//
+// S2 READS a params file and sends it. S3 is the first `ermine/schema`
+// client and the first thing in this extension that WRITES to the
+// developer's disk: on the FIRST pick of a report that has no params file it
+// asks the server for the parameter schema, writes a skeleton from it, the
+// generated `<binding>.schema.json` beside it and U7's own
+// `.ermine/preview/.gitignore`, and opens the params file for editing (U2).
+// On later renders it only keeps the SCHEMA file fresh (D8). It NEVER
+// overwrites a params file.
+//
+// EVERYTHING DECIDABLE FROM DATA ALONE IS IN `preview-core.js` and is unit
+// tested there: the ordering rule (`schemaOrder`), when a refresh is worth a
+// preview job (`shouldRefreshSchema`), what an answer turned out to be
+// (`schemaAnswerOutcome`, `schemaRequestFailure`), whether a late answer may
+// still be used (`mayUseSchemaAnswer`), which bytes go to which path in
+// which order (`paramsWritePlan`), and whether a file already holds them
+// (`schemaFileNeedsWrite`). What is HERE is the disk, the document that is
+// opened, and the requests.
+//
+// **A SCHEMA REQUEST IS AN AUTOMATIC ACTION ON THE PREVIEW QUEUE AND IS
+// GUARDED LIKE A RENDER.** `Runner.paramSchema` compiles the report, which
+// LOADS its module and EVALUATES the binding (`json/Runner.scala:849-852`,
+// under `evalLock`), so the watchdog covers it and it can be the job that
+// wedges -- the server says so in its own comment (`lsp/Preview.scala:596-598`).
+// All three sites therefore go through WP-22's ONE consultation,
+// `core.mayAutoRender`, before anything is sent: the first-pick request with
+// the RENDER'S OWN trigger, the post-render refresh with `TRIGGER_SCHEMA`,
+// and the `fx.schema` seam with the trigger `applyStuck` was given.
+//
+// **LOCAL WORKSPACES ONLY**, for exactly the reason `readParamsFile` gives:
+// `vscode.Uri.file(fsPath)` discards the scheme and the authority.
+
+/** U2: a params file is opened once per path per session, never per render. */
+const openedParamsFiles = new Set();
+/**
+ * ONE FIRST-PICK ATTEMPT PER PICK, AND IT IS WHAT MAKES A LOOP IMPOSSIBLE.
+ *
+ * The no-file branch can end without a file: the schema request can fail,
+ * the write can fail on a read-only workspace, the skeleton can have no
+ * finite value. Without this set the NEXT render would find no file, ask
+ * again, fail again -- once per render, for ever, on a save-driven loop.
+ *
+ * It is forgotten when something could have changed the answer: another
+ * pick, the module name being learned (which MOVES the directory), a roots
+ * change, and the `fx.schema` seam (a restart or a recovery), which exists
+ * to say "ask again".
+ */
+let firstPickTried = new Set();
+/** What we have already SAID about this pick's schema, once per reason. */
+let schemaNotices = new Set();
+/**
+ * THE REVEAL THE FIRST PICK WOULD OTHERWISE LOSE.
+ *
+ * `pickReport` renders with `reveal: true`, and on a first pick that render
+ * is replaced by the schema, the write and the ONE render the skeleton's own
+ * creation schedules -- which is the watcher's, and the watcher does not
+ * reveal. Without this latch, picking a report that has no params file would
+ * write the files, open the params document and leave the JSON tab behind
+ * whatever the user was looking at.
+ */
+let revealNextRender = false;
+
+function forgetSchemaAttempts() {
+  firstPickTried = new Set();
+  schemaNotices = new Set();
+}
+
+/** One channel line per distinct schema problem per pick, and no more. */
+function schemaNoticeOnce(pick, reason, line) {
+  const key = core.schemaNoticeKey(pick, reason);
+  if (schemaNotices.has(key)) return false;
+  schemaNotices.add(key);
+  log("preview: " + line);
+  return true;
+}
+
+/** `YYYY-MM-DD`, local (U2). The only clock in this feature. */
+function todayForSkeleton() {
+  return core.isoDay(new Date());
+}
+
+/** The file's text, or null when it is not there / cannot be read. A read
+  * that fails compares UNEQUAL in `core.schemaFileNeedsWrite`, so "we do not
+  * know what is there" is never mistaken for "it is already right". */
+async function readTextIfPresent(fsPath) {
+  try {
+    const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(fsPath));
+    return Buffer.from(bytes).toString("utf8");
+  } catch (err) {
+    return null;
+  }
+}
+
+/** `createDirectory` creates the whole chain and is a no-op for one that is
+  * already there (*external*: VS Code's FileSystem API says so). */
+async function ensureDirectory(fsPath) {
+  await vscode.workspace.fs.createDirectory(vscode.Uri.file(fsPath));
+}
+
+/** An unconditional write. Used for the GENERATED schema file and nowhere
+  * else -- `vscode.workspace.fs.writeFile` OVERWRITES, which is right for a
+  * file this extension owns and wrong for anything the developer edits. */
+async function writeTextFile(fsPath, text) {
+  // The last gate before the disk (D-1): `Buffer.from(undefined, "utf8")`
+  // throws, but `Buffer.from(String(undefined))` would have written the word,
+  // and a future caller must not be able to reach either.
+  if (typeof text !== "string") throw new Error("refusing to write a " + typeof text + " to " + fsPath);
+  await vscode.workspace.fs.writeFile(vscode.Uri.file(fsPath), Buffer.from(text, "utf8"));
+}
+
+/**
+ * CREATE A FILE, OR LEAVE THE ONE THAT IS THERE ALONE -- NEVER OVERWRITE.
+ *
+ * **WHY NOT `workspace.fs.writeFile` BEHIND A `stat`.** `writeFile`
+ * overwrites, documented and unconditionally, so "stat, then write" is a
+ * check-then-act race: a `git checkout`, a second VS Code window or a
+ * colleague's script can create the params file between the two, and the
+ * write then destroys committed source. The window is small and the file is
+ * exactly the kind nobody keeps a second copy of.
+ *
+ * **WHY `WorkspaceEdit.createFile` INSTEAD.** `createFile(uri, {overwrite:
+ * false, ignoreIfExists: true, contents})` is the documented way to ask the
+ * editor for a create that SKIPS an existing file rather than replacing it
+ * (*external*: the VS Code API; `contents` has been on those options since
+ * 1.74 and this extension requires ^1.75.0). Whether VS Code implements it
+ * as an atomic create at the filesystem level is **UNVERIFIED** -- nobody
+ * here has run the editor, and its source is not read (project rule) -- so
+ * the answer is not trusted and the file is READ BACK.
+ *
+ * WHAT THE READ-BACK DECIDES, and the one case in which anything is written
+ * a second time:
+ *   the bytes we meant     -> `created`;
+ *   OTHER bytes            -> `existed`: somebody else's file, left exactly
+ *                             as it is. THIS IS THE RACE, ANSWERED;
+ *   EMPTY or whitespace    -> `contents` was not honoured (or the create
+ *                             half-succeeded). A zero-byte params file is a
+ *                             named REFUSAL in S1 and holds nothing anyone
+ *                             can lose, so -- and only here -- the text is
+ *                             written over it;
+ *   not there at all       -> `failed`, named, and nothing is retried.
+ */
+async function createFileWithoutOverwriting(fsPath, text) {
+  const uri = vscode.Uri.file(fsPath);
+  // A LOOK BEFORE, AND IT DECIDES NOTHING ABOUT SAFETY -- only about what we
+  // SAY. The create below skips an existing file whatever this answers, so
+  // this is not a check-then-act: it is here because the read-back cannot
+  // tell "we created it" from "it was already there holding exactly these
+  // bytes", and a first pick that announced a file it did not write would
+  // open a document over what the developer is typing and would then wait
+  // for a watcher event nobody caused. MEASURED against a real disk before
+  // this was added: a second run reported `created` for two files it had not
+  // touched. The pathological race it cannot see -- a file appearing between
+  // here and the create WITH THE SAME BYTES -- is reported as `created`, and
+  // both answers are safe, because nothing was overwritten either way.
+  if ((await readTextIfPresent(fsPath)) !== null) return core.createOutcome(core.EXISTED);
+  let applied;
+  try {
+    const edit = new vscode.WorkspaceEdit();
+    edit.createFile(uri, { overwrite: false, ignoreIfExists: true, contents: Buffer.from(text, "utf8") });
+    applied = await vscode.workspace.applyEdit(edit);
+  } catch (err) {
+    return core.createOutcome(core.CREATE_FAILED, err && err.message ? err.message : String(err));
+  }
+  const after = await readTextIfPresent(fsPath);
+  if (after === null) {
+    return core.createOutcome(core.CREATE_FAILED,
+      applied === false
+        ? "the editor refused the workspace edit that would have created it"
+        : "it is not there after the editor reported creating it");
+  }
+  if (after === text) return core.createOutcome(core.CREATED);
+  // **ZERO CONTENT, AND NOT "EMPTY" (the S3 review's M-5).** This used to
+  // test `after.trim() === ""`, so a file holding only WHITESPACE was
+  // written over -- MEASURED by the review through a racing writer -- while
+  // the README promised the params file is never overwritten "by anything in
+  // this version". Whitespace is somebody's bytes; zero length is not, and
+  // zero length is exactly what the case this branch exists for produces (an
+  // editor that honoured `createFile` and dropped its `contents`).
+  if (after === "") {
+    await writeTextFile(fsPath, text);
+    log(`preview: ${fsPath} was created with zero bytes (the editor did not carry the initial ` +
+        "contents); its text was written separately");
+    return core.createOutcome(core.CREATED);
+  }
+  return core.createOutcome(core.EXISTED);
+}
+
+/**
+ * D8'S WRITE-IF-DIFFERENT, AS ONE FUNCTION RATHER THAN TWO COPIES (the S3
+ * review's N-2). Both sites used to read the file, ask
+ * `core.schemaFileNeedsWrite` and act on the answer in their own words, and
+ * **two prose-preserving mutants survived the whole suite** -- the helper
+ * called and its answer ignored, at each site -- so the schema file was
+ * rewritten with identical bytes after every qualifying render, which is the
+ * exact churn that function's own comment says it exists to prevent. Now
+ * there is ONE site, the write is a consequence of the decision rather than
+ * a statement beside it, and one pin holds it.
+ */
+async function writeIfDifferent(fsPath, text) {
+  // D-1's belt: the primitive refuses bytes that are not bytes. Every caller
+  // gets its text from `core.schemaFileBytes` or from the write plan, both of
+  // which answer strings -- so this can only ever fire on a future mistake.
+  if (typeof text !== "string") {
+    return core.writeResult({ problem: { reason: "not-text", message: "nothing was written to " + fsPath } });
+  }
+  const existing = await readTextIfPresent(fsPath);
+  if (!core.schemaFileNeedsWrite(existing, text)) return core.writeResult({ wrote: false });
+  await writeTextFile(fsPath, text);
+  return core.writeResult({ wrote: true });
+}
+
+/**
+ * EVERY PATH A WRITE COULD GO THROUGH, `stat`ed (the S3 review's M-3).
+ *
+ * Answers `{problem}` when any of them is a symbolic link, or null. A path
+ * that is not there contributes nothing: we are about to create it.
+ */
+async function symlinkProblem(paths, targets) {
+  const seen = [];
+  for (const target of core.writeTargetPaths(paths, targets)) {
+    const what = await statType(target);
+    if (what.missing === true) continue;              // about to be created by us
+    seen.push(what.unknown !== undefined
+      ? { path: target, unknown: what.unknown }       // D-2: fail CLOSED
+      : { path: target, type: what.type });
+  }
+  return core.writeTargetProblem(seen);
+}
+
+/**
+ * WHAT A PATH IS: `{type}` when the editor said, `{missing: true}` when it
+ * is really not there, `{unknown}` when we COULD NOT TELL.
+ *
+ * **THE THIRD ANSWER IS THE DELTA RE-REVIEW'S D-2.** This used to return
+ * `null` for every `stat` that threw, which reads as "not there" -- so a
+ * path that EXISTS but cannot be stat'd (EACCES on the directory above it, a
+ * provider that refuses) voided the whole symlink defence. MEASURED: a
+ * schema symlink outside the workspace was written THROUGH. `meansFileMissing`
+ * is the pure predicate S2 already wrote for exactly this distinction, and
+ * `core.writeTargetProblem` fails CLOSED on anything else.
+ *
+ * A `stat` that answers without a numeric `type` is also "cannot tell": a
+ * provider that has no types cannot rule a link out either.
+ */
+async function statType(fsPath) {
+  try {
+    const st = await vscode.workspace.fs.stat(vscode.Uri.file(fsPath));
+    if (st && typeof st.type === "number") return { type: st.type };
+    return { unknown: "the editor answered no file type for it" };
+  } catch (err) {
+    if (core.meansFileMissing(err)) return { missing: true };
+    return { unknown: err && err.message ? String(err.message) : String(err) };
+  }
+}
+
+/**
+ * THE PLAN, APPLIED IN ORDER, AND THE ORDER IS THE POINT.
+ *
+ * The params file is LAST because its creation is what the S2 watcher sees
+ * -- the watcher's glob is the exact params path, so the schema file and the
+ * generated `.gitignore` match nothing and trigger nothing. By the time the
+ * render that its `onDidCreate` schedules runs, the schema it points at is
+ * already on disk.
+ */
+async function applyWritePlan(files, paramsPath) {
+  const wrote = [];
+  const problems = [];
+  for (const file of files) {
+    // **WHAT TO DO IS A PURE DECISION AND IT FAILS CLOSED** (the S3 review's
+    // M-2). The `else` here used to be an UNCONDITIONAL overwrite, so a mode
+    // that was not the exact string `"ifAbsent"` destroyed whatever the
+    // entry named -- MEASURED on a real disk with `"ifabsent"`.
+    const step = core.writeStep(file, paramsPath);
+    if (step.problem) {
+      problems.push(step.problem);
+      if (file.what === core.WRITE_PARAMS) return core.writeOutcome({ wrote, problems });
+      continue;
+    }
+    if (step.act === core.WRITE_IF_ABSENT) {
+      const outcome = await createFileWithoutOverwriting(file.path, file.text);
+      if (outcome.outcome === core.CREATE_FAILED) {
+        problems.push(core.writeFailedProblem(file.what, file.path, outcome.why));
+        // **N-5: THE GENERATED `.gitignore` IS A CONVENIENCE AND ITS FAILURE
+        // MUST NOT BLOCK THE TWO FILES THAT MATTER.** The first cut aborted
+        // the whole plan on it, and `firstPickTried` then disabled params
+        // files for that workspace folder for the session -- MEASURED by the
+        // review with a stray DIRECTORY named `.gitignore`.
+        if (file.what === core.WRITE_GITIGNORE) continue;
+        return core.writeOutcome({ wrote, problems });
+      }
+      if (outcome.outcome === core.CREATED) wrote.push(file.what);
+      else if (file.what === core.WRITE_PARAMS) return core.writeOutcome({ wrote, existed: true, problems });
+      continue;
+    }
+    const done = await writeIfDifferent(file.path, file.text);
+    if (done.wrote) wrote.push(file.what);
+  }
+  return core.writeOutcome({ wrote, problems });
+}
+
+/** U2: show the params document beside the render, once, WITHOUT taking the
+  * cursor away from whatever the developer is typing in. */
+async function openParamsDocument(fsPath) {
+  if (openedParamsFiles.has(fsPath)) return;
+  openedParamsFiles.add(fsPath);
+  try {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fsPath));
+    await vscode.window.showTextDocument(doc, {
+      preview: false,
+      preserveFocus: true,
+      viewColumn: vscode.ViewColumn.Beside,
+    });
+  } catch (err) {
+    log(`preview: could not open ${fsPath}: ${err && err.message ? err.message : err}`);
+  }
+}
+
+/**
+ * ONE `ermine/schema {uri, binding, roots}`, WITH THE SAME ROOTS AS THE
+ * RENDER (Q7, and section 6 says a client that disagrees with itself pays a
+ * second boot: the root set is the render session's discard key).
+ *
+ * D7: the answer carries NO generation and NO pick identity, so it cannot be
+ * recognised as late by itself. The frozen `core.renderAttempt` snapshot --
+ * S2's own discipline, not a second style -- is taken by the CALLER before
+ * this is entered, and `core.mayUseSchemaAnswer` compares it with the live
+ * globals afterwards: the restart, the stop counter, the generation, the
+ * teardown, the roots AND the module.
+ */
+async function requestSchema(attempt) {
+  const c = client;
+  if (!c) return core.schemaRequestFailure(new Error("there is no language client"));
+  let answer;
+  try {
+    answer = await c.sendRequest("ermine/schema", core.schemaParams(attempt.pick));
+  } catch (err) {
+    return core.schemaRequestFailure(err);
+  }
+  const still = core.mayUseSchemaAnswer(
+    attempt,
+    core.previewNow(generation, picked, clientEpoch, stopCount, !!client),
+    picked
+  );
+  if (!still.send) return core.schemaAbandoned(still);
+  return core.schemaAnswerOutcome(answer);
+}
+
+/**
+ * THE FIRST-PICK SEQUENCE (G15): schema, then the three files, then the
+ * params document. Answers whether a params file is now on disk, which is
+ * what decides whether the caller has a render to leave to the watcher.
+ *
+ * THE ONLY PLACE IN THIS EXTENSION THAT CAN WRITE A PARAMS FILE, and it is
+ * reachable ONLY from `renderNow`'s no-file branch. That is what makes the
+ * write -> watcher -> render -> write loop STRUCTURALLY impossible rather
+ * than merely avoided: there is no path from an ANSWER to this function.
+ */
+async function firstPickSchemaAndWrite(attempt, paths) {
+  const outcome = await requestSchema(attempt);
+  if (outcome.abandoned) {
+    log(`preview: the parameter schema for ${attempt.label} was discarded (${outcome.abandoned.why})`);
+    return core.firstPickResult({ abandoned: true });
+  }
+  if (outcome.problem) {
+    schemaNoticeOnce(attempt.pick, outcome.problem.reason,
+                     core.schemaProblemNotice(outcome.problem, paths.paramsPath));
+    return core.firstPickResult({});
+  }
+  // ALWAYS THE SERVER'S FRESH ANSWER, NEVER THE FILE WE WROTE (the S1
+  // review's D-1 obligation): `schemaFileFor` mints a root-level COPY of a
+  // `$defs` entry that also describes a nested position, and a copy tracks
+  // its original only within the call that made it.
+  const plan = core.paramsWritePlan(paths, outcome.schema, todayForSkeleton());
+  if (plan.problem) {
+    schemaNoticeOnce(attempt.pick, plan.problem.reason,
+                     core.schemaProblemNotice(plan.problem, paths.paramsPath));
+    return core.firstPickResult({});
+  }
+  // **SYMLINKS, BEFORE ANYTHING IS CREATED AND BEFORE THE DIRECTORY IS MADE**
+  // (the S3 review's M-3, and S1's own obligation, which the first cut of S3
+  // neither met nor mentioned). `createDirectory` would happily make the
+  // module directory inside a symlinked `preview/`, so the check comes first.
+  const linked = await symlinkProblem(paths, [paths.gitignorePath, paths.schemaPath, paths.paramsPath]);
+  if (linked) {
+    schemaNoticeOnce(attempt.pick, linked.reason, linked.message);
+    return core.firstPickResult({});
+  }
+  let applied;
+  try {
+    await ensureDirectory(paths.dir);
+    applied = await applyWritePlan(plan.files, paths.paramsPath);
+  } catch (err) {
+    // A read-only workspace, a permission, a full disk. NON-FATAL: the
+    // report still renders, with the inline `{}`.
+    schemaNoticeOnce(attempt.pick, "write-failed",
+                     'the preview could not write under "' + paths.dir + '" (' +
+                     (err && err.message ? err.message : String(err)) +
+                     "), so the report renders with empty parameters.");
+    return core.firstPickResult({});
+  }
+  // EVERY problem is said once; a `.gitignore` that could not be written is
+  // one of them and does NOT stop the two files that matter (N-5).
+  for (const problem of applied.problems) schemaNoticeOnce(attempt.pick, problem.reason, problem.message);
+  if (applied.problems.length && applied.wrote.indexOf(core.WRITE_PARAMS) < 0 && !applied.existed) {
+    return core.firstPickResult({});
+  }
+  if (applied.existed) {
+    // THE RACE, AND IT IS ANSWERED RATHER THAN WON: a params file appeared
+    // while the schema was being worked out (a `git checkout`, a second
+    // window). Nothing of it was touched. We caused no create event, so
+    // nothing may have scheduled a render -- this is the ONE case in which
+    // the no-file branch asks for one itself, and it cannot loop, because
+    // `firstPickTried` already holds this pick.
+    log(`preview: a params file appeared at ${paths.paramsPath} while the schema was being worked ` +
+        "out; it was left exactly as it is");
+    return core.firstPickResult({ wrote: true, raced: true });
+  }
+  if (applied.wrote.indexOf(core.WRITE_PARAMS) < 0) return core.firstPickResult({});
+  schemaNoticeOnce(attempt.pick, "written", core.paramsWrittenNotice(paths, plan.embeddable));
+  await openParamsDocument(paths.paramsPath);
+  return core.firstPickResult({ wrote: true });
+}
+
+/**
+ * D8'S REFRESH: the generated `<binding>.schema.json` AND NOTHING ELSE.
+ *
+ * It builds no write plan and never names the params path, so the
+ * "rewrite the params file in response to an answer" loop cannot be written
+ * here by accident. Write-if-different, so a save-driven loop does not churn
+ * the file or the editor's schema cache.
+ */
+async function refreshSchemaFile(attempt, paths, why) {
+  const outcome = await requestSchema(attempt);
+  if (outcome.abandoned) {
+    log(`preview: the refreshed parameter schema for ${attempt.label} was discarded (${outcome.abandoned.why})`);
+    return;
+  }
+  if (outcome.problem) {
+    schemaNoticeOnce(attempt.pick, "refresh-" + outcome.problem.reason,
+                     "could not refresh " + paths.schemaPath + ": " + outcome.problem.message);
+    return;
+  }
+  // **M-3 APPLIES HERE ABOVE ALL**: this is the ONE write reachable from an
+  // ANSWER, and the review MEASURED a `<binding>.schema.json` symlinked
+  // outside the workspace being written THROUGH from exactly here. The pin
+  // that guards this function checks that the string `paramsPath` does not
+  // occur in it, and a symlink defeated that without changing a character.
+  const linked = await symlinkProblem(paths, [paths.schemaPath]);
+  if (linked) {
+    schemaNoticeOnce(attempt.pick, linked.reason, linked.message);
+    return;
+  }
+  // **D-1's DEFENCE IN DEPTH**: the bytes, or a named refusal. Nothing but
+  // `core.schemaFileBytes` may produce a `<binding>.schema.json`, and it
+  // refuses anything that does not round-trip to a JSON object -- so a write
+  // of the literal text `undefined` is impossible by CONSTRUCTION and not
+  // only because the control flow above now returns.
+  const bytes = core.schemaFileBytes(outcome.schema);
+  if (bytes.problem) {
+    schemaNoticeOnce(attempt.pick, "refresh-" + bytes.problem.reason,
+                     "could not refresh " + paths.schemaPath + ": " + bytes.problem.message);
+    return;
+  }
+  try {
+    await ensureDirectory(paths.dir);
+    const done = await writeIfDifferent(paths.schemaPath, bytes.text);
+    if (done.wrote) log(`preview: rewrote ${paths.schemaPath} (${why})`);
+  } catch (err) {
+    schemaNoticeOnce(attempt.pick, "refresh-write-failed",
+                     "could not write " + paths.schemaPath + ": " +
+                     (err && err.message ? err.message : String(err)));
+  }
+}
+
+/**
+ * THE REFRESH, ALL IN, FROM A LIVE PICK: the snapshot, the guard and the
+ * existence test. Used by the post-render refresh (D8) and by the
+ * `fx.schema` seam, so the two cannot drift.
+ *
+ * IT REFRESHES ONLY WHERE THERE IS A PARAMS FILE. A `<binding>.schema.json`
+ * with no `<binding>.params.json` beside it is referenced by nothing and
+ * costs a preview job that compiles and evaluates the report to produce.
+ */
+async function refreshSchemaFor(pick, trigger, why) {
+  if (!pick || !client) return;
+  const paths = paramsPathsFor(pick);
+  if (paths.problem) return;
+  const permitted = core.mayAutoRender(wedgeMark, pick, trigger);
+  if (!permitted.render) {
+    log(`preview: not asking for the parameter schema — ${permitted.why}`);
+    return;
+  }
+  if ((await readTextIfPresent(paths.paramsPath)) === null) return;
+  const attempt = core.renderAttempt(generation, pick, clientEpoch, stopCount, stuckState.highWater);
+  await refreshSchemaFile(attempt, paths, why);
 }
 
 /**
@@ -1104,7 +1608,26 @@ function applyStuck(result, trigger) {
   // params schema has to be asked for again once WP-8 writes params files.
   // WP-7 sends no params and needs no schema, so this only says so.
   if (fx.schema && picked) {
-    log(`preview: a schema re-request belongs here (WP-8) for ${core.pickLabel(picked)}`);
+    // WP-8 S3 WIRES THIS SEAM, which until 0.1.8 only said that it existed.
+    // Every `invalidate` posted while the preview was stuck was DROPPED
+    // (Q10), so the generated `<binding>.schema.json` may describe a
+    // parameter type that has since moved -- and the two edges that get
+    // here, an accepted `{stuck:false}` and Stopped -> Running, are exactly
+    // when nothing else will say so.
+    //
+    // IT ASKS AGAIN FROM SCRATCH: `firstPickTried` is forgotten, so a
+    // report whose first-pick write failed while the server was wedged gets
+    // another attempt on the next render.
+    //
+    // AND IT GOES THROUGH THE SAME CONSULTATION, with the trigger
+    // `applyStuck` was given: `restart` is unconfirmed and a held report is
+    // NOT handed a job that compiles and evaluates it; `recovered` has
+    // already cleared the mark and is permitted.
+    forgetSchemaAttempts();
+    refreshSchemaFor(picked, trigger, trigger === core.TRIGGER_RESTART
+      ? "the language server restarted"
+      : "the preview recovered, and every invalidate during the wedge was dropped")
+      .catch((err) => log(`preview: could not refresh the parameter schema: ${err && err.stack ? err.stack : err}`));
   }
   if (fx.rerender) {
     // THE SAME FUNCTION THE SEND POINT ASKS (D1/D2 of the delta re-review).
@@ -1438,6 +1961,11 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
   // render that never gets sent must not be able to mark a report as having
   // died mid-render. It is taken immediately before `sendRequest`.
   renderInFlight = true;
+  // WP-8 S3: the reveal a first pick would otherwise lose. It is CONSUMED
+  // here, before anything can go wrong, so it cannot leak into an unrelated
+  // later render; the no-file branch below re-arms it if it yields.
+  const revealThis = reveal === true || revealNextRender;
+  revealNextRender = false;
   setPreviewStatus();
 
   // ------------------------------------------------ WP-8 S2: the params
@@ -1515,7 +2043,7 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
     // render that brings a deleted report back.
     lastAnswer = refusal;
     if (mine === generation) renderInFlight = false;
-    await showAnswer(refusal, reveal === true);
+    await showAnswer(refusal, revealThis);
     setPreviewStatus();
     return;
   }
@@ -1543,6 +2071,81 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
     setPreviewStatus();
     holdRender(trigger);
     return;
+  }
+
+  // ------------------------------------------------ WP-8 S3: the first pick
+  //
+  // G15, DECIDED PER CASE. With NO params file the schema comes FIRST: this
+  // render would go with `{}` and is a certain 400 for any report with a
+  // required parameter (MEASURED, section 6's control E), so it is spent on
+  // the schema instead, the skeleton is written from the answer, and the ONE
+  // render that follows is the one the skeleton's own creation schedules
+  // through the S2 watcher. With a file present the render goes first and
+  // the schema only refreshes the generated file, after the answer (D8).
+  //
+  // **IT IS BELOW THE CONSULTATION ON PURPOSE.** A schema request compiles
+  // and EVALUATES the report on the preview queue (`json/Runner.scala:849-852`),
+  // so a report that wedged the server must not be handed one without the
+  // user's consent -- and by here `core.mayAutoRender` has said it may.
+  const order = core.schemaOrder(prepared.paths, prepared.notice && prepared.notice.reason === "missing");
+  if (order.first === "schema" && !firstPickTried.has(attempt.key)) {
+    // ONE ATTEMPT PER PICK: a failed schema or a failed write must not be
+    // retried on every render of a save-driven loop.
+    firstPickTried.add(attempt.key);
+    log(`preview: render ${mine} is yielding to the parameter schema (${order.why})`);
+    const written = await firstPickSchemaAndWrite(attempt, prepared.paths);
+    if (written.wrote) {
+      // **THIS RENDER IS SCHEDULED, NOT LEFT TO THE WATCHER (the S3 review's
+      // M-4), AND IT CARRIES THIS RENDER'S OWN TRIGGER.**
+      //
+      // The first cut abandoned here and left the render entirely to the S2
+      // watcher's `onDidCreate`. On a FIRST pick nothing has ever called
+      // `showAnswer`, so if that event does not fire -- and NOBODY HAS EVER
+      // RUN THIS EXTENSION IN VS CODE -- there is no preview tab at all: no
+      // document, no error, no line saying one is expected. Silence is the
+      // wrong failure mode for the feature's first minute.
+      //
+      // WHAT IT COSTS, checked against S2's rules: `scheduleRender` clears
+      // and re-arms the ONE `coalesceTimer`, so a watcher event inside the
+      // 150 ms window MERGES and this is one render; an event outside it
+      // costs a second IDENTICAL render -- one preview-queue job, NO boot
+      // (same session, same roots), and its `params` event computes the same
+      // fingerprint, so the wedge mark is untouched. A possible duplicate is
+      // a better trade than a possible dead end.
+      //
+      // AND THE TRIGGER IS THIS RENDER'S, WHICH REPAIRS N-3. The watcher's
+      // event would have carried `params-file`, which is UNCONFIRMED: a
+      // report whose params type has no required fields skeletonises to
+      // `{"$schema": ...}` and SENDS `{}`, which fingerprints identically to
+      // whatever wedged it -- so an EXPLICIT pick was answered with the held
+      // question seconds after the user asked for a document (MEASURED by
+      // the review). Carrying `explicit` through means consent stays consent.
+      revealNextRender = revealThis;
+      scheduleRender(written.raced
+        ? "a params file appeared while the parameter schema was being worked out"
+        : "the params skeleton was written", trigger);
+      if (mine === generation) renderInFlight = false;
+      setPreviewStatus();
+      return;
+    }
+    // NOTHING WAS WRITTEN, so no watcher event is coming and this render is
+    // still the one the developer is waiting for: it goes with the inline
+    // `{}`, exactly as WP-7 sends it. The world may have moved across the
+    // schema request, so the gap is re-checked with the SAME function and
+    // the SAME snapshot.
+    const afterSchema = core.mayStillSend(
+      attempt, core.previewNow(generation, picked, clientEpoch, stopCount, !!client));
+    if (!afterSchema.send) {
+      log(`preview: render ${mine} was abandoned while the parameter schema was asked for ` +
+          `(${afterSchema.why})`);
+      if (mine === generation) renderInFlight = false;
+      setPreviewStatus();
+      return;
+    }
+    // `sentClient` IS STILL THE LIVE ONE, and that is an argument rather
+    // than an assumption: `client` is only ever replaced by `startClient`,
+    // which bumps `clientEpoch`, and only ever cleared by `restart`, which
+    // the `!!client` above reads as `no-client`. Both abandon.
   }
 
   lastParamsSent = prepared.params;
@@ -1639,8 +2242,23 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
   // re-arms nothing, because only the rising edge arms.
   applyRestart(core.restartReduce(restartState, core.restartEvents.answer(stuckEvent.stuck, answerApplies, Date.now())));
   applyStuck(core.stuckReduce(stuckState, stuckEvent), core.TRIGGER_ANSWER);
-  await showAnswer(answer, reveal === true);
+  await showAnswer(answer, revealThis);
   if (core.isOk(answer) && !picked.module) refreshModule();
+  // WP-8 S3, D8: keep the GENERATED `<binding>.schema.json` fresh -- and
+  // only when the answer says the report compiled (`ok`, or a 400 at
+  // `$.params*`) AND the trigger says its parameter TYPE could have moved.
+  // A params save cannot move a type, which is also what stops a first pick
+  // asking for the schema twice in a row.
+  //
+  // NOT AWAITED: this render is finished, the developer has their document,
+  // and a schema job can pay a boot. NEVER THE PARAMS FILE: `refreshSchemaFor`
+  // builds no write plan and cannot name that path, which is what makes the
+  // write -> watcher -> render -> write loop unwritable rather than avoided.
+  const refresh = core.shouldRefreshSchema(answer, trigger);
+  if (refresh.refresh) {
+    refreshSchemaFor(sentPick, core.TRIGGER_SCHEMA, refresh.why).catch((err) =>
+      log(`preview: could not refresh the parameter schema: ${err && err.stack ? err.stack : err}`));
+  }
   setPreviewStatus();
 }
 
@@ -1702,6 +2320,10 @@ async function refreshModule() {
       // had no params path either (`no-module`) and no watcher on one. Both
       // exist from here on, and the next render will find the file.
       forgetParamsNotices();
+      // WP-8 S3: the module IS the directory, so the paths the first-pick
+      // attempt was refused for (`no-module`) exist now and it must be
+      // allowed to run.
+      forgetSchemaAttempts();
       installWatcher();
       setPreviewStatus();
       // AND RENDER (S2 review M4). Until the module was known there was no
@@ -1847,6 +2469,10 @@ function disposePreview() {
   // still reads `held`) but leaves the user with no question to answer.
   heldPromptOpen = false;
   heldRefusedToken = undefined;
+  // WP-8 S3: nothing is written after a teardown, and a first-pick attempt
+  // sitting in its schema request abandons on `pick-cleared` above.
+  forgetSchemaAttempts();
+  revealNextRender = false;
   inFlightRender = null;
   // WP-22 (c): the grace dies with the window. The reducer is asked rather
   // than the timer merely cleared, so nothing that runs after this can see
@@ -1873,6 +2499,9 @@ function restorePick(context) {
     // render after a reload compares against that and clears it if the file
     // changed while the window was closed.
     forgetParamsNotices();
+    // WP-8 S3: a fresh window has written nothing and said nothing. The
+    // FILES on disk survive a reload; the attempt does not.
+    forgetSchemaAttempts();
     lastParamsSent = undefined;
     // WP-22: the mark is restored NEXT TO THE PICK IT BELONGS TO, and
     // `guardReduce` discards it if its key or its roots do not match what
@@ -1977,6 +2606,10 @@ async function pickReport(context) {
   // WP-8: another report, another params file. Nothing has been sent for
   // this pick yet, and nothing we said about the last one's file applies.
   forgetParamsNotices();
+  // WP-8 S3: and another parameter type, so the first-pick attempt and
+  // everything we said about the last report's schema go with it.
+  forgetSchemaAttempts();
+  revealNextRender = false;
   lastParamsSent = undefined;
   rememberPick();
   installWatcher();
@@ -2054,6 +2687,10 @@ async function activate(context) {
           // WP-22: a different root set is a different render, so the mark
           // no longer describes what would run (T5 is never suppressed).
           applyGuard(core.guardReduce(wedgeMark, { type: "roots", pick: picked }));
+          // WP-8 S3: a different root chain can resolve a different module
+          // of the same name (section 2.4), so the schema we have may not
+          // describe the report that would now render.
+          forgetSchemaAttempts();
           scheduleRender("ermine.preview.roots changed", core.TRIGGER_ROOTS);
         } catch (err) {
           log(`preview: could not re-resolve the roots: ${err && err.message ? err.message : err}`);
@@ -2090,15 +2727,20 @@ async function activate(context) {
       // case-insensitive on win32); the folder is the one that CONTAINS the
       // report, never `folders[0]`.
       //
-      // IT IS NOT SUPPRESSED WHILE HELD, and that follows WP-22's own rule
-      // rather than bending it: the guard is consulted at exactly ONE site
-      // (the restart's automatic re-render), and every other automatic
-      // trigger -- `invalidated`, the Q11 watcher, a roots change -- is
-      // "self-evidently a change" and is not suppressed either. Editing a
-      // params file is the developer doing something. If what they did
-      // changed the parameters, the render's own `params` event CLEARS the
-      // mark on the way out; if it did not (a re-format), the mark stands
-      // and the status bar still says `held` while the render runs.
+      // **IT IS SUPPRESSED WHILE HELD, AND THE PARAGRAPH THAT STOOD HERE
+      // SAID THE OPPOSITE.** It was written for the first cut of S2 and
+      // was left behind by the S2 review's M6 -- the user's own sentence:
+      // a report that wedged "and it didn't change" is not re-rendered
+      // without a confirmation. What happens now: `renderNow` feeds the
+      // guard the params it is about to send and then asks the SAME
+      // `mayAutoRender` the restart asks. If the parameters really moved,
+      // the `params` event CLEARED the mark and the render goes; if only
+      // the bytes moved (a re-format, format-on-save, a touched `$schema`
+      // line), the mark stands and the held question is asked instead --
+      // once per (mark, params), because a formatter can repeat this every
+      // few seconds. Withdrawing this comment is WP-8 S3's, and it is
+      // recorded rather than quietly rewritten: a comment that says the
+      // opposite of the code is how the delta re-review's D1 happened.
       if (!picked || !saved) return;
       const folder = core.paramsFolderFor(picked.fsPath, workspaceFolderPaths());
       if (core.shouldRerenderOnParamsSave(picked, saved, folder)) {

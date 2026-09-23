@@ -847,16 +847,56 @@ const TRIGGER_RECOVERED = "recovered";
  */
 const TRIGGER_ANSWER = "answer";
 
+/**
+ * WP-8 S3: AN AUTOMATIC `ermine/schema` REQUEST THAT NOTHING ELSE ASKED FOR.
+ *
+ * **A SCHEMA REQUEST IS NOT A READ. IT CAN WEDGE THE SERVER, AND THAT IS
+ * READ OFF THE SCALA RATHER THAN ASSUMED.**  `ermine/schema {uri, binding,
+ * roots}` is a PREVIEW-QUEUE job (`lsp/Preview.scala:603-623`) answered by
+ * `Runner.paramSchema` (`lsp/Preview.scala:1554-1567`), which calls
+ * `report(module, binding)` -> `compileOnce`, and `compileOnce` runs
+ * `Session.loadModules(List(module))` and then `Session.eval(binding, ...)`
+ * (`json/Runner.scala:849-852`) under `evalLock`.  Loading type-checks the
+ * module and evaluating forces the binding to WHNF.  `Preview.scala:596-598`
+ * says it in the server's own words: *"THE WATCHDOG covers it: `paramSchema`
+ * compiles the report, which evaluates the binding, which is the very thing
+ * that can fail to terminate."*  So the schema job is watched, refused while
+ * stuck, and can itself be the job the watchdog fires on -- exactly what
+ * WP-22 exists to hold.
+ *
+ * WHICH TRIGGER A SCHEMA REQUEST CARRIES, all three sites:
+ *   the FIRST-PICK request (no params file -> schema before the render, G15)
+ *     carries THE RENDER'S OWN TRIGGER, because it is part of that render's
+ *     work: an explicit pick is consent and is never refused, and a
+ *     `params-file` save of a held report is refused exactly as its render
+ *     would be;
+ *   the `fx.schema` seam (an accepted `{stuck:false}`, and Stopped ->
+ *     Running) carries `recovered` / `restart`, the triggers `applyStuck`
+ *     already passes;
+ *   the POST-RENDER REFRESH (D8) has no render trigger to inherit -- it is
+ *     asked for by an answer -- and carries THIS one.
+ *
+ * **IT IS UNCONFIRMED, AND THE MEMBERSHIP RULE FORCES THAT.**  The rule is
+ * "a trigger may stay OUT only if, whenever the glue schedules it, the guard
+ * event it fed has CLEARED the mark".  The guard event a render's answer
+ * feeds is `answer`, and `guardReduce`'s `answer` case KEEPS the mark for a
+ * non-stuck answer (it only ever SETS, never clears).  So a refresh cannot
+ * qualify, and it must not: a report that has just wedged the server must
+ * not be handed another job that compiles and evaluates it.
+ */
+const TRIGGER_SCHEMA = "schema";
+
 /** Every trigger the glue may pass. Anything else is a BUG, not a default. */
 const RENDER_TRIGGERS = [
   TRIGGER_RESTART, TRIGGER_EXPLICIT, TRIGGER_PARAMS_FILE, TRIGGER_MODULE_LEARNED,
   TRIGGER_INVALIDATED, TRIGGER_FILE_EVENT, TRIGGER_ROOTS, TRIGGER_RECOVERED,
-  TRIGGER_ANSWER,
+  TRIGGER_ANSWER, TRIGGER_SCHEMA,
 ];
 
 /** The ones that bring no evidence of change, and therefore consult the mark. */
 const UNCONFIRMED_TRIGGERS = [
   TRIGGER_RESTART, TRIGGER_PARAMS_FILE, TRIGGER_MODULE_LEARNED, TRIGGER_ROOTS, TRIGGER_ANSWER,
+  TRIGGER_SCHEMA,
 ];
 
 function isRenderTrigger(trigger) {
@@ -2305,9 +2345,23 @@ function isInsideFolder(p, folder, child) {
  * SYMLINKS ARE OUT OF SCOPE HERE AND ARE S3'S.  Containment is decided by
  * comparing STRINGS, which is all a pure function can do: a symlink inside
  * the workspace folder pointing out of it passes this test and would be
- * written through.  Resolving that needs `realpath`, i.e. the disk, i.e. the
- * glue -- S3 resolves before it writes, and this function's answer is a
- * candidate path, not a permission.
+ * written through.  This function's answer is a candidate path, not a
+ * permission.
+ *
+ * **WHAT S3 ACTUALLY DID, and the sentence that stood here was WRONG (the S3
+ * review's M-3).**  It said "S3 resolves before it writes".  S3 does NOT
+ * resolve -- there is no `realpath` anywhere in this extension, and
+ * `workspace.fs` offers none.  What S3 does instead is REFUSE: before any
+ * write it `stat`s every target and every existing directory component under
+ * `.ermine/`, and `writeTargetProblem` below turns a `FileType.SymbolicLink`
+ * bit into a named refusal, so the report renders with `{}` and nothing is
+ * written through a link.  Refusing is strictly weaker than resolving -- a
+ * legitimate symlinked `.ermine` directory stops working, and is told why --
+ * and it is what a pure decision plus one `stat` can honestly do.  The first
+ * cut of S3 did NEITHER, and the review MEASURED both halves: a
+ * `<binding>.schema.json` symlinked outside the workspace was written
+ * THROUGH from the REFRESH path (reachable from an answer), and a DANGLING
+ * params symlink had the skeleton created at its outside target.
  *
  * KNOWN AND ACCEPTED (U4, review G2): the path is keyed by MODULE, not by
  * file, so two files declaring `module Sales` under different roots share one
@@ -3478,6 +3532,738 @@ const paramsGitignoreText = [
   "",
 ].join("\n");
 
+// -- WP-8 S3: asking for the schema, and what gets written -----------------
+//
+// S1 decided WHERE the files go and WHAT their text is; S2 reads the params
+// file and sends it.  S3 is the first `ermine/schema` client and the first
+// thing in this extension that WRITES to the developer's disk.  Everything
+// below is the part of that which is decidable from data alone: the
+// ordering rule, when a schema answer may be used, what a schema answer
+// turned out to be, which bytes go to which path, and whether a file that is
+// already there has to be touched at all.  The `vscode.workspace.fs` calls,
+// the `WorkspaceEdit` and the document that is opened are `extension.js`'s.
+
+/**
+ * `YYYY-MM-DD` in the machine's own timezone, for `skeletonFrom`'s `today`.
+ *
+ * LOCAL AND NOT UTC, and the reason the first draft gave was too strong (the
+ * S3 review's N-8): "west of Greenwich the slice is tomorrow's for most of
+ * the working day" is only true of the FAR west.  At UTC-4 an ISO-UTC slice
+ * flips at 20:00 local; at UTC+13 it is YESTERDAY's until 11:00.  Either way
+ * it is a date the developer did not mean, and `toISOString().slice(0,10)`
+ * is the obvious thing to reach for, so the choice is written down.
+ *
+ * **AND THE QUESTION IS MOOT, WHICH NOBODY HAD WRITTEN DOWN** (the review's
+ * own point, kept): the language server is the LOCAL `bin/ermine-lsp`,
+ * sharing this machine's default timezone, and this feature has no
+ * server-side "today" at all -- U2's row forbids computed defaults, so a
+ * rolling range has to be literal JSON in the params file.  There is no
+ * second clock for this one to disagree with.
+ *
+ * A pure function of the `Date` it is handed, so the glue owns the clock
+ * exactly as it does for the restart reducer.
+ */
+function isoDay(when) {
+  const d = when instanceof Date ? when : new Date(when);
+  if (isNaN(d.getTime())) return null;
+  const pad = (n) => (n < 10 ? "0" + n : String(n));
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+}
+
+/**
+ * G15, THE ORDERING RULE, DECIDED PER CASE.
+ *
+ *   NO params file  -> THE SCHEMA COMES FIRST.  That render would be sent
+ *                      with `{}` and is a CERTAIN 400 for any report with a
+ *                      required parameter (MEASURED, section 6's control E:
+ *                      `400 the required key "fromDay" is missing`), so
+ *                      spending it is spending a boot to be told what we are
+ *                      about to ask the schema for.  The schema, the write
+ *                      and then ONE render -- the one the skeleton's own
+ *                      creation schedules through the S2 watcher.
+ *   FILE PRESENT    -> THE RENDER COMES FIRST.  The parameters are on disk
+ *                      and the developer is waiting for a document; the
+ *                      schema is only needed to keep the generated
+ *                      `<binding>.schema.json` fresh, which is D8's
+ *                      write-if-different and can follow the answer.
+ *   NO PATHS AT ALL -> neither.  A report outside every workspace folder, a
+ *                      pick with no module, an operator binding: there is
+ *                      nowhere to write and nothing to describe, so the
+ *                      render goes with the inline `{}` exactly as S2 sends
+ *                      it today, and S2 has ALREADY said why, once per pick.
+ *
+ * @param {object} paths `paramsPaths`'s answer (or its `{problem}`)
+ * @param {boolean} fileMissing did the read report "there is no such file"?
+ */
+function schemaOrder(paths, fileMissing) {
+  if (!paths || typeof paths !== "object" || paths.problem || !paths.paramsPath) {
+    return { first: "render", write: false,
+             why: "this report has no params path, so nothing is written and no schema is asked for" };
+  }
+  if (fileMissing === true) {
+    return { first: "schema", write: true,
+             why: "there is no params file yet, so the schema comes first and the skeleton is written from it" };
+  }
+  return { first: "render", write: false,
+           why: "the params file is already on disk, so the render goes first and the schema only refreshes " +
+                paths.schemaPath };
+}
+
+/**
+ * THE RENDER TRIGGERS AFTER WHICH THE REPORT'S PARAMETER TYPE MAY HAVE MOVED.
+ *
+ * A schema request is a preview-queue JOB that compiles and evaluates the
+ * binding (see `TRIGGER_SCHEMA`), so "ask after every render" is not free.
+ * These five are the ones where the SOURCE or the ROOT SET can have changed
+ * since the file was last written.  The four that are left out are left out
+ * for a reason each:
+ *   `params-file`   editing the parameters cannot change the parameter TYPE.
+ *                   It is also the trigger the skeleton's own creation fires,
+ *                   so leaving it out is what stops a first pick asking for
+ *                   the schema twice in a row;
+ *   `restart`       the `fx.schema` seam already asks on that edge;
+ *   `recovered`     the same;
+ *   `explicit`      is IN, because the user asking for a render is also the
+ *                   moment to make the file they are looking at right.
+ */
+const SCHEMA_REFRESH_TRIGGERS = [
+  TRIGGER_EXPLICIT, TRIGGER_INVALIDATED, TRIGGER_MODULE_LEARNED, TRIGGER_ROOTS, TRIGGER_FILE_EVENT,
+];
+
+/**
+ * D8: AFTER A RENDER, IS THE GENERATED `.schema.json` WORTH RE-ASKING FOR?
+ *
+ * The ticket as written regenerated it on every `invalidated` that named the
+ * report's module -- a disk write AND a queued preview job on every save of
+ * the report or of anything it imports.  D8 narrows it to the two answers
+ * that say the report COMPILED and its parameter type is therefore the thing
+ * the file should describe:
+ *
+ *   `ok`                     the report ran: the type is current;
+ *   `400` at `$.params...`   the decoder refused the parameters, which means
+ *                            the report compiled and its `paramTy` exists --
+ *                            and it is the one moment the developer is
+ *                            looking at the file and wants its squiggles
+ *                            right.
+ *
+ * Everything else says NO, and each for its own reason: a 404 or a 409 never
+ * reached a report; a 500 is a load or an evaluation failure, so there may be
+ * no parameter type to export and asking would only queue a job behind a
+ * server that is already unhappy; a 400 anywhere but `$.params` is about the
+ * request rather than the parameters; and a params REFUSAL (`status: null`,
+ * S2's `paramsRefusalAnswer`) never asked a server anything at all.
+ *
+ * **WHAT THAT LEAVES ON DISK, AND IT IS DELIBERATE** (the S3 review's N-7).
+ * A report that stops compiling -- or a schema request that comes back
+ * `{error}` -- leaves the LAST GOOD `<binding>.schema.json` exactly where it
+ * is.  Nothing deletes it and nothing marks it stale.  That is the useful
+ * answer: while the developer is fixing the module, the editor keeps
+ * completing and validating the params file against the type it last knew,
+ * which is almost always still the type they are working towards; and the
+ * alternative -- deleting it -- would take the squiggles away at the one
+ * moment they are looking at them.  The file is generated and gitignored, so
+ * a stale one costs nothing but its own bytes, and the next answer that
+ * compiles rewrites it.
+ *
+ * AND THE TRIGGER DECIDES TOO, which D8 as written did not say: see
+ * `SCHEMA_REFRESH_TRIGGERS`.  An undeclared trigger refreshes NOTHING, the
+ * same fail-closed policy `shouldAutoRender` adopted for D2.
+ */
+function shouldRefreshSchema(answer, trigger) {
+  if (!answer || typeof answer !== "object") {
+    return { refresh: false, why: "there is no answer to decide on" };
+  }
+  if (SCHEMA_REFRESH_TRIGGERS.indexOf(trigger) < 0) {
+    return { refresh: false,
+             why: "a render triggered by " + printable(typeof trigger === "string" ? trigger : typeName(trigger)) +
+                  " cannot have changed the report's parameter type" };
+  }
+  if (isOk(answer)) return { refresh: true, why: "the report rendered, so its parameter type is current" };
+  if (answer.status === 400 && typeof answer.path === "string" &&
+      (answer.path === "$." + "params" || answer.path.indexOf("$.params") === 0)) {
+    return { refresh: true,
+             why: "the parameters were refused at " + printable(answer.path) +
+                  ", so the report compiled and the schema file should match what refused them" };
+  }
+  return { refresh: false,
+           why: "the answer is not an ok and not a 400 about the parameters (" +
+                printable(answer.status) + "), so there may be no parameter type to export" };
+}
+
+/**
+ * **THE ONE SHAPE A SCHEMA REQUEST ANSWERS, MINTED IN ONE PLACE (the delta
+ * re-review's D-1).**
+ *
+ * The first cut minted the SUCCESS arm and the three SERVER-SIDE failures
+ * here as `{schema}` and a BARE `{reason, message}`, while the glue's other
+ * two failure returns were WRAPPED `{problem: ...}`.  Both callers test
+ * `outcome.problem`, which is `undefined` for a bare shape -- **so every
+ * server-side failure fell straight through the handler.**  MEASURED on a
+ * real disk with a stub client, for all three: the D8 refresh then reached
+ * `schemaFileText(schemaFileFor(undefined))` and wrote the literal text
+ * `undefined\n` into `<binding>.schema.json`, destroying the editor's
+ * validation target; and on the first-pick path the named reasons became
+ * dead code and the per-reason notice said NOTHING at all.  It is reachable
+ * from an ANSWER, which is the one thing section 6 says an answer can never
+ * do.
+ *
+ * So every arm goes through this, and **all three keys are always present**:
+ * `if (outcome.problem)` cannot read `undefined` off a shape that forgot to
+ * declare itself, and a builder call that names none of the three FAILS
+ * CLOSED into a problem rather than into a silent success.
+ */
+function schemaOutcome(over) {
+  const o = over && typeof over === "object" ? over : {};
+  const out = { schema: null, problem: null, abandoned: null };
+  if (o.abandoned !== undefined && o.abandoned !== null) {
+    out.abandoned = o.abandoned;
+    return out;
+  }
+  if (o.problem !== undefined && o.problem !== null) {
+    out.problem = o.problem && o.problem.problem ? o.problem.problem : o.problem;
+    return out;
+  }
+  if (isPlainObject(o.schema)) {
+    out.schema = o.schema;
+    return out;
+  }
+  out.problem = problem("no-schema",
+                        "The parameter schema could not be worked out (" +
+                        printable(typeName(o.schema)) + "), so nothing was written.").problem;
+  return out;
+}
+
+/**
+ * WHAT AN `ermine/schema` ANSWER TURNED OUT TO BE.
+ *
+ * The wire shape is the REQUEST's and not the reason's (`Preview.scala`'s
+ * `schemaError`, `:2195-2197`): a failure is `{error}`, with Q15's `reason`
+ * beside it when the shared front half decided it, and Q8's `stuck: true`
+ * beside it when the preview is wedged and refused the job without queueing
+ * (`Preview.Schema.stuckRefusal`, `Preview.scala:2354-2358`).  A success is
+ * the exported schema document itself.
+ *
+ * NONE OF THESE MAY BLOCK THE RENDER.  Each answers a `{problem}` with a
+ * named reason, the caller falls back to the inline `{}` and says so ONCE,
+ * and the render happens anyway -- a params file is a convenience, and a
+ * schema is a convenience for the params file.  **AND NONE OF THEM MAY
+ * TOUCH THE SCHEMA FILE**, which is what D-1 was.
+ */
+function schemaAnswerOutcome(answer) {
+  if (!isPlainObject(answer)) {
+    return schemaOutcome({ problem: problem("no-schema",
+      "The language server answered " + printable(typeName(answer)) +
+      " to ermine/schema, not a schema document.") });
+  }
+  if (answer.error !== undefined && answer.error !== null) {
+    const why = typeof answer.error === "string" ? answer.error : stringify(answer.error);
+    if (answer.stuck === true) {
+      return schemaOutcome({ problem: problem("stuck",
+        "The preview is stuck, so it refused to work out the parameter schema (" + why +
+        "). Nothing was written.") });
+    }
+    return schemaOutcome({ problem: problem("error",
+      "The language server could not work out the parameter schema: " + why) });
+  }
+  return schemaOutcome({ schema: answer });
+}
+
+/** A JSON-RPC error or a transport rejection, in the SAME shape, so both
+  * failures leave the caller with one thing to say -- and one thing to TEST,
+  * which is what D-1 turned on. */
+function schemaRequestFailure(err) {
+  return schemaOutcome({ problem: problem("request-failed",
+    "The ermine/schema request failed (" +
+    (err && err.message ? String(err.message) : String(err)) +
+    "), so no schema file was written.") });
+}
+
+/**
+ * **DEFENCE IN DEPTH AT THE WRITE (D-1's second half): the bytes of a schema
+ * file, or a named refusal -- a write of `"undefined"` must be impossible by
+ * CONSTRUCTION, not only by control flow.**
+ *
+ * `schemaFileFor` answers its input unchanged when handed something that is
+ * not a plain object, and `schemaFileText` is `JSON.stringify` plus a
+ * newline -- which for `undefined` is the six-letter word.  That is exactly
+ * what reached the disk.  Nothing but this function may produce the bytes of
+ * a `<binding>.schema.json`, and it refuses anything that does not round-trip
+ * to a JSON object.
+ *
+ * `schemaFileText` itself is NOT narrowed, deliberately: it also renders the
+ * PARAMS file, whose value may legitimately be a number, a string or `null`
+ * (G5's non-object roots, MEASURED on `WpInt`).
+ */
+function schemaFileBytes(schema) {
+  if (!isPlainObject(schema)) {
+    return problem("not-a-schema",
+                   "The parameter schema the server answered is not a JSON object (" +
+                   printable(typeName(schema)) + "), so no schema file was written.");
+  }
+  const text = schemaFileText(schemaFileFor(schema));
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    parsed = null;
+  }
+  if (typeof text !== "string" || !isPlainObject(parsed)) {
+    return problem("not-a-schema",
+                   "The parameter schema did not render to a JSON object, so no schema file was " +
+                   "written; the file that was there is left alone.");
+  }
+  return { text: text };
+}
+
+/**
+ * MAY THIS SCHEMA ANSWER STILL BE ACTED ON? (D7, and S2's own gap check.)
+ *
+ * `ermine/schema` carries NO generation and NO pick identity, so a late
+ * answer cannot be recognised as late by the answer alone -- which is
+ * exactly D7.  The glue therefore captures `core.renderAttempt`'s frozen
+ * snapshot BEFORE the await (the SAME snapshot discipline S2 built for the
+ * params read; no second style is invented) and asks this afterwards.
+ *
+ * IT IS BOTH TESTS, AND NEITHER IS REDUNDANT.  `mayStillSend` knows about
+ * the restart, the stop counter, the generation and the teardown, but its
+ * pick identity is `markKey`'s -- uri and binding.  `isCurrentSchemaAnswer`
+ * knows about the MODULE (which is the DIRECTORY the file would be written
+ * into) and about the roots in order.  A header edited from `module Sales`
+ * to `module Sales2` moves the second and not the first.
+ */
+function mayUseSchemaAnswer(atSend, now, pickNow) {
+  const verdict = mayStillSend(atSend, now);
+  if (!verdict.send) return verdict;
+  if (!isCurrentSchemaAnswer(atSend && atSend.pick, pickNow)) {
+    return {
+      send: false,
+      reason: "pick-changed",
+      why: "the report's module or roots moved while the parameter schema was being worked out, so the " +
+           "answer describes a different file from the one it would be written beside",
+    };
+  }
+  return { send: true, reason: null, why: null };
+}
+
+/**
+ * D8's WRITE-IF-DIFFERENT, as a decision rather than as an `if` in the glue.
+ *
+ * The generated `<binding>.schema.json` is re-derived after every render
+ * that compiled, which is every save of the report module in a save-driven
+ * loop.  Writing identical bytes each time churns `git status`, re-triggers
+ * every file watcher in the window and -- the reason it matters here -- can
+ * make the editor drop and rebuild its cached schema while the developer is
+ * typing against it.  `schemaFileText` exists precisely so that the same
+ * schema always renders to the same bytes, which is what makes this
+ * comparison meaningful.
+ *
+ * A file that could not be read compares UNEQUAL and is written: "we do not
+ * know what is there" is not "it is already right".
+ */
+function schemaFileNeedsWrite(existingText, nextText) {
+  if (typeof nextText !== "string") return false;
+  if (typeof existingText !== "string") return true;
+  return existingText !== nextText;
+}
+
+/**
+ * THE BYTES, THE PATHS AND THE ORDER, for a first pick that has no params
+ * file.  One pure answer, so the glue's write loop has no decisions left in
+ * it and the whole plan can be asserted in a table test.
+ *
+ * **THE ORDER IS THE POINT AND IT IS NOT ALPHABETICAL.**  The params file is
+ * LAST because its creation is what the S2 watcher sees (`relativeGlob` is
+ * the exact params path, so neither the schema file nor the generated
+ * `.gitignore` matches anything and neither triggers a render).  Writing it
+ * first would schedule a render that then raced the schema file it is
+ * supposed to be validated against.
+ *
+ * **`ifAbsent` vs `ifDifferent` IS THE WHOLE SAFETY STORY.**
+ *   the generated `.gitignore`  `ifAbsent`: it is OURS to create and the
+ *                               developer's to edit afterwards.  A file that
+ *                               is there is never rewritten, whatever it
+ *                               says;
+ *   `<binding>.schema.json`     `ifDifferent`: it is generated, it is
+ *                               gitignored, and it is rewritten whenever the
+ *                               parameter type moves -- but never with the
+ *                               bytes it already holds (D8);
+ *   `<binding>.params.json`     `ifAbsent`, and NEVER ANYTHING ELSE.  It is
+ *                               committed source.  U3's explicit command is
+ *                               the only thing that may ever overwrite one,
+ *                               and it is not built here.
+ *
+ * A NON-OBJECT PARAMS ROOT (G5, `embeddable: false`) still gets its params
+ * file -- a bare number, a bare string -- but WITHOUT a `$schema` key,
+ * because a JSON number has nowhere to put one.  The schema FILE is still
+ * written: it is generated and ignored either way, the refresh path does not
+ * have to learn a second rule, and a developer who wants it can point at it
+ * by hand.  The notice says the editor will not validate that file.
+ *
+ * @param {object} paths `paramsPaths`'s answer (must not be a `{problem}`)
+ * @param {object} schema the server's FRESH `ermine/schema` answer
+ * @param {string} today `YYYY-MM-DD`
+ */
+function paramsWritePlan(paths, schema, today) {
+  if (!paths || typeof paths !== "object" || paths.problem || !paths.paramsPath) {
+    return problem("no-params-path",
+                   "There is nowhere to write a params file for this report, so nothing was written.");
+  }
+  // THE SERVER'S FRESH ANSWER, ALWAYS (the S1 review's D-1 obligation): a
+  // `$defs` entry that also describes a nested position is copied to the
+  // document root, and a copy tracks its original only within the call that
+  // made it. Feeding a written file back leaves the copy silently stale.
+  const file = schemaFileFor(schema);
+  if (!isPlainObject(file)) {
+    return problem("not-a-schema",
+                   "The parameter schema the server answered is not a JSON object, so nothing was written.");
+  }
+  const skeleton = skeletonFrom(schema, today, paths.schemaRef);
+  if (skeleton.problem) return { problem: skeleton.problem };
+  return {
+    embeddable: skeleton.embeddable === true,
+    skeleton: skeleton.value,
+    files: [
+      { what: WRITE_GITIGNORE, path: paths.gitignorePath, text: paramsGitignoreText, mode: WRITE_IF_ABSENT },
+      { what: WRITE_SCHEMA, path: paths.schemaPath, text: schemaFileText(file), mode: WRITE_IF_DIFFERENT },
+      { what: WRITE_PARAMS, path: paths.paramsPath, text: schemaFileText(skeleton.value), mode: WRITE_IF_ABSENT },
+    ],
+  };
+}
+
+/** What the channel says once, after the three files are written. */
+function paramsWrittenNotice(paths, embeddable) {
+  const head = "wrote " + printable(paths && paths.paramsPath) +
+               " from the report's parameter type, with " + printable(paths && paths.schemaPath) +
+               " beside it (generated, and gitignored by " + printable(paths && paths.gitignorePath) + ").";
+  return embeddable === false
+    ? head + " Its parameters are not a JSON object, so the file carries no \"$schema\" line and the " +
+             "editor will not validate it; the server still checks it and answers a 400 with a path."
+    : head + " It is ordinary committed source: edit it, save it, and the preview re-renders.";
+}
+
+/** What the channel says once when the schema could not be had at all. The
+  * render is NOT blocked: it goes with the inline `{}` like WP-7's. */
+function schemaProblemNotice(problem0, paramsPath) {
+  const p = problem0 && problem0.problem ? problem0.problem : problem0;
+  return "no params file was written at " + printable(paramsPath) + ": " +
+         (p && p.message ? String(p.message) : "the parameter schema could not be worked out.") +
+         " The report renders with empty parameters.";
+}
+
+/** The key the glue remembers a written-or-not-written decision under, so
+  * "one notice per report per session" is once. Same shape as
+  * `paramsNoticeKey`, which is what keeps the two from colliding. */
+function schemaNoticeKey(pick, reason) {
+  return String(markKey(pick)) + MARK_SEPARATOR + "schema" + MARK_SEPARATOR + String(reason);
+}
+
+// -- S3 review: the shapes the glue hands its own decisions ----------------
+//
+// **THE FOURTH OCCURRENCE OF THIS BRANCH'S RECURRING DEFECT, AND THE LAST
+// ONE THAT CAN HAPPEN THIS WAY** (the S3 review's M-1). The test file's
+// header states the rule -- *a model must mutate, omit and capture exactly
+// what the glue mutates, omits and captures* -- and it had been broken three
+// times before. It was broken a fourth: `prepareParams` built its answer as
+// four separate object literals in `extension.js` while the model's
+// read-settlers built their own, and the model's `renderNow` read a model
+// constant where the glue reads `prepared.paths`. Deleting the single word
+// `paths,` from ONE of those literals turned the whole stage off -- no file
+// ever written, no schema ever asked for -- with **249 of 249 tests green**
+// (MEASURED by the review, reproduced here).
+//
+// A pin would have caught that ONE field. The builders below stop the CLASS:
+// every object the glue hands to an S3 decision is minted by ONE exported
+// pure function that BOTH the glue and the model call, so a field cannot be
+// present on one side and absent on the other. What is left to a pin is only
+// that the glue calls them, which is a much smaller thing to get wrong and
+// a much easier one to see.
+
+/** The four outcomes `prepareParams` can have, closed. */
+const PREPARED_PATH_PROBLEM = "path-problem";
+const PREPARED_MISSING = "missing";
+const PREPARED_READ = "read";
+const PREPARED_REFUSAL = "refusal";
+const PREPARED_KINDS = [PREPARED_PATH_PROBLEM, PREPARED_MISSING, PREPARED_READ, PREPARED_REFUSAL];
+
+/**
+ * THE SHAPE `prepareParams` ANSWERS, MINTED IN ONE PLACE (M-1).
+ *
+ * Every field the send path reads is set here for every outcome:
+ *   `params`    what goes on the wire (absent for a refusal, which sends
+ *               nothing);
+ *   `paths`     `paramsPaths`'s answer, **always**, including its `{problem}`
+ *               form -- `schemaOrder` is what reads it, and a dropped
+ *               `paths` silently answers "there is nowhere to write";
+ *   `path`      the params file, for the notices and the refusal answer;
+ *   `notice`    one named sentence, or absent;
+ *   `refusal`   a named `paramsToSend`/read problem, or absent;
+ *   `read`      true only when a file was really read;
+ *   `warnings`  U5's credential warnings.
+ *
+ * @param {object} paths `paramsPaths`'s answer (or its `{problem}` form)
+ * @param {{kind, params, problem, warnings}} outcome what the disk said
+ */
+function preparedParams(paths, outcome) {
+  const o = outcome && typeof outcome === "object" ? outcome : {};
+  const has = paths && typeof paths === "object" && !paths.problem && paths.paramsPath;
+  const prepared = {
+    paths: paths === undefined ? null : paths,
+    path: has ? paths.paramsPath : null,
+  };
+  switch (o.kind) {
+    case PREPARED_PATH_PROBLEM:
+      prepared.params = {};
+      prepared.notice = paths && paths.problem
+        ? { reason: paths.problem.reason, line: paths.problem.message }
+        : { reason: "no-params-path", line: "this report has no params path." };
+      return prepared;
+    case PREPARED_MISSING:
+      prepared.params = {};
+      prepared.notice = { reason: PREPARED_MISSING, line: paramsMissingNotice(prepared.path) };
+      return prepared;
+    case PREPARED_READ:
+      prepared.params = o.params;
+      prepared.warnings = o.warnings || [];
+      prepared.read = true;
+      return prepared;
+    case PREPARED_REFUSAL:
+      prepared.refusal = o.problem && o.problem.problem ? o.problem.problem : o.problem;
+      return prepared;
+    default:
+      // FAIL CLOSED, like every other unknown in this file: a kind nothing
+      // declared refuses rather than rendering something unspecified.
+      prepared.refusal = problem("bad-prepared-kind",
+                                 "The parameters were prepared with an outcome nothing declares (" +
+                                 printable(typeName(o.kind)) + "), so the report was not rendered.").problem;
+      return prepared;
+  }
+}
+
+// -- M-2: the write plan's modes, shared by producer and consumer ----------
+
+/** Create it if it is not there; NEVER touch one that is. */
+const WRITE_IF_ABSENT = "ifAbsent";
+/** Rewrite it only when its bytes differ (D8). */
+const WRITE_IF_DIFFERENT = "ifDifferent";
+/** The plan's `what` values, so producer and consumer cannot drift. */
+const WRITE_GITIGNORE = "gitignore";
+const WRITE_SCHEMA = "schema";
+const WRITE_PARAMS = "params";
+
+/**
+ * WHAT TO DO WITH ONE ENTRY OF THE PLAN, AND IT FAILS **CLOSED** (M-3 of the
+ * S3 review... M-2).
+ *
+ * The first cut wrote `if (mode === "ifAbsent") create; else OVERWRITE`. Any
+ * mode that was not that exact string fell through to an unconditional
+ * `workspace.fs.writeFile` of whatever path the entry named -- at the one
+ * site in this extension that can destroy the developer's committed source.
+ * **MEASURED by the review on a real disk: an entry `mode: "ifabsent"`, one
+ * lowercase letter, overwrote `{"COMMITTED":"SOURCE"}` with the skeleton and
+ * reported `{"wrote":["params"]}`.** It was not live -- `paramsWritePlan`
+ * spells it correctly and a table test pins that -- but it was a fail-OPEN
+ * default in a file that fails CLOSED everywhere else it matters
+ * (`triggerProblem`, `shouldRefreshSchema`, `schemaOrder`'s strict `true`,
+ * `schemaFileNeedsWrite`'s unreadable-compares-unequal).
+ *
+ * TWO RULES, AND THE SECOND IS BELT AND BRACES:
+ *   an unknown mode is a NAMED REFUSAL, never a write;
+ *   **the params file is refused by any route but the create**, whatever the
+ *   mode says -- identified BOTH by `what` and by its path, so neither a
+ *   mislabelled entry nor a retyped mode can reach an overwrite.
+ */
+function writeStep(file, paramsPath) {
+  if (!file || typeof file !== "object" || typeof file.path !== "string" || !file.path) {
+    return { problem: problem("bad-write-entry",
+                              "The preview was handed a write it cannot describe, so nothing was written.").problem };
+  }
+  if (file.mode === WRITE_IF_ABSENT) return { act: WRITE_IF_ABSENT, problem: null };
+  const isParams = file.what === WRITE_PARAMS ||
+                   (typeof paramsPath === "string" && paramsPath !== "" && file.path === paramsPath);
+  if (isParams) {
+    return { problem: problem("params-not-creatable",
+                              'The params file "' + printable(file.path) + '" would have been written by ' +
+                              printable(String(file.mode)) + " rather than created. It is committed source " +
+                              "and is only ever CREATED, so nothing was written.").problem };
+  }
+  if (file.mode === WRITE_IF_DIFFERENT) return { act: WRITE_IF_DIFFERENT, problem: null };
+  return { problem: problem("unknown-write-mode",
+                            'The preview does not know how to write "' + printable(file.path) + '" (' +
+                            printable(String(file.mode)) + "), so nothing was written.").problem };
+}
+
+// -- M-3: symlinks, which S1 handed to S3 and S3 must answer ---------------
+
+/**
+ * VS Code's `FileType` is a BITMASK and a symlink is reported as
+ * `SymbolicLink | File` or `SymbolicLink | Directory` (*external*: the
+ * documented API). **THE NUMBER IS WRITTEN HERE RATHER THAN READ OFF
+ * `vscode.FileType`, on purpose**: this file never requires `vscode`, and
+ * the load test's stub answers `0` for any capitalised member it does not
+ * define -- which would silently turn the mask into "nothing is ever a
+ * symlink", the exact failure this constant exists to prevent.
+ */
+const FILE_TYPE_SYMLINK = 64;
+
+/**
+ * WHICH PATHS MUST BE `stat`ed BEFORE A WRITE, in order, outermost first.
+ *
+ * Every directory component this extension might write THROUGH, plus the
+ * files it is about to touch. `<folder>/.ermine` and `<folder>/.ermine/preview`
+ * are included because `createDirectory` would happily make the module
+ * directory inside a symlinked `preview/`, and the writes would then land
+ * wherever that link points.
+ *
+ * The workspace folder's own path is NOT included: it is what the developer
+ * opened, it is `paramsFolderFor`'s answer, and refusing to write inside a
+ * workspace somebody reached through a link would refuse the ordinary
+ * `/home/me/work -> /mnt/big/work` setup for no gain.
+ */
+function writeTargetPaths(paths, targets, flavour) {
+  const p = pathFlavour(flavour);
+  if (!paths || typeof paths !== "object" || paths.problem || !paths.previewDir) return [];
+  const out = [p.dirname(paths.previewDir), paths.previewDir, paths.dir];
+  for (const t of targets || []) {
+    if (typeof t === "string" && t && out.indexOf(t) < 0) out.push(t);
+  }
+  return out;
+}
+
+/**
+ * IS ANY OF THEM A SYMLINK? (the S3 review's M-3.)
+ *
+ * The glue `stat`s each path `writeTargetPaths` answers and hands back
+ * `{path, type}` for each one that EXISTS (a path that is not there, or that
+ * cannot be stat'd, contributes nothing -- it is about to be created by us,
+ * or the write will fail with its own message). This refuses the first
+ * symlink it finds, by name.
+ *
+ * **WHY REFUSE RATHER THAN RESOLVE.** Resolving needs `realpath`, which
+ * `workspace.fs` does not offer; and following a link would have to re-run
+ * G1's containment test against the resolved path, which is S1's and is pure.
+ * Refusing costs a developer who deliberately symlinked their `.ermine`
+ * directory -- who is told exactly which path stopped it -- and buys the
+ * thing the review MEASURED going wrong: a `<binding>.schema.json` symlinked
+ * outside the workspace written THROUGH from the refresh path, which is
+ * reachable from an ANSWER, and a DANGLING params symlink creating the
+ * skeleton at its outside target.
+ *
+ * **IT IS NOT A DEFENCE AGAINST A CONCURRENT ATTACKER, AND IT DOES NOT CLAIM
+ * TO BE.** A link created between this check and the write is not caught --
+ * nothing short of an `O_NOFOLLOW` create could be, and `workspace.fs` has
+ * no such door. What the `ifAbsent` create still guarantees in that window is
+ * the thing that matters most: an existing regular file is never truncated.
+ *
+ * **UNVERIFIED**: whether VS Code's `workspace.fs.stat` really reports the
+ * `SymbolicLink` bit as documented, and whether its `writeFile` /
+ * `WorkspaceEdit.createFile` follow links at all. Node's `fs` does follow
+ * them (MEASURED), and assuming the editor does not would be an assumption
+ * in the dangerous direction.
+ */
+function writeTargetProblem(seen) {
+  for (const entry of seen || []) {
+    if (!entry || typeof entry !== "object") continue;
+    // **D-2: "CANNOT TELL" IS NOT "NOT THERE", AND IT FAILS CLOSED.** The
+    // first cut answered `null` for every `stat` that threw, so a path that
+    // EXISTS but cannot be stat'd -- EACCES on the directory above it, a
+    // provider that refuses -- voided the whole defence. MEASURED: a schema
+    // symlink outside the workspace was written THROUGH. A path that is
+    // really absent contributes nothing (we are about to create it); a path
+    // we could not read the type of refuses, by name.
+    // **ANY `unknown` KEY REFUSES (the final check's N-g).** This used to
+    // test the string's TRUTHINESS as well, so a provider that threw an
+    // EMPTY message answered `{unknown: ""}` and the defence answered null
+    // -- fail-OPEN on truthiness, one level below the shape D-2 closed.
+    if ("unknown" in entry) {
+      const why = typeof entry.unknown === "string" && entry.unknown
+        ? entry.unknown : "the editor did not say why";
+      return problem("unstattable",
+                     'The preview could not tell what "' + printable(entry.path) + '" is (' +
+                     why + "), so it will not write there: it cannot rule out a symbolic " +
+                     "link pointing outside the workspace folder. Nothing was written; the report " +
+                     "renders with empty parameters.").problem;
+    }
+    if (typeof entry.type !== "number" || !isFinite(entry.type)) continue;
+    if ((entry.type & FILE_TYPE_SYMLINK) === 0) continue;
+    return problem("symlink",
+                   'The preview will not write through the symbolic link "' + printable(entry.path) +
+                   '": it cannot tell where it points, and a params or schema file written through one ' +
+                   "would land outside the workspace folder. Nothing was written; the report renders " +
+                   "with empty parameters.").problem;
+  }
+  return null;
+}
+
+// -- the remaining shapes the glue hands its own decisions (M-1's audit) ---
+
+/** `createFileWithoutOverwriting`'s answer, minted once. */
+const CREATED = "created";
+const EXISTED = "existed";
+const CREATE_FAILED = "failed";
+function createOutcome(outcome, why) {
+  return { outcome: outcome, why: typeof why === "string" ? why : null };
+}
+
+/**
+ * WHAT A FAILED CREATE SAYS, MINTED ONCE (M-1's treatment, applied to the
+ * last shape that was still built twice).
+ *
+ * **N-5 IS IN THIS SENTENCE**: the generated `.gitignore` is a convenience
+ * and its failure does not stop the two files that matter, so it says
+ * something different from the two that do -- and the model said something
+ * different again until this builder existed.
+ */
+function writeFailedProblem(what, filePath, why) {
+  return {
+    reason: "write-failed",
+    message: 'The preview could not create "' + printable(filePath) + '" (' + String(why) +
+             (what === WRITE_GITIGNORE
+               ? "). The params and schema files are written anyway; only the generated .gitignore " +
+                 "is missing, so `git status` will show the schema file too."
+               : "), so the report renders with empty parameters."),
+  };
+}
+
+/** `applyWritePlan`'s answer, minted once. `problems` is always an array and
+  * `wrote` always the list of `what`s this run really created or rewrote. */
+function writeOutcome(over) {
+  const o = over && typeof over === "object" ? over : {};
+  return {
+    wrote: Array.isArray(o.wrote) ? o.wrote : [],
+    existed: o.existed === true,
+    problems: Array.isArray(o.problems) ? o.problems : [],
+  };
+}
+
+/** `requestSchema`'s "the world moved" answer, through the SAME builder as
+  * its other two arms (D-1): the model minted a literal `{abandoned: still}`
+  * where the glue called this, which is M-1's shape with the sign reversed. */
+function schemaAbandoned(verdict) {
+  return schemaOutcome({
+    abandoned: verdict && typeof verdict === "object"
+      ? verdict
+      : { reason: "pick-cleared", why: "there is nothing to ask about" },
+  });
+}
+
+/**
+ * `firstPickSchemaAndWrite`'s answer (D-1's builder audit): nine raw
+ * `{wrote: ...}` literals on the glue's side and their counterparts in the
+ * model, which is exactly the shape M-1 was about. `wrote` means "a params
+ * file is now on disk", which is what decides whether the caller has a
+ * render to schedule.
+ */
+function firstPickResult(over) {
+  const o = over && typeof over === "object" ? over : {};
+  return { wrote: o.wrote === true, raced: o.raced === true, abandoned: o.abandoned === true };
+}
+
+/** `writeIfDifferent`'s answer, for the same reason. */
+function writeResult(over) {
+  const o = over && typeof over === "object" ? over : {};
+  return { wrote: o.wrote === true, problem: o.problem || null };
+}
+
 // -- what is actually sent -------------------------------------------------
 
 /** U6: one mebibyte of params, measured in the UTF-8 bytes of the FILE.
@@ -3704,6 +4490,7 @@ module.exports = {
   TRIGGER_ROOTS,
   TRIGGER_RECOVERED,
   TRIGGER_ANSWER,
+  TRIGGER_SCHEMA,
   RENDER_TRIGGERS,
   UNCONFIRMED_TRIGGERS,
   isRenderTrigger,
@@ -3719,6 +4506,48 @@ module.exports = {
   paramsToSend,
   credentialKeyWarning,
   paramsGitignoreText,
+  // WP-8 S3: the first `ermine/schema` client, and the first writes.
+  isoDay,
+  schemaOrder,
+  shouldRefreshSchema,
+  schemaOutcome,
+  schemaAnswerOutcome,
+  schemaRequestFailure,
+  schemaFileBytes,
+  firstPickResult,
+  writeResult,
+  mayUseSchemaAnswer,
+  schemaFileNeedsWrite,
+  paramsWritePlan,
+  paramsWrittenNotice,
+  schemaProblemNotice,
+  schemaNoticeKey,
+  SCHEMA_REFRESH_TRIGGERS,
+  // S3 review M-1: the shapes the glue hands its own decisions, minted once.
+  preparedParams,
+  PREPARED_PATH_PROBLEM,
+  PREPARED_MISSING,
+  PREPARED_READ,
+  PREPARED_REFUSAL,
+  PREPARED_KINDS,
+  createOutcome,
+  writeOutcome,
+  writeFailedProblem,
+  schemaAbandoned,
+  CREATED,
+  EXISTED,
+  CREATE_FAILED,
+  // S3 review M-2: the plan's vocabulary, and the fail-CLOSED step decision.
+  WRITE_IF_ABSENT,
+  WRITE_IF_DIFFERENT,
+  WRITE_GITIGNORE,
+  WRITE_SCHEMA,
+  WRITE_PARAMS,
+  writeStep,
+  // S3 review M-3: symlinks.
+  FILE_TYPE_SYMLINK,
+  writeTargetPaths,
+  writeTargetProblem,
   PARAMS_MAX_BYTES,
   CREDENTIAL_KEY,
   NIL_UUID,

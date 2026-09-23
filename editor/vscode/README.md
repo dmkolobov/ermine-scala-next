@@ -57,8 +57,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.8.vsix
-code --install-extension ermine-lang-0.1.8.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.9.vsix
+code --install-extension ermine-lang-0.1.9.vsix
 ```
 
 `npm run package` does the same. Upgrading is the same command with the new
@@ -119,7 +119,7 @@ A **report** is any top-level binding whose type is `Node`, `Params -> Node`,
 server, in a second session of its own, and re-renders it when a file it
 depends on is saved — with no JVM restart and no build.
 
-At 0.1.8 there is **no webview panel** (that is a later ticket): the answer is
+At 0.1.9 there is **no webview panel** (that is a later ticket): the answer is
 shown as JSON in an ordinary editor tab. Parameters come from a file you write
 yourself — see **Params files** below; with no such file the render still sends
 empty parameters, so a report with required ones shows the refusal that names
@@ -194,11 +194,61 @@ workspace:
 
 so `Sales.report` reads `.ermine/preview/Sales/report.params.json`. The
 directory is one entry per module — `Layout.Widgets.Foo` is one directory
-name, not three — and the file is named after the binding. **You write it
-yourself at 0.1.8**; the extension does not create one, does not write a JSON
-schema beside it and does not add a `.gitignore` (those are the next ticket).
-The file is ordinary committed source: whoever clones the repository renders
-the same first document.
+name, not three — and the file is named after the binding. The file is
+ordinary committed source: whoever clones the repository renders the same
+first document.
+
+**The first pick of a report that has none writes three files** (0.1.9), and
+then opens the params file beside the render without taking the cursor out of
+whatever you are typing:
+
+| file | what it is | committed? |
+|---|---|---|
+| `.ermine/preview/<Module>/<binding>.params.json` | a skeleton from the report's parameter type: required keys only, today for a date, `Maybe` keys left out. **Yours. Edit it, commit it** | **yes** |
+| `.ermine/preview/<Module>/<binding>.schema.json` | the JSON Schema the `"$schema"` line above points at, generated from the parameter type | no — ignored |
+| `.ermine/preview/.gitignore` | generated once per workspace folder; ignores `*.schema.json` and `*.db` and says in the file itself that the `*.params.json` beside them are not ignored | yes, it is tiny |
+
+**The params file is NEVER overwritten.** Not on a second pick, not on a
+restart, not when the parameter type changes: the extension only ever
+*creates* it, through an editor operation that skips a file which is already
+there, and then reads the file back to be sure of what is on disk. If a `git
+checkout` or another window puts one there while the schema is being worked
+out, yours is what stays. The **schema** file is the generated one and is
+rewritten whenever the parameter type moves, and only when its bytes really
+change — so saving a `.e` file does not churn it, or the editor's cache of
+it.
+
+**The one exception, stated because it is your committed source:** if the
+create leaves a file of **zero length** — which happens only if this VS Code
+honours the create but drops the initial contents — the skeleton is written
+into it. Nothing else is ever written over: not whitespace, not a newline,
+not a file that merely looks empty. And nothing is written *through a
+symbolic link*: if the params file, the schema file, the `.gitignore` or any
+`.ermine` directory above them is a link, the preview refuses, says which
+path stopped it, and renders with empty parameters — it cannot tell where a
+link points, and a file written through one would land outside the folder you
+opened.
+
+This repository's own `.gitignore` carries the one line that matches the
+generated schemas, `**/.ermine/preview/**/*.schema.json`. **The extension
+does not edit your root `.gitignore`**: the file it writes is the
+self-contained one beside the generated files, which works in every workspace
+folder without touching anything you maintain.
+
+**When nothing can be written** — a read-only workspace, a report outside
+every workspace folder, a module name that is not known yet, a binding that
+cannot be a filename, a parameter type with no finite smallest value — the
+report still renders with empty parameters and the Ermine output channel says
+why, once per report. A parameter type that is not a JSON object
+(`report : Int -> Node`) gets its params file *without* a `$schema` line,
+because a JSON number has nowhere to put one, and the notice says the editor
+will not validate that file; the server still does.
+
+**Working out the parameter schema runs the report.** It compiles the module
+and evaluates the binding on the same queue a render uses, so it is not a
+free lookup: a report that wedged the language server is asked about with the
+same **Render anyway** / **Not now** question a render gets, and while the
+preview is stuck the request is refused outright.
 
 **Local workspaces only.** The params file is addressed by its path on your
 own machine, so a `vscode-remote:` or virtual workspace is not supported by
@@ -307,6 +357,51 @@ type one frame early and without its constraints (`go : List a -> a -> a` for
 a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
+
+### 0.1.9
+
+**The first pick of a report that has no params file writes one.** Picking
+`Sales.report` in a workspace with nothing under `.ermine/preview/` now asks
+the language server for the report's parameter schema, writes three files and
+opens the params file beside the render:
+
+```
+.ermine/preview/.gitignore                  (generated; ignores *.schema.json and *.db)
+.ermine/preview/Sales/report.schema.json    (generated from the parameter type)
+.ermine/preview/Sales/report.params.json    (a skeleton, for you to edit and commit)
+```
+
+The skeleton is the smallest value the parameter type accepts: required keys
+only, `""` / `0` / `false` / the first `enum` member / **today** for a date,
+and `Maybe` keys left out entirely. It carries a relative
+`"$schema": "./report.schema.json"` line, so the editor completes the keys and
+the enum values and squiggles a wrong one; the line itself is stripped before
+the parameters are sent. `git status` then shows the params file and NOT the
+schema file, which is the point of the generated `.gitignore`.
+
+**When nothing is written**, the report still renders with empty parameters
+`{}` and the Ermine output channel says why, once per report: a read-only
+workspace, a report outside every workspace folder, a report whose module name
+is not known yet, a binding that cannot be a filename, or a parameter type
+with no finite smallest value. A parameter type that is not a JSON object
+(`report : Int -> Node`) gets its params file without a `$schema` line, and
+the notice says the editor will not validate it — the server still does.
+
+**A report that wedged the language server is not asked for a schema
+either.** Working out the parameter schema compiles and *evaluates* the report
+on the same queue a render runs on, so it is guarded by the same **Render
+anyway** / **Not now** question as a render is, and refused while the preview
+is stuck.
+
+**The params file is never overwritten** — not on a second pick, not on a
+restart, not when the parameter type changes. The one exception, and what
+happens with symbolic links, are in **Params files** above.
+
+**Known, and not this version's to decide:** with today's dates the skeleton
+for the example `Sales.report` selects no rows, and the first render is a
+`500` — *"an empty relation built from no rows carries no columns"*. Edit
+`fromDay`/`toDay` into 2026-01-05..2026-03-17 and it renders. See Q21 in
+`tracker/JSON-WIDGET-PLAYGROUND.md`.
 
 ### 0.1.8
 
@@ -554,10 +649,18 @@ wedged — and a second async model, of the render's own send path, because
 reading the file puts an `await` between deciding to render and sending, and
 every way the world can move in that gap (the pick changes, the roots change
 *in place*, a newer render starts, the server is restarted or merely stops,
-the window is torn down) is driven by hand there. What
-is NOT there is the glue that needs an editor to observe: when a document is
-created or revealed, the watcher's registration, the coalescing timer. It runs
-under `node --test` with no `node_modules` at all.
+the window is torn down) is driven by hand there. **Since 0.1.9** it covers
+the first pick that writes: which of the schema and the render goes first,
+when the generated schema file is worth re-asking for, what each way an
+`ermine/schema` answer can fail turns into, which bytes go to which path in
+which order, and a third async model — the whole first-pick sequence over a
+model disk, with the same interleavings plus a params file appearing during
+the schema request, a read-only workspace, and an editor that creates the
+file without its contents. What is NOT there is the glue that needs an editor
+to observe: when a document is created or revealed, the watcher's
+registration, the coalescing timer, and whether `WorkspaceEdit.createFile`
+really is an atomic create. It runs under `node --test` with no
+`node_modules` at all.
 
 **`test/load-test.js`** stubs the `vscode` module in the loader and calls
 `activate()` exactly as the editor would, then checks that every command

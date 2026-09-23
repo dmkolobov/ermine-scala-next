@@ -2817,7 +2817,15 @@ test("glue pins: extension.js keeps the shape the models assume", () => {
   // and its answer ignored, the stray-stop branch neutered) survive the
   // whole suite, and only the manual checklist can observe those.
   const fs = require("node:fs");
-  const src = fs.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  // **N-1'S AUDIT, APPLIED HERE TOO** (the S3 review): every pin in this
+  // test matches STATEMENT text, and a statement that is commented out
+  // leaves its text in place. That is how the S3 pin protecting the only
+  // unbounded loop of that stage passed on a commented-out
+  // `firstPickTried.add(...)` with all 249 tests green (MEASURED). The
+  // stripping is `codeOf`'s, declared beside the S3 pins, and two places in
+  // this test already did it by hand for exactly this reason.
+  const raw = fs.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  const src = codeOf(raw);
   const pin = (what, fix) =>
     "source pin (test/preview-core.test.js): extension.js changed shape — " + what +
     ". If you meant it, update this pin; the behaviour it protects is " + fix;
@@ -3028,7 +3036,10 @@ test("glue pins: extension.js keeps the shape the models assume", () => {
   assert.ok(/heldRefusedToken = asking\.token;/.test(holdBody),
     pin("holdRender no longer remembers a refusal",
         "the same (D3): a memory that is never written is never consulted either"));
-  assert.ok(/heldRefusedToken = undefined;\s+\/\/ consent resets it/.test(holdBody),
+  // MATCHED AS THE STATEMENT AND ITS NEIGHBOUR, not as the comment beside
+  // it: this pin used to key on `// consent resets it`, which N-1's audit
+  // strips. A comment is not a behaviour.
+  assert.ok(/heldRefusedToken = undefined;\s*\n\s*applyGuard\(core\.guardReduce\(wedgeMark, \{ type: "render", explicit: true \}\)\);/.test(holdBody),
     pin("consent no longer resets what was refused",
         "that after \"Render anyway\" the next unchanged save asks again (D3)"));
 
@@ -5092,6 +5103,9 @@ function sendModel(opts) {
   // immediately.
   const seed = o.pick || SALES_PICK;
   const m = {
+    // M-1: the model's OWN `paramsPaths` answer, which its read-settlers
+    // hand to `core.preparedParams` exactly as `prepareParams` does.
+    paths: o.paths || core.paramsPaths(seed, "/w", "posix"),
     generation: 0,
     picked: core.makePick(seed.uri, seed.fsPath, seed.binding, seed.module, seed.roots),
     clientEpoch: 1,
@@ -5214,17 +5228,31 @@ function sendModel(opts) {
     m.tabs.push(answer);
   };
 
-  /** `prepareParams` answered: a file that was read and parsed. */
+  /**
+   * **THE READ-SETTLERS CALL `core.preparedParams`, WHICH IS WHAT THE GLUE
+   * CALLS (the S3 review's M-1).** They used to hand-write their own object
+   * literals -- and so did `prepareParams` -- so a field could be present on
+   * one side and absent on the other. It was: deleting the one word `paths,`
+   * from the glue's missing-file literal turned the WHOLE of S3 off, with
+   * 249 of 249 tests green (MEASURED by the review, reproduced by the
+   * implementer). One builder, both sides, and the class is closed.
+   *
+   * `m.paths` is the model's `paramsPaths` answer, and the `paths` the
+   * settler passes is the same object `paramsPathsFor` would answer.
+   */
   m.readOk = (i, params, path) =>
-    m.reads[i].settle({ params, path: path || "/w/.ermine/preview/Sales/report.params.json", read: true, warnings: [] });
+    m.reads[i].settle(core.preparedParams(m.paths, { kind: core.PREPARED_READ, params, warnings: [] }));
   /** `prepareParams` answered: no file, `{}` and one notice. */
   m.readMissing = (i) =>
-    m.reads[i].settle({ params: {}, path: "/w/.ermine/preview/Sales/report.params.json",
-                        notice: { reason: "missing", line: "no params file" } });
+    m.reads[i].settle(core.preparedParams(m.paths, { kind: core.PREPARED_MISSING }));
   /** `prepareParams` answered: a refusal. */
   m.readRefusal = (i, reason) =>
-    m.reads[i].settle({ refusal: { reason: reason || "invalid-json", message: "the params file is not valid JSON" },
-                        path: "/w/.ermine/preview/Sales/report.params.json" });
+    m.reads[i].settle(core.preparedParams(m.paths, {
+      kind: core.PREPARED_REFUSAL,
+      problem: { reason: reason || "invalid-json", message: "the params file is not valid JSON" } }));
+  /** `prepareParams` answered: there is nowhere to write (a `paramsPaths` problem). */
+  m.readNoPath = (i, paths) =>
+    m.reads[i].settle(core.preparedParams(paths, { kind: core.PREPARED_PATH_PROBLEM }));
   m.answerWith = (i, answer) => m.wires[i].settle(answer);
   m.rejectWith = (i, err) => m.wires[i].settle({ __reject: true, err });
   /**
@@ -5742,8 +5770,15 @@ test("S2 M6: the trigger vocabulary -- which triggers consult the mark and which
   for (const trigger of core.UNCONFIRMED_TRIGGERS) {
     assert.strictEqual(core.shouldAutoRender(mark, SALES_PICK, trigger), false, trigger);
   }
+  // WP-8 S3 ADDED `schema` TO THE LIST, and the membership rule is what put
+  // it there: the glue asks for a schema refresh on a render's ANSWER, and
+  // `guardReduce`'s `answer` case KEEPS the mark for a non-stuck answer (it
+  // only ever SETS). So it cannot qualify to stay out -- and it must not,
+  // because `Runner.paramSchema` compiles and EVALUATES the binding
+  // (`json/Runner.scala:849-852`), which is the very thing that wedges.
   assert.deepStrictEqual(core.UNCONFIRMED_TRIGGERS.slice().sort(),
-                         ["answer", "module-learned", "params-file", "restart", "roots"]);
+                         ["answer", "module-learned", "params-file", "restart", "roots", "schema"]);
+  assert.strictEqual(core.shouldAutoRender(mark, SALES_PICK, core.TRIGGER_SCHEMA), false);
   // `answer` is in the refused set although `stuckReduce` can never emit a
   // rerender for one (final re-check, nit 5): the trigger carries no
   // evidence -- it is the server describing the render we just sent -- and
@@ -6210,3 +6245,2195 @@ test("S2 D3: the second re-format while held logs instead of asking, and the hol
   assert.strictEqual(asking.ask, true);
 });
 
+
+// ============================================ WP-8 S3: THE FIRST PICK WRITES
+//
+// S1 decided WHERE the files go and WHAT their text is.  S2 reads a params
+// file that is already there and sends it.  S3 is the first `ermine/schema`
+// client and the first thing in this extension that writes to the
+// developer's disk.  Four kinds of test live below, in this order:
+//
+//   1. the new PURE decisions -- the ordering rule, when a refresh is worth
+//      a preview job, what an answer turned out to be, whether a late one
+//      may still be used, which bytes go where in which order, and whether a
+//      file already holds them;
+//   2. PROPERTIES over the same generated schemas S1's walker is tested on,
+//      because the write plan is a function of an exported schema and its
+//      two invariants (the params file is LAST and is never overwritten, and
+//      no path escapes the workspace folder) must hold for every one;
+//   3. an ASYNC MODEL of the whole first-pick sequence in `sendModel`'s
+//      style, because the schema request puts a SECOND `await` into the send
+//      path -- and every mutant the brief names is an option on that same
+//      model, so each is run against the SAME interleavings;
+//   4. SOURCE PINS, because the write order, the guard's place in it and the
+//      "the params file is written from ONE branch" rule are all shapes of
+//      `extension.js` that no behavioural test in this file can see.
+
+// -------------------------------------------------------------------- isoDay
+
+test("S3: today is the machine's own day, not a UTC slice of it", () => {
+  // A pure function of the Date it is handed: the glue owns the clock, as it
+  // does for the restart reducer.
+  assert.strictEqual(core.isoDay(new Date(2026, 8, 21, 0, 5)), "2026-09-21");
+  assert.strictEqual(core.isoDay(new Date(2026, 8, 21, 23, 55)), "2026-09-21");
+  assert.strictEqual(core.isoDay(new Date(2026, 0, 1)), "2026-01-01");
+  assert.strictEqual(core.isoDay(new Date(2026, 11, 31)), "2026-12-31");
+  assert.strictEqual(core.isoDay(new Date("nonsense")), null);
+  // AND IT IS WHAT `skeletonFrom` ACCEPTS: the two are only useful together.
+  const today = core.isoDay(new Date());
+  assert.strictEqual(core.skeletonFrom(SALES_SCHEMA, today, "./report.schema.json").problem, undefined);
+  // A UTC slice is a DIFFERENT day west of Greenwich for most of the working
+  // day, which is the reason this is local. Pinned as the shape rather than
+  // as an inequality, since the test machine's zone is not ours to choose.
+  assert.match(today, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+// -------------------------------------------------------- G15: which first
+
+test("S3: G15 -- no params file puts the SCHEMA first, a file present puts the RENDER first", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  assert.ok(!paths.problem);
+
+  const missing = core.schemaOrder(paths, true);
+  assert.strictEqual(missing.first, "schema");
+  assert.strictEqual(missing.write, true);
+  assert.match(missing.why, /no params file yet/);
+
+  const present = core.schemaOrder(paths, false);
+  assert.strictEqual(present.first, "render");
+  assert.strictEqual(present.write, false);
+  assert.match(present.why, /already on disk/);
+
+  // NO PATHS AT ALL: a report outside every workspace folder, a pick with no
+  // module, an operator binding. Nothing is written and no schema is asked
+  // for -- the render goes with the inline `{}` as WP-7 sends it, and S2 has
+  // already said why, once per pick.
+  const outside = core.paramsPaths(SALES_PICK, "/elsewhere", "posix");
+  assert.ok(outside.problem);
+  for (const nowhere of [outside, undefined, null, {}, "nonsense"]) {
+    const o = core.schemaOrder(nowhere, true);
+    assert.strictEqual(o.first, "render", JSON.stringify(nowhere));
+    assert.strictEqual(o.write, false);
+  }
+  // `fileMissing` is a strict true: an undefined "we do not know" must not
+  // be read as "there is no file" and write over one.
+  for (const unknown of [undefined, null, 0, "", "yes", 1]) {
+    assert.strictEqual(core.schemaOrder(paths, unknown).first, "render", JSON.stringify(unknown));
+  }
+});
+
+// ------------------------------------------------------------ D8: refreshing
+
+test("S3: D8 -- the schema file is refreshed only after an answer that says the report COMPILED", () => {
+  const T = core.TRIGGER_INVALIDATED;
+  assert.strictEqual(core.shouldRefreshSchema({ ok: true, generation: 1 }, T).refresh, true);
+  assert.strictEqual(
+    core.shouldRefreshSchema({ ok: false, status: 400, path: "$.params.fromDay" }, T).refresh, true);
+  assert.strictEqual(core.shouldRefreshSchema({ ok: false, status: 400, path: "$.params" }, T).refresh, true);
+
+  // Each NO for its own reason: a 404/409 never reached a report, a 500 is a
+  // load or an evaluation failure (so there may be no parameter type to
+  // export, and asking queues a job behind a server that is already
+  // unhappy), and a 400 anywhere else is about the request.
+  for (const answer of [
+    { ok: false, status: 404, reason: "not-placed" },
+    { ok: false, status: 409, reason: "shadowed" },
+    { ok: false, status: 500, message: "module does not load" },
+    { ok: false, status: 400, path: "$" },
+    { ok: false, status: 400, path: "$.roots" },
+    { ok: false, status: 500, stuck: true },
+  ]) {
+    assert.strictEqual(core.shouldRefreshSchema(answer, T).refresh, false, JSON.stringify(answer));
+  }
+  // A PARAMS REFUSAL never asked a server anything at all (`status: null`).
+  const refusal = core.paramsRefusalAnswer(core.paramsToSend("{"), "/p.json", 3);
+  assert.strictEqual(core.shouldRefreshSchema(refusal, T).refresh, false);
+  assert.strictEqual(core.shouldRefreshSchema(undefined, T).refresh, false);
+});
+
+test("S3: D8 -- and the TRIGGER decides too, fail-closed on anything undeclared", () => {
+  const ok = { ok: true, generation: 1 };
+  assert.deepStrictEqual(core.SCHEMA_REFRESH_TRIGGERS.slice().sort(),
+                         ["explicit", "file-event", "invalidated", "module-learned", "roots"]);
+  for (const trigger of core.SCHEMA_REFRESH_TRIGGERS) {
+    assert.strictEqual(core.shouldRefreshSchema(ok, trigger).refresh, true, trigger);
+  }
+  // `params-file` IS THE LOAD-BEARING EXCLUSION, twice over: editing the
+  // parameters cannot change the parameter TYPE, and it is the trigger the
+  // skeleton's own creation fires -- so leaving it out is what stops a first
+  // pick asking for the schema twice in a row.
+  assert.strictEqual(core.shouldRefreshSchema(ok, core.TRIGGER_PARAMS_FILE).refresh, false);
+  // `restart` and `recovered` are the `fx.schema` seam's own, and it asks.
+  assert.strictEqual(core.shouldRefreshSchema(ok, core.TRIGGER_RESTART).refresh, false);
+  assert.strictEqual(core.shouldRefreshSchema(ok, core.TRIGGER_RECOVERED).refresh, false);
+  // D2's policy, applied here as well: unknown means NO.
+  for (const junk of [undefined, null, "", 0, "typo", {}]) {
+    assert.strictEqual(core.shouldRefreshSchema(ok, junk).refresh, false, JSON.stringify(junk));
+    assert.match(core.shouldRefreshSchema(ok, junk).why, /cannot have changed/);
+  }
+});
+
+// -------------------------------------------------- what an answer turned out to be
+
+test("S3: every way an ermine/schema answer can fail is named, and NONE of them blocks a render", () => {
+  // **EVERY ARM CARRIES ALL THREE KEYS (the delta re-review's D-1).** The
+  // first cut minted the success and the three server-side failures HERE as
+  // `{schema}` and a BARE `{reason, message}`, while the glue's other two
+  // failure returns were WRAPPED `{problem: ...}` -- and both callers test
+  // `outcome.problem`. MEASURED on a real disk: every server-side failure
+  // fell through the handler and the D8 refresh wrote the literal text
+  // `undefined\n` into the schema file.
+  const shapes = [
+    ["a schema", SALES_SCHEMA, null],
+    ["an {error}", { error: "no module named Sales", reason: "not-placed" }, "error"],
+    ["a stuck refusal", { error: "the preview is stuck", stuck: true }, "stuck"],
+    ["not an object", 7, "no-schema"],
+  ];
+  for (const [label, answer, reason] of shapes) {
+    const out = core.schemaAnswerOutcome(answer);
+    for (const key of ["schema", "problem", "abandoned"]) {
+      assert.ok(key in out, label + " declares `" + key + "`");
+    }
+    assert.strictEqual(out.problem === null ? null : out.problem.reason, reason, label);
+    assert.strictEqual(out.schema, reason === null ? SALES_SCHEMA : null, label);
+    assert.strictEqual(out.abandoned, null, label);
+    if (reason !== null) assert.ok(out.problem.message.length > 20, label);
+  }
+  assert.match(core.schemaAnswerOutcome({ error: "no module named Sales" }).problem.message,
+               /no module named Sales/);
+  assert.match(core.schemaAnswerOutcome({ error: "x", stuck: true }).problem.message, /Nothing was written/);
+  for (const junk of [null, undefined, 7, "a schema", [], true]) {
+    assert.strictEqual(core.schemaAnswerOutcome(junk).problem.reason, "no-schema", JSON.stringify(junk));
+  }
+  // A JSON-RPC error or a transport rejection, in the SAME shape.
+  const failed = core.schemaRequestFailure(new Error("Connection got disposed"));
+  assert.strictEqual(failed.problem.reason, "request-failed");
+  assert.match(failed.problem.message, /Connection got disposed/);
+  assert.match(failed.problem.message, /no schema file was written/);
+  assert.strictEqual(failed.schema, null);
+  // And the abandon arm, which the MODEL used to mint as a literal.
+  const gone = core.schemaAbandoned({ reason: "pick-changed", why: "x" });
+  assert.strictEqual(gone.abandoned.reason, "pick-changed");
+  assert.strictEqual(gone.problem, null);
+  assert.strictEqual(gone.schema, null);
+  // FAIL CLOSED: a builder call that names none of the three is a problem,
+  // never a silent success.
+  for (const nothing of [undefined, null, {}, { schema: undefined }, { schema: 7 }, 5]) {
+    assert.strictEqual(core.schemaOutcome(nothing).problem.reason, "no-schema", JSON.stringify(nothing));
+  }
+  // Every one of them carries a `reason` from a closed little vocabulary, so
+  // "one notice per distinct problem per pick" really is one.
+  const reasons = ["no-schema", "error", "stuck", "request-failed"];
+  const keys = new Set(reasons.map((r) => core.schemaNoticeKey(SALES_PICK, r)));
+  assert.strictEqual(keys.size, reasons.length, "four reasons, four keys");
+});
+
+// --------------------------------------------- D7: may a late answer be used
+
+test("S3: D7 -- a schema answer is discarded by BOTH tests, and neither is redundant", () => {
+  const attempt = core.renderAttempt(4, SALES_PICK, 2, 0, 0);
+  const live = (over) => core.previewNow(
+    over && "generation" in over ? over.generation : 4,
+    over && "pick" in over ? over.pick : SALES_PICK,
+    over && "clientEpoch" in over ? over.clientEpoch : 2,
+    over && "stopCount" in over ? over.stopCount : 0,
+    over && "hasClient" in over ? over.hasClient : true);
+
+  assert.deepStrictEqual(core.mayUseSchemaAnswer(attempt, live(), SALES_PICK),
+                         { send: true, reason: null, why: null });
+
+  // `mayStillSend`'s own arms, unchanged: a restart, a stop, a newer render,
+  // a teardown, the client going away.
+  assert.strictEqual(core.mayUseSchemaAnswer(attempt, live({ clientEpoch: 3 }), SALES_PICK).reason,
+                     "server-restarted");
+  assert.strictEqual(core.mayUseSchemaAnswer(attempt, live({ stopCount: 1 }), SALES_PICK).reason,
+                     "server-stopped");
+  assert.strictEqual(core.mayUseSchemaAnswer(attempt, live({ generation: 5 }), SALES_PICK).reason,
+                     "superseded");
+  assert.strictEqual(core.mayUseSchemaAnswer(attempt, live({ pick: undefined }), undefined).reason,
+                     "pick-cleared");
+  assert.strictEqual(core.mayUseSchemaAnswer(attempt, live({ hasClient: false }), SALES_PICK).reason,
+                     "no-client");
+
+  // AND THE ONE `mayStillSend` CANNOT SEE: the MODULE, which is the
+  // DIRECTORY the file would be written into. A header edited from
+  // `module Sales` to `module Sales2` keeps the uri and the binding, so
+  // `markKey` -- and every arm above -- says nothing moved.
+  const renamed = core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", "Sales2", ["/w/doc"]);
+  assert.strictEqual(core.mayStillSend(attempt, live({ pick: renamed })).send, true,
+                     "mayStillSend alone does not notice a module rename -- this is why both are asked");
+  const both = core.mayUseSchemaAnswer(attempt, live({ pick: renamed }), renamed);
+  assert.strictEqual(both.send, false);
+  assert.strictEqual(both.reason, "pick-changed");
+  assert.ok(core.ABANDON_REASONS.indexOf(both.reason) >= 0, "the vocabulary stays closed");
+  assert.match(both.why, /module or roots moved/);
+});
+
+// -------------------------------------------------------- write-if-different
+
+test("S3: D8's write-if-different, and an unreadable file is never mistaken for a matching one", () => {
+  assert.strictEqual(core.schemaFileNeedsWrite("a\n", "a\n"), false);
+  assert.strictEqual(core.schemaFileNeedsWrite("a\n", "b\n"), true);
+  // NOT THERE, or could not be read: `readTextIfPresent` answers null and
+  // "we do not know what is there" is not "it is already right".
+  assert.strictEqual(core.schemaFileNeedsWrite(null, "a\n"), true);
+  assert.strictEqual(core.schemaFileNeedsWrite(undefined, "a\n"), true);
+  // Nothing to write is nothing to do.
+  assert.strictEqual(core.schemaFileNeedsWrite("a\n", undefined), false);
+  // AND IT IS MEANINGFUL ONLY BECAUSE `schemaFileText` IS STABLE: the same
+  // schema always renders to the same bytes, which is why the comparison can
+  // be of bytes at all.
+  const once = core.schemaFileText(core.schemaFileFor(SALES_SCHEMA));
+  const twice = core.schemaFileText(core.schemaFileFor(JSON.parse(JSON.stringify(SALES_SCHEMA))));
+  assert.strictEqual(once, twice);
+  assert.strictEqual(core.schemaFileNeedsWrite(once, twice), false);
+});
+
+// ------------------------------------------------------------- the write plan
+
+test("S3: the plan writes the params file LAST, and ifAbsent, and the schema file ifDifferent", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  const plan = core.paramsWritePlan(paths, SALES_SCHEMA, TODAY);
+  assert.strictEqual(plan.problem, undefined);
+  assert.deepStrictEqual(plan.files.map((f) => f.what), ["gitignore", "schema", "params"]);
+  assert.deepStrictEqual(plan.files.map((f) => f.mode), ["ifAbsent", "ifDifferent", "ifAbsent"]);
+  assert.deepStrictEqual(plan.files.map((f) => f.path), [
+    "/w/.ermine/preview/.gitignore",
+    "/w/.ermine/preview/Sales/report.schema.json",
+    "/w/.ermine/preview/Sales/report.params.json",
+  ]);
+  // THE PARAMS FILE IS LAST BECAUSE ITS CREATION IS WHAT THE S2 WATCHER SEES
+  // (the watcher's glob is the exact params path, so neither of the other
+  // two matches anything). By the time the render its `onDidCreate`
+  // schedules runs, the schema it points at is already on disk.
+  assert.strictEqual(core.paramsPaths(SALES_PICK, "/w", "posix").relativeGlob,
+                     ".ermine/preview/Sales/report.params.json");
+
+  // THE BYTES, each from the function S1 wrote for it.
+  assert.strictEqual(plan.files[0].text, core.paramsGitignoreText);
+  assert.strictEqual(plan.files[1].text, core.schemaFileText(core.schemaFileFor(SALES_SCHEMA)));
+  assert.strictEqual(plan.files[2].text,
+                     core.schemaFileText(core.skeletonFrom(SALES_SCHEMA, TODAY, "./report.schema.json").value));
+  assert.strictEqual(plan.embeddable, true);
+  // THE SKELETON IS S1's, MEASURED: `onlyRegion` is a `Maybe` and is ABSENT.
+  assert.deepStrictEqual(plan.skeleton,
+    { $schema: "./report.schema.json", fromDay: TODAY, toDay: TODAY, orderBy: "ByDay" });
+  assert.ok(plan.files[2].text.endsWith("}\n"), "a trailing newline, so git and every POSIX tool behave");
+});
+
+test("S3: a NON-OBJECT params root still gets its file, without a $schema line (G5)", () => {
+  // WP-7's own `WpSpin` shape, `report : Int -> Node`.
+  const intRoot = { $schema: "https://json-schema.org/draft/2020-12/schema", $id: "ermine:WpSpin/Int",
+                    type: "integer", $defs: {} };
+  const paths = core.paramsPaths(
+    core.makePick("file:///w/WpSpin.e", "/w/WpSpin.e", "report", "WpSpin", []), "/w", "posix");
+  const plan = core.paramsWritePlan(paths, intRoot, TODAY);
+  assert.strictEqual(plan.embeddable, false);
+  assert.strictEqual(plan.skeleton, 0);
+  assert.strictEqual(plan.files[2].text, "0\n");
+  // The schema file is STILL written -- it is generated and gitignored
+  // either way, and the refresh path then needs no second rule -- and the
+  // notice says the editor will not validate the params file.
+  assert.strictEqual(plan.files[1].what, "schema");
+  assert.match(core.paramsWrittenNotice(paths, false), /no "\$schema" line/);
+  assert.match(core.paramsWrittenNotice(paths, false), /editor will not validate/);
+  assert.match(core.paramsWrittenNotice(paths, true), /ordinary committed source/);
+});
+
+test("S3: a plan is refused, and nothing is written, when there is no skeleton or no path", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  // An ALL-RECURSIVE type has no finite skeleton (S1's own refusal).
+  const loop = { $ref: "#/$defs/T", $defs: { T: { type: "object", properties: { next: { $ref: "#/$defs/T" } },
+                                                 required: ["next"], additionalProperties: false } } };
+  const refused = core.paramsWritePlan(paths, loop, TODAY);
+  assert.ok(refused.problem, JSON.stringify(refused).slice(0, 200));
+  assert.strictEqual(refused.files, undefined, "a refusal writes NOTHING, not some of it");
+
+  // No path at all.
+  for (const nowhere of [undefined, null, {}, core.paramsPaths(SALES_PICK, "/elsewhere", "posix")]) {
+    const out = core.paramsWritePlan(nowhere, SALES_SCHEMA, TODAY);
+    assert.strictEqual(out.problem.reason, "no-params-path", JSON.stringify(nowhere));
+    assert.strictEqual(out.files, undefined);
+  }
+  // An answer that is not a schema document.
+  assert.strictEqual(core.paramsWritePlan(paths, 7, TODAY).problem.reason, "not-a-schema");
+  // A `today` the walker refuses.
+  assert.strictEqual(core.paramsWritePlan(paths, SALES_SCHEMA, "21/09/2026").problem.reason, "bad-today");
+});
+
+test("S3: the plan never mutates the server's answer, and is idempotent over it", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  const before = JSON.stringify(SALES_SCHEMA);
+  const a = core.paramsWritePlan(paths, SALES_SCHEMA, TODAY);
+  const b = core.paramsWritePlan(paths, SALES_SCHEMA, TODAY);
+  assert.strictEqual(JSON.stringify(SALES_SCHEMA), before, "the server's answer is the glue's, not ours");
+  assert.deepStrictEqual(a.files, b.files);
+});
+
+test("S3: the notices name the files and say what is ignored and why", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  const written = core.paramsWrittenNotice(paths, true);
+  assert.match(written, /report\.params\.json/);
+  assert.match(written, /report\.schema\.json/);
+  assert.match(written, /gitignore/);
+  const problem = core.schemaProblemNotice(
+    core.schemaAnswerOutcome({ error: "boom" }), paths.paramsPath);
+  assert.match(problem, /no params file was written/);
+  assert.match(problem, /renders with empty parameters/);
+  assert.match(problem, /boom/);
+  // It takes the `{problem: ...}` wrapper too, which is what `paramsWritePlan`
+  // answers and what the glue holds.
+  assert.match(core.schemaProblemNotice(core.paramsWritePlan({}, SALES_SCHEMA, TODAY), "/p.json"),
+               /nowhere to write/);
+  // One key per (pick, reason), and it cannot collide with a params notice.
+  assert.notStrictEqual(core.schemaNoticeKey(SALES_PICK, "stuck"), core.paramsNoticeKey(SALES_PICK, "stuck"));
+  assert.strictEqual(core.schemaNoticeKey(SALES_PICK, "stuck"), core.schemaNoticeKey(SALES_PICK, "stuck"));
+  assert.notStrictEqual(core.schemaNoticeKey(SALES_PICK, "stuck"), core.schemaNoticeKey(OTHER_PICK, "stuck"));
+});
+
+// ---------------------------------------------------------------- properties
+
+test("PROPERTY (S3): every plan puts the params file last, ifAbsent, inside the folder", () => {
+  const rnd = wp8Rnd(8383831);
+  let planned = 0, refused = 0, nonObject = 0;
+  for (let i = 0; i < 3000; i++) {
+    const schema = generateSchema(rnd);
+    const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+    const plan = core.paramsWritePlan(paths, schema, TODAY);
+    if (plan.problem) { refused++; continue; }
+    planned++;
+    if (!plan.embeddable) nonObject++;
+    // THE TWO INVARIANTS THE WRITE LOOP RELIES ON.
+    const last = plan.files[plan.files.length - 1];
+    assert.strictEqual(last.what, "params", "the params file is LAST");
+    assert.strictEqual(last.mode, "ifAbsent", "and is NEVER overwritten");
+    assert.strictEqual(plan.files.filter((f) => f.what === "params").length, 1);
+    assert.strictEqual(plan.files.filter((f) => f.mode === "ifDifferent").length, 1);
+    for (const f of plan.files) {
+      assert.ok(f.path.indexOf("/w/.ermine/preview/") === 0, f.path);
+      assert.strictEqual(typeof f.text, "string");
+      assert.ok(f.text.endsWith("\n"), f.what + " ends with a newline");
+    }
+    // And the params file's own bytes always parse back to the skeleton.
+    assert.deepStrictEqual(JSON.parse(last.text), plan.skeleton);
+  }
+  assert.ok(planned > 2000 && refused > 0 && nonObject > 0,
+            `distribution: ${planned} planned, ${refused} refused, ${nonObject} non-object roots`);
+});
+
+test("PROPERTY (S3): the written params file is what the written schema file accepts", () => {
+  // The whole point of writing the two together. S1 pins that a skeleton
+  // validates against the schema FILE; this pins that the PLAN's two texts
+  // -- the bytes that actually reach the disk -- are that same pair after a
+  // round trip through JSON.
+  const rnd = wp8Rnd(6464641);
+  let checked = 0;
+  for (let i = 0; i < 1500; i++) {
+    const schema = generateSchema(rnd);
+    const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+    const plan = core.paramsWritePlan(paths, schema, TODAY);
+    if (plan.problem) continue;
+    const file = JSON.parse(plan.files[1].text);
+    const value = JSON.parse(plan.files[2].text);
+    assert.strictEqual(validates(file, value, file.$defs || {}, 0), true,
+                       "the skeleton does not validate against the file that is written beside it");
+    // AND THE `$schema` LINE THE FILE CARRIES IS THE ONE THAT WAS WRITTEN.
+    if (plan.embeddable) assert.strictEqual(value.$schema, paths.schemaRef);
+    else assert.ok(value === null || typeof value !== "object" || Array.isArray(value) ||
+                   value.$schema === undefined);
+    checked++;
+  }
+  assert.ok(checked > 1000, "checked " + checked);
+});
+
+// ------------------------------- the async model of the first-pick sequence
+//
+// A FAITHFUL MODEL OF THE SECOND `await` THE SEND PATH NOW HAS, statement for
+// statement with `renderNow`'s no-file branch, `firstPickSchemaAndWrite`,
+// `requestSchema` and `applyWritePlan`.  It calls the real pure decisions
+// (`schemaOrder`, `mayUseSchemaAnswer`, `schemaAnswerOutcome`,
+// `paramsWritePlan`, `schemaFileNeedsWrite`, `mayAutoRender`) rather than
+// restating them, so what is modelled is the ORDER, the DISK and nothing
+// else.
+//
+// THE MODEL-FIDELITY RULE (the header of this file) applied to this stage:
+//   * the glue captures `core.renderAttempt`'s frozen snapshot BEFORE the
+//     read and reuses that SAME object across the schema await -- so the
+//     model does too, and never rebuilds one;
+//   * the glue mutates `picked.roots` IN PLACE on a roots change, replaces
+//     `client` on a restart and bumps `stopCount` on a stop -- `sendModel`'s
+//     own mutators, reused here unchanged;
+//   * the glue's `firstPickTried` is keyed by `attempt.key` and is added to
+//     BEFORE the await, so a second render during the wait does not ask a
+//     second time. The model adds it in the same place;
+//   * the glue writes the params file LAST and relies on the S2 watcher's
+//     `onDidCreate` for the render, scheduling nothing itself -- except in
+//     the one case where the file turned out to be somebody else's.
+
+/**
+ * A disk: path -> text, plus the failure modes a real one has.
+ *
+ * **IT HOLDS SYMLINKS, BECAUSE A REAL DISK DOES** (the S3 review's M-3, and
+ * this file's own model-fidelity rule: a model disk that cannot hold what a
+ * real disk holds is a test of a different program). `links` maps a path to
+ * whether it is a link; `type` answers VS Code's FileType bitmask the way
+ * `statType` reads it, and `read`/`write` FOLLOW a link exactly as node's
+ * `fs` does -- which is what made probes 8b and 11 destroy things outside
+ * the workspace.
+ */
+function diskModel(opts) {
+  const o = opts || {};
+  const files = new Map(o.files || []);
+  const links = new Map(o.links || []);        // path -> target path
+  return {
+    files,
+    links,
+    creates: [],
+    writes: [],
+    readOnly: o.readOnly === true,
+    symlink(p, target) { links.set(p, target); },
+    /** `statType`: null when it is not there, else the FileType bitmask. */
+    type(p) {
+      if (links.has(p)) return core.FILE_TYPE_SYMLINK | 1;
+      if (files.has(p)) return 1;
+      if (o.directories && o.directories.indexOf(p) >= 0) return 2;
+      return null;
+    },
+    /** Where a path really lands, following one level of link as fs does. */
+    real(p) { return links.has(p) ? links.get(p) : p; },
+    /** `vscode.workspace.fs.createDirectory` */
+    mkdir() { if (this.readOnly) throw new Error("EROFS: read-only file system"); },
+    /** `readTextIfPresent`: null for anything that is not there. */
+    read(p) { const r = this.real(p); return files.has(r) ? files.get(r) : null; },
+    /** `writeTextFile`: OVERWRITES, like `workspace.fs.writeFile`. */
+    write(p, text) {
+      if (this.readOnly) throw new Error("EROFS: read-only file system");
+      files.set(this.real(p), text);
+      this.writes.push(this.real(p));
+    },
+    /**
+     * `createFileWithoutOverwriting`, including the read-back.
+     * `o.ignoresContents` models a VS Code that honours `createFile` but not
+     * its `contents` option -- the case the read-back exists for.
+     */
+    create(p, text) {
+      if (this.readOnly) return core.createOutcome(core.CREATE_FAILED, "EROFS: read-only file system");
+      // The look before, which decides nothing about safety and everything
+      // about what is SAID: a file already holding exactly these bytes was
+      // not created by us (MEASURED against a real disk, wp8-s3/measure.log).
+      if (this.read(p) !== null) return core.createOutcome(core.EXISTED);
+      const r = this.real(p);                       // a link is followed, as fs does
+      this.creates.push(r);
+      // A RACING WRITER, landing between the look-before and the read-back,
+      // which is the only way the zero-byte branch is reachable at all and
+      // is how the review MEASURED M-5.
+      if (o.racingCreate !== undefined) files.set(r, o.racingCreate);
+      else if (!files.has(r)) files.set(r, o.ignoresContents ? "" : text);
+      const after = this.read(p);
+      if (after === null) return core.createOutcome(core.CREATE_FAILED, "it is not there after the create");
+      if (after === text) return core.createOutcome(core.CREATED);
+      // M-5: ZERO BYTES, not "empty". Whitespace is somebody's bytes.
+      if (after === "") { this.write(p, text); return core.createOutcome(core.CREATED); }
+      return core.createOutcome(core.EXISTED);
+    },
+  };
+}
+
+const SALES_PATHS = core.paramsPaths(SALES_PICK, "/w", "posix");
+
+/**
+ * `sendModel` with the S3 branch in it.  Everything `sendModel` does is
+ * unchanged; the additions are the disk, the schema deferreds, and the
+ * no-file branch between the consultation and the latch -- which is exactly
+ * where `extension.js` puts it.
+ *
+ * MUTANTS, each an option, each run against the SAME interleavings:
+ *   `mutantNoSchemaGap`   the answer is used without `mayUseSchemaAnswer`;
+ *   `mutantParamsOverwrite` the params file is written unconditionally;
+ *   `mutantExplicitRender` a render is issued after the write as well;
+ *   `mutantNoSchemaGuard`  the schema request skips the consultation;
+ *   `mutantStaleSchema`    `schemaFileFor` is fed the file read back off the
+ *                          disk instead of the server's fresh answer.
+ */
+function firstPickModel(opts) {
+  const o = opts || {};
+  const m = sendModel(o);
+  m.disk = o.disk || diskModel();
+  m.schemas = [];            // one deferred per ermine/schema request
+  m.scheduled = [];          // scheduleRender calls
+  m.opened = [];             // U2
+  m.notices = [];
+  m.firstPickTried = new Set();
+  m.revealNextRender = false;
+  m.reveals = [];
+  m.today = TODAY;
+
+  const scheduleRender = (reason, trigger) => m.scheduled.push({ reason, trigger });
+  const notice = (reason, line) => m.notices.push({ reason, line });
+
+  /** `requestSchema(attempt)`. */
+  m.requestSchema = async function (attempt) {
+    // N-f: THE BUILDER, BARE, exactly as the glue returns it. This arm
+    // double-wrapped it while the comment below asserted the opposite --
+    // the very class this round closed, gone latent because nothing drove it.
+    if (!m.hasClient) return core.schemaRequestFailure(new Error("there is no language client"));
+    const d = deferred();
+    m.schemas.push({ key: attempt.key, settle: d.settle });
+    const reply = await d.promise;
+    // **D-1: the same builder the glue calls, for EVERY arm.** The model
+    // used to wrap the rejection itself and mint `{abandoned: still}` as a
+    // literal, which is M-1's class with the sign reversed.
+    if (reply && reply.__reject) return core.schemaRequestFailure(reply.err);
+    const still = o.mutantNoSchemaGap
+      ? { send: true }
+      : core.mayUseSchemaAnswer(
+          attempt,
+          core.previewNow(m.generation, m.picked, m.clientEpoch, m.stopCount, m.hasClient),
+          m.picked);
+    if (!still.send) return core.schemaAbandoned(still);
+    return core.schemaAnswerOutcome(reply);
+  };
+
+  /** `applyWritePlan(files, paramsPath)`, statement for statement. */
+  m.applyWritePlan = function (files, paramsPath) {
+    const wrote = [];
+    const problems = [];
+    for (const file of files) {
+      // M-2: a PURE decision, and it fails CLOSED. The mutant is the
+      // fail-OPEN `else` the first cut shipped.
+      const step = o.mutantParamsOverwrite
+        ? { act: file.mode === core.WRITE_IF_ABSENT ? "MUTANT" : core.WRITE_IF_DIFFERENT, problem: null }
+        : core.writeStep(file, paramsPath);
+      if (step.problem) {
+        problems.push(step.problem);
+        if (file.what === core.WRITE_PARAMS) return core.writeOutcome({ wrote, problems });
+        continue;
+      }
+      if (step.act === "MUTANT") {                   // the unconditional overwrite
+        m.disk.write(file.path, file.text);
+        wrote.push(file.what);
+        continue;
+      }
+      if (step.act === core.WRITE_IF_ABSENT) {
+        const outcome = m.disk.create(file.path, file.text);
+        if (outcome.outcome === core.CREATE_FAILED) {
+          problems.push(core.writeFailedProblem(file.what, file.path, outcome.why));
+          // N-5: the generated .gitignore is a convenience.
+          if (file.what === core.WRITE_GITIGNORE) continue;
+          return core.writeOutcome({ wrote, problems });
+        }
+        if (outcome.outcome === core.CREATED) wrote.push(file.what);
+        else if (file.what === core.WRITE_PARAMS) return core.writeOutcome({ wrote, existed: true, problems });
+        continue;
+      }
+      const existing = m.disk.read(file.path);
+      if (!core.schemaFileNeedsWrite(existing, file.text)) continue;
+      m.disk.write(file.path, file.text);
+      wrote.push(file.what);
+    }
+    return core.writeOutcome({ wrote, problems });
+  };
+
+  /** `firstPickSchemaAndWrite(attempt, paths)`. */
+  m.firstPickSchemaAndWrite = async function (attempt, paths) {
+    const outcome = await m.requestSchema(attempt);
+    if (outcome.abandoned) {
+      m.log.push("schema discarded (" + outcome.abandoned.reason + ")");
+      return core.firstPickResult({ abandoned: true });
+    }
+    if (outcome.problem) { notice(outcome.problem.reason, outcome.problem.message); return core.firstPickResult({}); }
+    // THE FRESH ANSWER, ALWAYS (the S1 review's D-1 obligation). The mutant
+    // feeds the file back off the disk instead.
+    const source = o.mutantStaleSchema && m.disk.read(paths.schemaPath) !== null
+      ? JSON.parse(m.disk.read(paths.schemaPath))
+      : outcome.schema;
+    const plan = core.paramsWritePlan(paths, source, m.today);
+    if (plan.problem) { notice(plan.problem.reason, plan.problem.message); return core.firstPickResult({}); }
+    // M-3: the symlink check, BEFORE the directory is made, over the same
+    // paths the glue stats and through the same pure pair.
+    if (!o.mutantNoSymlinkCheck) {
+      const seen = [];
+      for (const target of core.writeTargetPaths(
+             paths, [paths.gitignorePath, paths.schemaPath, paths.paramsPath], "posix")) {
+        const type = m.disk.type(target);
+        if (type !== null) seen.push({ path: target, type });
+      }
+      const linked = core.writeTargetProblem(seen);
+      if (linked) { notice(linked.reason, linked.message); return core.firstPickResult({}); }
+    }
+    let applied;
+    try {
+      m.disk.mkdir(paths.dir);
+      applied = m.applyWritePlan(plan.files, paths.paramsPath);
+    } catch (err) {
+      notice("write-failed", String(err && err.message ? err.message : err));
+      return core.firstPickResult({});
+    }
+    for (const problem of applied.problems) notice(problem.reason, problem.message);
+    if (applied.problems.length && applied.wrote.indexOf(core.WRITE_PARAMS) < 0 && !applied.existed) {
+      return core.firstPickResult({});
+    }
+    if (applied.existed) {
+      m.log.push("a params file appeared while the schema was being worked out");
+      return core.firstPickResult({ wrote: true, raced: true });
+    }
+    if (applied.wrote.indexOf(core.WRITE_PARAMS) < 0) return core.firstPickResult({});
+    notice("written", core.paramsWrittenNotice(paths, plan.embeddable));
+    m.opened.push(paths.paramsPath);
+    return core.firstPickResult({ wrote: true });
+  };
+
+  /** `renderNow`, with the S3 branch where `extension.js` puts it. */
+  const inner = m.renderNow;
+  m.renderNow = async function (reason, reveal, trigger, scheduledAt) {
+    if (!m.picked) return;
+    if (!m.hasClient) { m.log.push("no client"); return; }
+    m.generation += 1;
+    const attempt = core.renderAttempt(
+      m.generation, m.picked, m.clientEpoch, m.stopCount, m.stuck.highWater);
+    const mine = attempt.generation;
+    const sentPick = attempt.pick;
+    m.renderInFlight = true;
+    const revealThis = reveal === true || m.revealNextRender;
+    m.revealNextRender = false;
+
+    const read = deferred();
+    m.reads.push({ generation: mine, settle: read.settle });
+    const prepared = await read.promise;
+
+    const verdict = core.mayStillSend(
+      attempt, core.previewNow(m.generation, m.picked, m.clientEpoch, m.stopCount, m.hasClient));
+    if (!verdict.send) {
+      m.log.push("abandoned " + mine + " (" + verdict.reason + ")");
+      if (mine === m.generation) m.renderInFlight = false;
+      return;
+    }
+    if (prepared.refusal) {
+      const refusal = core.paramsRefusalAnswer(prepared.refusal, prepared.path, mine);
+      m.lastAnswer = refusal;
+      if (mine === m.generation) m.renderInFlight = false;
+      m.tabs.push(refusal);
+      m.reveals.push({ generation: mine, reveal: revealThis });
+      return;
+    }
+    m.mark = core.guardReduce(m.mark, { type: "params", pick: sentPick, params: prepared.params }).mark;
+    const permitted = o.mutantNoSchemaGuard
+      ? { render: true, why: null }
+      : core.mayAutoRender(m.mark, sentPick, trigger, scheduledAt);
+    if (!permitted.render) {
+      m.log.push("held " + mine + " (" + trigger + ")");
+      m.held.push({ generation: mine, trigger, mark: m.mark, why: permitted.why });
+      if (mine === m.generation) m.renderInFlight = false;
+      return;
+    }
+
+    // ---- S3, BELOW THE CONSULTATION ----------------------------------------
+    // **`prepared.paths`, NOT A MODEL CONSTANT** (the S3 review's M-1): the
+    // glue reads what `prepareParams` answered, so the model must too.
+    const order = core.schemaOrder(prepared.paths, prepared.notice && prepared.notice.reason === "missing");
+    if (order.first === "schema" && !m.firstPickTried.has(attempt.key)) {
+      m.firstPickTried.add(attempt.key);
+      const written = await m.firstPickSchemaAndWrite(attempt, prepared.paths);
+      if (written.wrote) {
+        // M-4: the render is SCHEDULED, carrying THIS render's own trigger,
+        // instead of being left to an event nobody has ever seen fire.
+        m.revealNextRender = revealThis;
+        scheduleRender(written.raced
+          ? "a params file appeared while the parameter schema was being worked out"
+          : "the params skeleton was written",
+          o.mutantWatcherTrigger ? core.TRIGGER_PARAMS_FILE : trigger);
+        if (mine === m.generation) m.renderInFlight = false;
+        return;
+      }
+      const afterSchema = core.mayStillSend(
+        attempt, core.previewNow(m.generation, m.picked, m.clientEpoch, m.stopCount, m.hasClient));
+      if (!afterSchema.send) {
+        m.log.push("abandoned " + mine + " (" + afterSchema.reason + ")");
+        if (mine === m.generation) m.renderInFlight = false;
+        return;
+      }
+    }
+
+    m.lastParamsSent = prepared.params;
+    m.inFlight = { generation: mine, pick: sentPick, params: prepared.params };
+    m.sent.push(core.renderRequest(attempt, prepared.params));
+    m.reveals.push({ generation: mine, reveal: revealThis });
+    m.log.push("sent " + mine);
+    const wire = deferred();
+    m.wires.push({ generation: mine, settle: wire.settle });
+    const answer = await wire.promise;
+    if (m.inFlight && m.inFlight.generation === mine) m.inFlight = null;
+    if (mine === m.generation) m.renderInFlight = false;
+    m.lastAnswer = answer;
+    m.lastServerAnswer = answer;
+    m.tabs.push(answer);
+    // D8's refresh, NOT awaited in the glue either.
+    const refresh = core.shouldRefreshSchema(answer, trigger);
+    if (refresh.refresh) m.refreshes = (m.refreshes || []).concat([{ generation: mine, why: refresh.why }]);
+  };
+  void inner;
+
+  /** `refreshSchemaFile(attempt, paths, why)`, statement for statement. */
+  m.refreshSchemaFile = async function (attempt, paths, why) {
+    const outcome = await m.requestSchema(attempt);
+    if (outcome.abandoned) { m.log.push("refresh discarded (" + outcome.abandoned.reason + ")"); return; }
+    if (outcome.problem) {
+      notice("refresh-" + outcome.problem.reason,
+             "could not refresh " + paths.schemaPath + ": " + outcome.problem.message);
+      return;
+    }
+    if (!o.mutantNoSymlinkCheck) {
+      const seen = [];
+      for (const target of core.writeTargetPaths(paths, [paths.schemaPath], "posix")) {
+        const type = m.disk.type(target);
+        if (type !== null) seen.push({ path: target, type });
+      }
+      const linked = core.writeTargetProblem(seen);
+      if (linked) { notice(linked.reason, linked.message); return; }
+    }
+    // D-1's defence in depth: the bytes, or a named refusal.
+    const bytes = core.schemaFileBytes(outcome.schema);
+    if (bytes.problem) {
+      notice("refresh-" + bytes.problem.reason, bytes.problem.message);
+      return;
+    }
+    const existing = m.disk.read(paths.schemaPath);
+    if (!core.schemaFileNeedsWrite(existing, bytes.text)) return;
+    m.disk.write(paths.schemaPath, bytes.text);
+    m.log.push("rewrote " + paths.schemaPath + " (" + why + ")");
+  };
+
+  m.answerSchema = (i, answer) => m.schemas[i].settle(answer);
+  m.rejectSchema = (i, err) => m.schemas[i].settle({ __reject: true, err });
+  return m;
+}
+
+test("S3 ASYNC: the ordinary first pick -- schema, three files, the document opened, ONE render", async () => {
+  const m = firstPickModel();
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);                                   // there is no params file
+  await flush();
+  assert.strictEqual(m.sent.length, 0, "the certain-400 render is NOT sent");
+  assert.strictEqual(m.schemas.length, 1, "one ermine/schema, and only one");
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+
+  // THE THREE FILES, IN ORDER, AND THE PARAMS FILE LAST.
+  assert.deepStrictEqual(m.disk.creates, [
+    "/w/.ermine/preview/.gitignore",
+    "/w/.ermine/preview/Sales/report.params.json",
+  ]);
+  assert.deepStrictEqual(m.disk.writes, ["/w/.ermine/preview/Sales/report.schema.json"]);
+  assert.strictEqual(m.disk.read("/w/.ermine/preview/.gitignore"), core.paramsGitignoreText);
+  assert.deepStrictEqual(JSON.parse(m.disk.read("/w/.ermine/preview/Sales/report.params.json")),
+    { $schema: "./report.schema.json", fromDay: TODAY, toDay: TODAY, orderBy: "ByDay" });
+
+  // U2: the params document is opened, once.
+  assert.deepStrictEqual(m.opened, ["/w/.ermine/preview/Sales/report.params.json"]);
+  // ONE NOTICE, and it names all three files.
+  assert.strictEqual(m.notices.length, 1);
+  assert.strictEqual(m.notices[0].reason, "written");
+
+  // **M-4: THE RENDER IS SCHEDULED, NOT LEFT TO AN EVENT NOBODY HAS SEEN
+  // FIRE**, and it carries THIS render's own trigger rather than the
+  // watcher's `params-file` (N-3). It goes through the 150 ms coalescer, so
+  // a watcher event inside that window merges into the same one.
+  assert.strictEqual(m.scheduled.length, 1, "exactly one render is scheduled");
+  assert.strictEqual(m.scheduled[0].trigger, core.TRIGGER_EXPLICIT,
+    "consent stays consent: the watcher's own event would have carried `params-file`");
+  assert.strictEqual(m.sent.length, 0, "and nothing is sent from HERE");
+  assert.strictEqual(m.renderInFlight, false, "and the spinner is released");
+  // THE REVEAL THE PICK WOULD OTHERWISE LOSE is carried to that render.
+  assert.strictEqual(m.revealNextRender, true);
+
+  // THAT RENDER, 150 ms later, reading the file that is now there.
+  m.renderNow(m.scheduled[0].reason, false, m.scheduled[0].trigger);
+  await flush();
+  m.readOk(1, { fromDay: TODAY, toDay: TODAY, orderBy: "ByDay" });
+  await flush();
+  assert.strictEqual(m.sent.length, 1, "exactly ONE render comes of the write");
+  assert.strictEqual(m.schemas.length, 1, "and it does NOT ask for the schema again");
+  assert.strictEqual(m.reveals[0].reveal, true, "the tab the pick asked for is revealed after all");
+});
+
+test("S3 ASYNC: the pick CHANGES while the schema is being worked out -- nothing is written", async () => {
+  const m = firstPickModel();
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  // The user picks another report. The glue replaces `picked` here.
+  m.picked = core.makePick(OTHER_PICK.uri, OTHER_PICK.fsPath, "report", "Other", ["/w/doc"]);
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+  assert.strictEqual(m.disk.files.size, 0, "NOTHING is written for a report nobody picked (D7)");
+  assert.deepStrictEqual(m.opened, []);
+  assert.strictEqual(m.sent.length, 0);
+  assert.ok(m.log.some((l) => /schema discarded \(pick-changed\)/.test(l)), m.log.join(" | "));
+});
+
+test("S3 ASYNC: the MODULE is renamed under the same file -- the one mayStillSend cannot see", async () => {
+  const m = firstPickModel();
+  m.renderNow("invalidated", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  // Same uri, same binding, same roots, DIFFERENT module: the directory the
+  // file would be written into has moved.
+  m.picked = core.makePick(SALES_PICK.uri, SALES_PICK.fsPath, "report", "Sales2", ["/w/doc"]);
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+  assert.strictEqual(m.disk.files.size, 0, "the schema would have been written into the OLD directory");
+  assert.ok(m.log.some((l) => /schema discarded \(pick-changed\)/.test(l)));
+});
+
+test("S3 ASYNC: a RESTART during the schema wait -- nothing is written, nothing is sent", async () => {
+  for (const [what, move] of [
+    ["a new client", (m) => m.serverRestarted()],
+    ["a stop on the same client", (m) => m.serverStopped()],
+    ["a teardown", (m) => m.tearDown()],
+    ["a newer render", (m) => { m.generation += 1; }],
+  ]) {
+    const m = firstPickModel();
+    m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+    await flush();
+    m.readMissing(0);
+    await flush();
+    move(m);
+    m.answerSchema(0, SALES_SCHEMA);
+    await flush();
+    assert.strictEqual(m.disk.files.size, 0, what + ": nothing is written");
+    assert.strictEqual(m.sent.length, 0, what + ": nothing is sent");
+  }
+});
+
+test("S3 ASYNC: the ROOTS change IN PLACE during the schema wait (the S2 review's M1 shape)", async () => {
+  const m = firstPickModel();
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  // THE GLUE MUTATES `picked.roots`, it does not replace the pick. A model
+  // that replaced it would be testing a different program (the file header's
+  // rule, and the defect it was written after).
+  m.rootsChangeInPlace(["/w/other"]);
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+  assert.strictEqual(m.disk.files.size, 0,
+    "a schema computed under the old roots may describe a same-named module from another tree");
+  assert.ok(m.log.some((l) => /roots-changed|pick-changed/.test(l)), m.log.join(" | "));
+});
+
+test("S3 ASYNC: a params file APPEARS during the schema wait -- it is never clobbered", async () => {
+  const mine = '{"fromDay":"2026-01-05","toDay":"2026-02-20","orderBy":"ByAmount"}\n';
+  const disk = diskModel();
+  const m = firstPickModel({ disk });
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  // A `git checkout`, a second window, a colleague's script: the file is
+  // there between the read that said it was not and the write.
+  disk.files.set("/w/.ermine/preview/Sales/report.params.json", mine);
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+
+  assert.strictEqual(disk.read("/w/.ermine/preview/Sales/report.params.json"), mine,
+    "THE RACE, ANSWERED: committed source is never overwritten");
+  assert.deepStrictEqual(m.opened, [], "and a file we did not write is not opened over what you are typing");
+  assert.strictEqual(m.notices.filter((n) => n.reason === "written").length, 0);
+  // We caused no create event, so nothing else may have scheduled a render:
+  // this is the ONE case in which the no-file branch asks for one itself.
+  assert.deepStrictEqual(m.scheduled.map((s) => s.trigger), [core.TRIGGER_EXPLICIT]);
+  assert.match(m.scheduled[0].reason, /appeared/);
+  // The schema file and the .gitignore WERE written: they are ours.
+  assert.ok(disk.read("/w/.ermine/preview/Sales/report.schema.json") !== null);
+  assert.ok(disk.read("/w/.ermine/preview/.gitignore") !== null);
+});
+
+test("S3 ASYNC: a READ-ONLY workspace -- one notice, no files, and the render happens anyway", async () => {
+  const disk = diskModel({ readOnly: true });
+  const m = firstPickModel({ disk });
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+  assert.strictEqual(disk.files.size, 0);
+  assert.strictEqual(m.notices.length, 1);
+  assert.strictEqual(m.notices[0].reason, "write-failed");
+  // NON-FATAL: the report renders, with the inline `{}` WP-7 sends.
+  assert.strictEqual(m.sent.length, 1);
+  assert.deepStrictEqual(m.sent[0].params, {});
+  assert.strictEqual(m.reveals[0].reveal, true, "and it still reveals the tab the pick asked for");
+});
+
+test("S3 ASYNC: the editor creates the file but drops the contents -- the read-back catches it", async () => {
+  // `WorkspaceEdit.createFile`'s `contents` option is DOCUMENTED and its
+  // behaviour here is UNVERIFIED (nobody has run this extension). A create
+  // that produced an EMPTY params file would be an S1 REFUSAL on the next
+  // render -- so the file is read back, and zero content is the one thing
+  // this extension will ever write over.
+  const disk = diskModel({ ignoresContents: true });
+  const m = firstPickModel({ disk });
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+  assert.deepStrictEqual(JSON.parse(disk.read("/w/.ermine/preview/Sales/report.params.json")),
+    { $schema: "./report.schema.json", fromDay: TODAY, toDay: TODAY, orderBy: "ByDay" });
+  assert.deepStrictEqual(m.opened, ["/w/.ermine/preview/Sales/report.params.json"]);
+});
+
+test("S3 ASYNC: every way the schema request can fail falls back to `{}` and says so ONCE", async () => {
+  for (const [what, reply] of [
+    ["an {error}", { error: "no module named Sales", reason: "not-placed" }],
+    ["a stuck refusal", { error: "the preview is stuck", stuck: true }],
+    ["something that is not a schema", 7],
+  ]) {
+    const m = firstPickModel();
+    m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+    await flush();
+    m.readMissing(0);
+    await flush();
+    m.answerSchema(0, reply);
+    await flush();
+    assert.strictEqual(m.disk.files.size, 0, what);
+    assert.strictEqual(m.notices.length, 1, what);
+    assert.strictEqual(m.sent.length, 1, what + ": the render still happens");
+    assert.deepStrictEqual(m.sent[0].params, {}, what);
+  }
+  // A transport rejection is the same story through the other door.
+  const m = firstPickModel();
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  m.rejectSchema(0, new Error("Connection got disposed"));
+  await flush();
+  assert.strictEqual(m.notices[0].reason, "request-failed");
+  assert.strictEqual(m.sent.length, 1);
+});
+
+test("S3 ASYNC: a failed first pick is NOT retried on every render (the loop that would be)", async () => {
+  const m = firstPickModel();
+  for (let i = 0; i < 4; i++) {
+    m.renderNow("invalidated", false, core.TRIGGER_INVALIDATED);
+    await flush();
+    m.readMissing(i);
+    await flush();
+    if (m.schemas.length > i && i === 0) { m.answerSchema(0, { error: "boom" }); await flush(); }
+    if (m.wires.length) { m.answerWith(m.wires.length - 1, { ok: true, generation: m.generation, document: {} }); await flush(); }
+  }
+  assert.strictEqual(m.schemas.length, 1, "ONE attempt per pick: a failed schema is not re-asked per render");
+  assert.strictEqual(m.notices.length, 1, "and the sentence is said once, not four times");
+  assert.strictEqual(m.sent.length, 4, "while every render still happens");
+});
+
+test("S3 ASYNC: TWO first picks in quick succession ask ONCE and write ONCE", async () => {
+  const m = firstPickModel();
+  // Two renders of the SAME pick overlap: the pick's own, and a save that
+  // landed inside the coalescing window and scheduled another.
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.renderNow("invalidated", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.readMissing(0);
+  m.readMissing(1);
+  await flush();
+  // The FIRST is superseded by the second at the gap check (it is older), so
+  // only one reaches the branch -- and `firstPickTried` holds the key from
+  // BEFORE the await, so even if both had, only one request would go out.
+  assert.strictEqual(m.schemas.length, 1, "one ermine/schema for two overlapping renders");
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+  assert.strictEqual(m.disk.creates.filter((p) => /params\.json$/.test(p)).length, 1);
+  assert.deepStrictEqual(m.opened, ["/w/.ermine/preview/Sales/report.params.json"]);
+});
+
+test("S3 ASYNC: a HELD report is never handed a schema request", async () => {
+  // A schema job COMPILES and EVALUATES the binding on the preview queue
+  // (`json/Runner.scala:849-852`), so it is the very thing WP-22 holds --
+  // not a read.
+  const m = firstPickModel();
+  m.mark = core.guardReduce(null, {
+    type: "answer", stuck: true, applies: true, pick: m.picked, params: {}, at: 1 }).mark;
+  assert.ok(core.markMatches(m.mark, m.picked));
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  assert.strictEqual(m.schemas.length, 0, "no schema request for a report that wedged and did not change");
+  assert.strictEqual(m.disk.files.size, 0, "and nothing is written");
+  assert.strictEqual(m.sent.length, 0);
+  assert.strictEqual(m.held.length, 1);
+
+  // AND CONSENT LETS IT THROUGH: the same pick, rendered explicitly.
+  m.mark = core.guardReduce(m.mark, { type: "render", explicit: true }).mark;
+  m.renderNow("Render anyway", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(1);
+  await flush();
+  assert.strictEqual(m.schemas.length, 1);
+});
+
+test("S3 ASYNC: D8's refresh runs after the right answers and the right triggers only", async () => {
+  const cases = [
+    [core.TRIGGER_INVALIDATED, { ok: true, generation: 1, document: {} }, 1],
+    [core.TRIGGER_EXPLICIT, { ok: false, status: 400, path: "$.params.fromDay", generation: 1 }, 1],
+    [core.TRIGGER_INVALIDATED, { ok: false, status: 500, message: "boom", generation: 1 }, 0],
+    // A params save cannot have changed the parameter TYPE -- and this is
+    // also what stops a first pick asking for the schema twice in a row.
+    [core.TRIGGER_PARAMS_FILE, { ok: true, generation: 1, document: {} }, 0],
+    // The `fx.schema` seam owns these two edges.
+    [core.TRIGGER_RESTART, { ok: true, generation: 1, document: {} }, 0],
+    [core.TRIGGER_RECOVERED, { ok: true, generation: 1, document: {} }, 0],
+  ];
+  for (const [trigger, answer, expected] of cases) {
+    const m = firstPickModel({ disk: diskModel({ files: [["/w/.ermine/preview/Sales/report.params.json", "{}"]] }) });
+    m.renderNow("a render", false, trigger);
+    await flush();
+    m.readOk(0, {});
+    await flush();
+    m.answerWith(0, Object.assign({}, answer, { generation: m.generation }));
+    await flush();
+    assert.strictEqual((m.refreshes || []).length, expected, trigger + " " + JSON.stringify(answer));
+  }
+});
+
+// ----------------------------------------------------------------- mutants
+
+test("S3 MUTANT: the schema answer used without the gap check writes for the WRONG pick", async () => {
+  const m = firstPickModel({ mutantNoSchemaGap: true });
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  m.picked = core.makePick(OTHER_PICK.uri, OTHER_PICK.fsPath, "report", "Other", ["/w/doc"]);
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+  assert.ok(m.disk.files.size > 0, "the mutant writes Sales's files for a pick that is now Other");
+  assert.ok(m.opened.length > 0, "and opens a document for a report nobody picked");
+});
+
+test("S3 MUTANT: an unconditional params write DESTROYS committed source", async () => {
+  const mine = '{"fromDay":"2026-01-05","toDay":"2026-02-20","orderBy":"ByAmount"}\n';
+  const disk = diskModel();
+  const m = firstPickModel({ disk, mutantParamsOverwrite: true });
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  disk.files.set("/w/.ermine/preview/Sales/report.params.json", mine);
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+  assert.notStrictEqual(disk.read("/w/.ermine/preview/Sales/report.params.json"), mine,
+    "the mutant clobbers the file that appeared -- which is what `ifAbsent` exists to stop");
+});
+
+test("S3 MUTANT (N-3): a scheduled render carrying the WATCHER's trigger HOLDS an explicit pick", async () => {
+  // A params type with NO required fields skeletonises to `{"$schema": ...}`
+  // and SENDS `{}` -- which fingerprints identically to whatever wedged the
+  // report. So a render carrying `params-file` (UNCONFIRMED) is refused, and
+  // the user who explicitly picked the report is asked a question instead of
+  // shown a document, seconds later. MEASURED by the S3 review
+  // (`scratchpad/wp8s3-review/edge-empty.js`), and the reason M-4's
+  // scheduled render carries THIS render's own trigger.
+  const EMPTY_PARAMS = {
+    $schema: "https://json-schema.org/draft/2020-12/schema", $id: "ermine:Sales/Query",
+    $ref: "#/$defs/Sales.Query",
+    $defs: { "Sales.Query": { type: "object", additionalProperties: false,
+                              properties: { onlyRegion: { type: "string" } }, required: [] } } };
+  const run = async (opts) => {
+    const m = firstPickModel(opts);
+    // The report wedged the preview with `{}` -- a mark that this pick's
+    // skeleton cannot clear, because the skeleton SENDS `{}` too.
+    m.mark = core.guardReduce(null, {
+      type: "answer", stuck: true, applies: true, pick: m.picked, params: {}, at: 1 }).mark;
+    m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+    await flush();
+    m.readMissing(0);
+    await flush();
+    m.answerSchema(0, EMPTY_PARAMS);
+    await flush();
+    assert.strictEqual(m.scheduled.length, 1);
+    m.renderNow(m.scheduled[0].reason, false, m.scheduled[0].trigger);
+    await flush();
+    m.readOk(1, {});
+    await flush();
+    return m;
+  };
+  const mutant = await run({ mutantWatcherTrigger: true });
+  assert.strictEqual(mutant.sent.length, 0, "the mutant renders nothing");
+  assert.strictEqual(mutant.held.length, 1, "and asks the user a question instead");
+  assert.match(mutant.held[0].why, /nothing about .* has changed/);
+
+  const good = await run({});
+  assert.strictEqual(good.sent.length, 1, "consent stays consent: the document is rendered");
+  assert.strictEqual(good.held.length, 0);
+});
+
+test("S3 MUTANT: a schema request that skips the consultation reaches a held report", async () => {
+  const m = firstPickModel({ mutantNoSchemaGuard: true });
+  m.mark = core.guardReduce(null, {
+    type: "answer", stuck: true, applies: true, pick: m.picked, params: {}, at: 1 }).mark;
+  m.renderNow("the params file was saved", false, core.TRIGGER_PARAMS_FILE);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  assert.strictEqual(m.schemas.length, 1,
+    "the mutant hands a job that compiles and evaluates the report to a server it just wedged");
+});
+
+test("S3 MUTANT: feeding the WRITTEN schema file back leaves the root-level copy stale", () => {
+  // THE S1 REVIEW'S D-1 OBLIGATION, and the one thing section 6 makes S3
+  // promise. `schemaFileFor` mints a root-level COPY of a `$defs` entry that
+  // also describes a nested position; a copy tracks its original only within
+  // the call that made it.
+  const tree = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "fixtures", "user-tree.schema.json"), "utf8"));
+  const written = core.schemaFileFor(tree);
+  const copyName = Object.keys(written.$defs).find((n) => /-params-root$/.test(n));
+  assert.ok(copyName, "the fixture must be the recursive case D-1 turns on");
+
+  // THE PARAMS TYPE MOVES UPSTREAM: a field is added to the shared entry.
+  const moved = JSON.parse(JSON.stringify(tree));
+  const shared = moved.$defs[copyName.replace(/-params-root$/, "")];
+  const arm = shared.oneOf ? shared.oneOf[shared.oneOf.length - 1] : shared;
+  arm.properties.newField = { type: "string" };
+  arm.required.push("newField");
+
+  // THE RIGHT WAY: the server's fresh answer. The copy carries the new field.
+  const fresh = core.schemaFileFor(moved);
+  const freshCopy = fresh.$defs[Object.keys(fresh.$defs).find((n) => /-params-root$/.test(n))];
+  const freshArm = freshCopy.oneOf ? freshCopy.oneOf[freshCopy.oneOf.length - 1] : freshCopy;
+  assert.ok(freshArm.properties.newField, "the fresh answer's copy has the new field");
+
+  // THE FORBIDDEN ROUND TRIP: the file we wrote, fed back. The copy is
+  // already there, referenced by nothing else, so nothing re-mints it -- and
+  // it silently keeps the OLD shape while the shared entry beside it moves.
+  const stale = core.schemaFileFor(written);
+  const staleCopy = stale.$defs[copyName];
+  const staleArm = staleCopy.oneOf ? staleCopy.oneOf[staleCopy.oneOf.length - 1] : staleCopy;
+  assert.strictEqual(staleArm.properties.newField, undefined,
+    "which is why S3 must ALWAYS pass the server's fresh ermine/schema answer");
+});
+
+// ------------------------------------------------------------- S3's pins
+//
+// SOURCE PINS, NOT BEHAVIOUR TESTS. S3 adds a second `await` to the send
+// path, a write path and a third caller of the ONE consultation, and none of
+// those three shapes is visible to any model in this file: the model is
+// written from the glue, so a model and a glue that drift agree with each
+// other and with nothing else (this file's header, and the three times it
+// has happened). Each message says what the pin is and what it protects.
+
+/**
+ * STRIP COMMENTS BEFORE MATCHING A STATEMENT (the S3 review's N-1).
+ *
+ * The pin protecting the only unbounded loop this stage could have did
+ * `renderBody.indexOf("firstPickTried.add(attempt.key);")`. **Commenting the
+ * statement out leaves the text in place**, so the pin passed and all 249
+ * tests passed -- MEASURED by the review and reproduced here -- while the
+ * extension asked for a parameter schema, a preview job that compiles and
+ * evaluates the report, once per render for ever in a save-driven loop.
+ *
+ * Every pin below that matches STATEMENT text now matches against this.
+ * Pins that match a log SENTENCE deliberately do not, because a sentence is
+ * allowed to be quoted in a comment.
+ */
+function codeOf(text) {
+  return String(text).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+}
+
+test("glue pins (S3): the first-pick branch, the write path and the guard", () => {
+  const fsMod = require("node:fs");
+  const raw = fsMod.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  // N-1: EVERY statement pin below reads this, not `raw`.
+  const src = codeOf(raw);
+  const pin = (what, fix) =>
+    "source pin (test/preview-core.test.js): extension.js changed shape — " + what +
+    ". If you meant it, update this pin; the behaviour it protects is " + fix;
+  const renderBody = src.slice(src.indexOf("async function renderNow("), src.indexOf("async function showAnswer("));
+
+  // ---- M-1: THE SHAPES ARE MINTED ONCE, AND THE MODEL CALLS THE SAME ------
+  //
+  // THE FOURTH OCCURRENCE of this branch's recurring defect. `prepareParams`
+  // used to build four object literals while the model built its own;
+  // deleting the one word `paths,` from ONE of them turned the whole stage
+  // off with 249/249 green (MEASURED). The builders are the structural fix;
+  // these pins are only that the glue uses them.
+  // The end marker is CODE, not a comment: `codeOf` has stripped the banner
+  // that used to delimit this section, which is exactly the trap N-1 names.
+  const prepareBody = src.slice(src.indexOf("async function prepareParams("),
+                                src.indexOf("const openedParamsFiles = new Set();"));
+  assert.ok(prepareBody.length > 0 && prepareBody.length < 4000 && !/return \{/.test(prepareBody),
+    pin("prepareParams builds an object literal again instead of going through core.preparedParams",
+        "THE FOURTH OCCURRENCE of the model/glue divergence this branch keeps having: a field " +
+        "present on one side and absent on the other. Deleting `paths,` from ONE literal turned " +
+        "the whole stage off with 249/249 green (MEASURED, the S3 review's M-1)"));
+  assert.strictEqual((prepareBody.match(/core\.preparedParams\(/g) || []).length, 7,
+    pin("prepareParams has a return that does not go through core.preparedParams", "the same"));
+  for (const kind of ["PREPARED_PATH_PROBLEM", "PREPARED_MISSING", "PREPARED_READ", "PREPARED_REFUSAL"]) {
+    assert.ok(prepareBody.indexOf("core." + kind) > 0,
+      pin("prepareParams no longer has a " + kind + " outcome", "the same"));
+  }
+  assert.strictEqual((src.match(/return \{ wrote/g) || []).length, 0,
+    pin("firstPickSchemaAndWrite or writeIfDifferent builds a `{wrote}` literal again",
+        "D-1's builder audit: those eleven returns were raw literals on BOTH sides, which is " +
+        "M-1's class once more"));
+  assert.ok(/core\.firstPickResult\(/.test(src) && /core\.writeResult\(/.test(src),
+    pin("the first-pick and write-if-different results are no longer minted by a builder", "the same"));
+  assert.ok(/core\.createOutcome\(/.test(src) && /core\.writeOutcome\(/.test(src) && /core\.schemaAbandoned\(/.test(src),
+    pin("one of the S3 glue shapes is built by hand again (the create's answer, the write plan's " +
+        "answer, or the schema request's abandon)",
+        "the same: every object the glue hands one of its own decisions is minted by ONE exported " +
+        "builder that the MODEL calls too, so a field cannot be dropped on one side only"));
+
+  // ---- G15: WHERE the branch sits, which is the whole of its safety -------
+  const consult = renderBody.indexOf("core.mayAutoRender(");
+  const order = renderBody.indexOf("core.schemaOrder(");
+  const write = renderBody.indexOf("firstPickSchemaAndWrite(");
+  const latch = renderBody.indexOf("inFlightRender = {");
+  assert.ok(order > consult && write > order && write < latch,
+    pin("renderNow's no-file branch is no longer BETWEEN the consultation and the wire",
+        "that a report which wedged the preview is not handed an ermine/schema job — which " +
+        "COMPILES AND EVALUATES the binding on the preview queue (json/Runner.scala:849-852, and " +
+        "lsp/Preview.scala:596-598 says so in the server's own words) — without the user's consent"));
+  assert.ok(/const order = core\.schemaOrder\(prepared\.paths, prepared\.notice && prepared\.notice\.reason === "missing"\);/.test(renderBody),
+    pin("the ordering rule is not asked of core.schemaOrder, or is asked about something other " +
+        "than (this render's paths, and whether the read said there is no file)",
+        "G15: no params file -> the schema first (that render is a certain 400 anyway); a file " +
+        "present -> the render first and the schema only refreshes the generated file"));
+  assert.ok(/if \(order\.first === "schema" && !firstPickTried\.has\(attempt\.key\)\) \{/.test(renderBody),
+    pin("the no-file branch is neutered, or no longer keyed by the snapshot's own pick",
+        "that a failed schema or a failed write is NOT retried on every render of a save-driven " +
+        "loop — which is the only unbounded loop this stage could have"));
+  // N-1: the comments are gone from `renderBody`, so commenting this out is
+  // now exactly as dead as deleting it (MEASURED: it was not, before).
+  const tried = renderBody.indexOf("firstPickTried.add(attempt.key);");
+  assert.ok(tried > 0 && tried < write,
+    pin("renderNow records the first-pick attempt AFTER the await, or not at all",
+        "that two renders overlapping in the coalescing window ask for ONE schema, not two — and " +
+        "that a failed attempt is not re-made once per render for ever (N-1: this pin reads the " +
+        "source with COMMENTS STRIPPED, because commenting the statement out used to pass it)"));
+  // N-10: THE SNAPSHOT, not a fresh one. A rebuilt attempt silently vacates
+  // the MODULE half of D7, which `mayStillSend` does not compare.
+  assert.ok(/const written = await firstPickSchemaAndWrite\(attempt, prepared\.paths\);/.test(renderBody),
+    pin("firstPickSchemaAndWrite is handed something other than THE snapshot and THIS render's paths",
+        "D7's module half: `mayUseSchemaAnswer` compares the module and the roots, which " +
+        "`mayStillSend` does not, and a freshly built attempt would compare the live pick with " +
+        "itself (N-10)"));
+
+  // ---- M-4: ONE RENDER PER COALESCING WINDOW, AND NOTHING OUTSIDE IT ------
+  //
+  // RE-EXPRESSED from "nothing is rendered after the write". The first cut
+  // left the render entirely to the S2 watcher's `onDidCreate`, so a first
+  // pick whose watcher never fires showed NO document and NO message. It now
+  // schedules one; a watcher event inside 150 ms merges, one outside costs a
+  // second identical render with no boot and no mark movement.
+  const wroteBranch = renderBody.slice(renderBody.indexOf("if (written.wrote) {"),
+                                       renderBody.indexOf("const afterSchema ="));
+  assert.ok(wroteBranch.length > 0 && !/renderNow\(/.test(wroteBranch),
+    pin("renderNow renders DIRECTLY after writing the skeleton instead of scheduling",
+        "that at most ONE render comes of the write: `scheduleRender` clears and re-arms the one " +
+        "coalescing timer, so the watcher's own event merges with ours (M-4)"));
+  assert.strictEqual((wroteBranch.match(/scheduleRender\(/g) || []).length, 1,
+    pin("the first-pick branch schedules a number of renders other than one",
+        "the same (M-4)"));
+  // MATCHED AS A WHOLE STATEMENT AT THE START OF ITS LINE: `if (false)
+  // scheduleRender(...)` keeps every word and every count (MEASURED -- that
+  // mutant survived the first expression of this pin).
+  assert.ok(/\n      scheduleRender\(written\.raced/.test(wroteBranch),
+    pin("the render after the write is guarded away, or is no longer a statement of its own",
+        "M-4: a first pick whose watcher event never fires would show NO document and NO " +
+        "message, which is the wrong failure mode for the feature's first minute"));
+  assert.ok(/scheduleRender\(written\.raced[\s\S]{0,220}?, trigger\);/.test(wroteBranch),
+    pin("the render scheduled after the write no longer carries THIS render's own trigger",
+        "N-3: the watcher's event carries `params-file`, which is UNCONFIRMED — so an EXPLICIT " +
+        "pick of a previously-wedged report whose params type has no required fields was answered " +
+        "with the held question instead of a document (MEASURED by the review)"));
+  assert.ok(/if \(mine === generation\) renderInFlight = false;/.test(wroteBranch),
+    pin("the first-pick exit of renderNow no longer releases the spinner under its generation guard",
+        "that a first pick leaves the status bar idle rather than spinning for ever (R5, R11)"));
+  // AND THE SECOND GAP CHECK, for the path where nothing was written.
+  assert.ok(/const afterSchema = core\.mayStillSend\(\s*\n?\s*attempt, core\.previewNow\(generation, picked, clientEpoch, stopCount, !!client\)\);/.test(renderBody) &&
+            /if \(!afterSchema\.send\) \{/.test(renderBody),
+    pin("renderNow does not re-check the gap after the schema request, or does not act on it",
+        "that a pick change, a restart or a newer render during the SCHEMA await abandons this " +
+        "render instead of sending for the wrong pick — the same rule S2 wrote for the read"));
+
+  // ---- THE WRITE PATH IS REACHABLE FROM ONE BRANCH, AND THAT IS STRUCTURAL -
+  assert.strictEqual((src.match(/core\.paramsWritePlan\(/g) || []).length, 1,
+    pin("core.paramsWritePlan has more than one caller",
+        "that the params file can be written from exactly ONE place — renderNow's no-file " +
+        "branch — so a write triggered by an ANSWER cannot be written by accident"));
+  const planCall = src.indexOf("core.paramsWritePlan(");
+  const firstPickFn = src.indexOf("async function firstPickSchemaAndWrite(");
+  const firstPickEnd = src.indexOf("async function refreshSchemaFile(");
+  assert.ok(firstPickFn > 0 && planCall > firstPickFn && planCall < firstPickEnd,
+    pin("core.paramsWritePlan is called from somewhere other than firstPickSchemaAndWrite", "the same"));
+  assert.strictEqual((src.match(/firstPickSchemaAndWrite\(/g) || []).length, 2,
+    pin("firstPickSchemaAndWrite has more than its definition and renderNow's one call",
+        "the same: one definition, one caller, and that caller is the no-file branch"));
+  assert.strictEqual((src.match(/applyWritePlan\(/g) || []).length, 2,
+    pin("applyWritePlan has more than its definition and one caller", "the same"));
+  const refreshBody = src.slice(src.indexOf("async function refreshSchemaFile("),
+                                src.indexOf("async function refreshSchemaFor("));
+  assert.ok(refreshBody.length > 0 && !/paramsPath/.test(refreshBody),
+    pin("refreshSchemaFile names the params path",
+        "that a render's ANSWER can never rewrite the params file — the write -> watcher -> " +
+        "render -> write loop is unwritable rather than merely avoided"));
+  // D-1: the bytes come from the ONE checked builder, over the FRESH answer.
+  assert.ok(/const bytes = core\.schemaFileBytes\(outcome\.schema\);/.test(refreshBody) &&
+            /if \(bytes\.problem\) \{/.test(refreshBody) &&
+            /writeIfDifferent\(paths\.schemaPath, bytes\.text\)/.test(refreshBody),
+    pin("the refreshed schema file is built from something other than the server's FRESH answer, " +
+        "or not through core.schemaFileBytes, or its refusal is ignored",
+        "the S1 review's D-1 obligation: schemaFileFor mints a ROOT-LEVEL COPY of a $defs entry " +
+        "that also describes a nested position, and a copy tracks its original only within the " +
+        "call that made it. Feeding the written file back leaves the copy silently stale"));
+  assert.ok(/core\.paramsWritePlan\(paths, outcome\.schema, todayForSkeleton\(\)\)/.test(src),
+    pin("the write plan is built from something other than the server's FRESH answer", "the same"));
+
+  // ---- N-2: write-if-different is ONE site, and the write is its CONSEQUENCE
+  const wid = src.slice(src.indexOf("async function writeIfDifferent("),
+                        src.indexOf("async function symlinkProblem("));
+  assert.ok(wid.length > 0 &&
+            /const existing = await readTextIfPresent\(fsPath\);\s*\n\s*if \(!core\.schemaFileNeedsWrite\(existing, text\)\) return core\.writeResult\(\{ wrote: false \}\);\s*\n\s*await writeTextFile\(fsPath, text\);/.test(wid),
+    pin("writeIfDifferent no longer makes the write a CONSEQUENCE of core.schemaFileNeedsWrite",
+        "D8: two prose-preserving mutants survived the whole suite when this was two copies with " +
+        "the helper called and its answer ignored — the schema file was then rewritten with " +
+        "identical bytes after every qualifying render, which is the churn it exists to prevent (N-2)"));
+  assert.strictEqual((src.match(/core\.schemaFileNeedsWrite\(/g) || []).length, 1,
+    pin("core.schemaFileNeedsWrite is asked from more than the one write-if-different site",
+        "the same (N-2): one site is one thing to pin"));
+  assert.strictEqual((src.match(/writeTextFile\(/g) || []).length, 3,
+    pin("writeTextFile — the OVERWRITING primitive — has call sites other than its definition, " +
+        "the create's zero-byte branch and writeIfDifferent",
+        "that the only unconditional write in this extension is over zero bytes or over a " +
+        "generated file whose bytes differ"));
+
+  // ---- M-2: the plan's step is a DECISION, and it fails CLOSED -----------
+  const applyBody = src.slice(src.indexOf("async function applyWritePlan("),
+                              src.indexOf("async function openParamsDocument("));
+  // AND THE PARAMS PATH REACHES IT. `writeStep` identifies the params file
+  // BOTH by `what` and by its path; handing it no path drops the second
+  // half silently, so a mislabelled entry would be judged on its label alone.
+  assert.ok(/applyWritePlan\(plan\.files, paths\.paramsPath\)/.test(src),
+    pin("applyWritePlan is called without the params path to compare against",
+        "M-2: the belt as well as the braces — a params entry is refused by any route but the " +
+        "create whether its LABEL says so or only its PATH does"));
+  assert.ok(/async function applyWritePlan\(files, paramsPath\) \{/.test(applyBody),
+    pin("applyWritePlan no longer takes the params path", "the same (M-2)"));
+  assert.ok(/const step = core\.writeStep\(file, paramsPath\);/.test(applyBody) &&
+            /if \(step\.problem\) \{/.test(applyBody),
+    pin("applyWritePlan decides what to do with an entry inline again instead of asking " +
+        "core.writeStep, or ignores its answer",
+        "**THE FAIL-OPEN `else`**: any mode that was not the exact string \"ifAbsent\" fell " +
+        "through to an UNCONDITIONAL overwrite at the one site that can destroy committed source. " +
+        "MEASURED on a real disk: `mode: \"ifabsent\"` overwrote {\"COMMITTED\":\"SOURCE\"} (M-2)"));
+  assert.ok(/if \(step\.act === core\.WRITE_IF_ABSENT\)/.test(applyBody),
+    pin("applyWritePlan no longer branches on the decision's own answer", "the same (M-2)"));
+  assert.ok(!/file\.mode === "/.test(applyBody),
+    pin("applyWritePlan compares a mode string by hand again",
+        "the same (M-2): the vocabulary is core's, shared by the plan that produces it and the " +
+        "loop that consumes it"));
+  assert.ok(/const outcome = await createFileWithoutOverwriting\(file\.path, file\.text\);/.test(applyBody),
+    pin("applyWritePlan's ifAbsent branch no longer goes through createFileWithoutOverwriting",
+        "that a params file which is already there is LEFT EXACTLY AS IT IS — it is committed " +
+        "source, and `workspace.fs.writeFile` overwrites"));
+  assert.ok(/if \(outcome\.outcome === core\.CREATE_FAILED\)/.test(applyBody) &&
+            /if \(outcome\.outcome === core\.CREATED\) wrote\.push\(file\.what\);/.test(applyBody) &&
+            /else if \(file\.what === core\.WRITE_PARAMS\) return core\.writeOutcome\(\{ wrote, existed: true, problems \}\);/.test(applyBody),
+    pin("applyWritePlan ignores what the create answered",
+        "that a params file it did NOT write is never announced, never opened over what is being " +
+        "typed, and never counted as a render that the watcher will bring"));
+  // N-5: the generated .gitignore is a convenience and must not block.
+  assert.ok(/if \(file\.what === core\.WRITE_GITIGNORE\) continue;/.test(applyBody),
+    pin("a .gitignore that could not be written aborts the whole plan again",
+        "N-5: a stray DIRECTORY named .gitignore permanently disabled params files for that " +
+        "workspace folder, because firstPickTried then held the pick (MEASURED by the review)"));
+
+  // ---- D-1: a write of the literal text `undefined` is UNREACHABLE -------
+  //
+  // MEASURED before the fix: `schemaAnswerOutcome` answered a BARE
+  // `{reason, message}` for the three server-side failures while the glue's
+  // other returns were WRAPPED, both callers test `outcome.problem`, and the
+  // D8 refresh wrote `undefined\n` into the schema file for all three.
+  assert.ok(/core\.schemaRequestFailure\(new Error\("there is no language client"\)\);/.test(src) &&
+            !/\{ problem: core\.schemaRequestFailure\(/.test(src),
+    pin("requestSchema wraps a failure itself instead of returning the builder's shape",
+        "D-1: the success and the failures must be ONE shape, or `if (outcome.problem)` reads " +
+        "`undefined` off a server-side failure and the handler is skipped entirely"));
+  const writeBody = src.slice(src.indexOf("async function writeTextFile("),
+                              src.indexOf("async function createFileWithoutOverwriting("));
+  assert.ok(/if \(typeof text !== "string"\) throw new Error\(/.test(writeBody),
+    pin("writeTextFile no longer refuses bytes that are not bytes",
+        "D-1's last gate: a write of the six-letter word `undefined` must be impossible by " +
+        "CONSTRUCTION, not only because the control flow above returns"));
+  assert.ok(/if \(typeof text !== "string"\) \{/.test(wid),
+    pin("writeIfDifferent no longer refuses bytes that are not bytes", "the same (D-1)"));
+  // The round-trip check inside `schemaFileBytes` is the SECOND layer, and
+  // it is redundant for every input reachable from the wire (`JSON.parse`
+  // never produces a `toJSON`), so no behavioural test can kill its removal.
+  // It is pinned instead, because "impossible by construction" was the ask.
+  const coreSrc = codeOf(fsMod.readFileSync(path.join(__dirname, "..", "src", "preview-core.js"), "utf8"));
+  const bytesBody = coreSrc.slice(coreSrc.indexOf("function schemaFileBytes("),
+                                  coreSrc.indexOf("function paramsToSend("));
+  assert.ok(/if \(!isPlainObject\(schema\)\) \{/.test(bytesBody) &&
+            /if \(typeof text !== "string" \|\| !isPlainObject\(parsed\)\) \{/.test(bytesBody),
+    pin("schemaFileBytes lost one of its two layers",
+        "D-1: the first refuses a non-object, the second refuses anything that does not " +
+        "ROUND-TRIP to one. The second is unreachable from the wire today and is the reason a " +
+        "write of the literal text `undefined` is impossible by CONSTRUCTION rather than by " +
+        "control flow"));
+
+  // ---- M-3: SYMLINKS, which S1 handed to S3 ------------------------------
+  assert.strictEqual((src.match(/await symlinkProblem\(/g) || []).length, 2,
+    pin("the symlink check is gone from one of the two write paths",
+        "M-3: node's fs FOLLOWS symlinks and the editor's API is UNVERIFIED either way. MEASURED: " +
+        "a <binding>.schema.json symlinked outside the workspace was written THROUGH from the " +
+        "REFRESH path — which is reachable from an ANSWER, the one thing the tracker says an " +
+        "answer can never do — and a DANGLING params symlink had the skeleton created at its " +
+        "outside target"));
+  const firstPickBody = src.slice(firstPickFn, firstPickEnd);
+  const linkCheck = firstPickBody.indexOf("await symlinkProblem(");
+  const mkdir = firstPickBody.indexOf("await ensureDirectory(");
+  assert.ok(linkCheck > 0 && mkdir > linkCheck,
+    pin("the symlink check no longer runs BEFORE the directory is created",
+        "that `createDirectory` cannot make the module directory inside a symlinked preview/, " +
+        "after which every write lands wherever that link points (M-3)"));
+  assert.ok(/symlinkProblem\(paths, \[paths\.gitignorePath, paths\.schemaPath, paths\.paramsPath\]\)/.test(firstPickBody),
+    pin("the first-pick symlink check no longer covers all three targets", "the same (M-3)"));
+  assert.ok(/symlinkProblem\(paths, \[paths\.schemaPath\]\)/.test(refreshBody),
+    pin("the refresh's symlink check no longer covers the schema file", "the same (M-3)"));
+  const symBody = src.slice(src.indexOf("async function symlinkProblem("),
+                            src.indexOf("async function statType("));
+  assert.ok(/core\.writeTargetPaths\(paths, targets\)/.test(symBody) &&
+            /return core\.writeTargetProblem\(seen\);/.test(symBody),
+    pin("symlinkProblem no longer asks the pure pair which paths to stat and whether one is a link",
+        "the same (M-3): the policy is a decision, the stat is the glue"));
+
+  // ---- D-3: THE THREE M-3 SITES, WHICH HAD NO PIN AT ALL -----------------
+  //
+  // MEASURED by the delta re-review: `statType` always null, and either
+  // `if (linked)` kept but neutered as `if (false && linked)`, all survived
+  // 261/261.
+  const statBody = src.slice(src.indexOf("async function statType("),
+                             src.indexOf("async function applyWritePlan("));
+  assert.ok(statBody.length > 0 && statBody.length < 900, "the statType slice must be statType's own");
+  assert.ok(/if \(st && typeof st\.type === "number"\) return \{ type: st\.type \};/.test(statBody) &&
+            /if \(core\.meansFileMissing\(err\)\) return \{ missing: true \};/.test(statBody) &&
+            /return \{ unknown:/.test(statBody),
+    pin("statType no longer distinguishes `not there` from `cannot tell`",
+        "**D-2**: it used to answer null for every stat that threw, which reads as `not there`, so " +
+        "a path that EXISTS but cannot be stat'd voided the whole symlink defence — MEASURED, a " +
+        "schema symlink outside the workspace was written THROUGH"));
+  assert.ok(/if \(what\.missing === true\) continue;/.test(symBody) &&
+            /what\.unknown !== undefined/.test(symBody),
+    pin("symlinkProblem no longer forwards `cannot tell` to the decision", "the same (D-2)"));
+  for (const [where, body] of [["the first pick", firstPickBody], ["the refresh", refreshBody]]) {
+    assert.ok(/\n  const linked = await symlinkProblem\(/.test(body),
+      pin("the symlink check at " + where + " is no longer a statement of its own",
+          "**D-3**: `if (false && linked)` keeps every word and every call, and both sites " +
+          "survived 261/261 with no pin at all"));
+    assert.ok(/\n  if \(linked\) \{\n    schemaNoticeOnce\(attempt\.pick, linked\.reason, linked\.message\);/.test(body),
+      pin("the symlink refusal at " + where + " is guarded away or no longer said",
+          "the same (D-3): the check is worth nothing if its answer is not acted on"));
+  }
+
+
+  // ---- M-5: the ONE overwrite is over ZERO BYTES, not over whitespace -----
+  // CODE end markers, not comment banners: `codeOf` stripped those (N-1).
+  const createBody = src.slice(src.indexOf("async function createFileWithoutOverwriting("),
+                               src.indexOf("async function writeIfDifferent("));
+  assert.ok(/overwrite: false, ignoreIfExists: true/.test(createBody),
+    pin("the create no longer asks the editor for a create that SKIPS an existing file",
+        "that `workspace.fs.writeFile`'s documented OVERWRITE cannot destroy committed source " +
+        "in the window between a stat and a write (a git checkout, a second window)"));
+  assert.ok(/edit\.createFile\(/.test(createBody) && /applyEdit\(edit\)/.test(createBody),
+    pin("the create no longer goes through WorkspaceEdit.createFile", "the same"));
+  const lookBefore = createBody.indexOf(
+    'if ((await readTextIfPresent(fsPath)) !== null) return core.createOutcome(core.EXISTED);');
+  assert.ok(lookBefore >= 0 && lookBefore < createBody.indexOf("applyEdit(edit)"),
+    pin("createFileWithoutOverwriting no longer looks before it creates",
+        "that a file already holding exactly these bytes is reported as one we did NOT write — " +
+        "a first pick that announced a file it did not create would open a document over what is " +
+        "being typed and then wait for a watcher event nobody caused (MEASURED, wp8-s3/measure.log)"));
+  const readBack = createBody.lastIndexOf("await readTextIfPresent(fsPath)");
+  assert.ok(readBack > createBody.indexOf("applyEdit(edit)"),
+    pin("the create no longer READS THE FILE BACK",
+        "that whether this VS Code honours createFile's `contents` option — which is UNVERIFIED " +
+        "here — cannot leave a zero-byte params file, which S1 refuses to render"));
+  assert.ok(/if \(after === ""\) \{\s*\n\s*await writeTextFile\(fsPath, text\);/.test(createBody),
+    pin("the create's one overwrite is not over ZERO BYTES exactly",
+        "**M-5**: it used to test `after.trim() === \"\"`, so a file holding only WHITESPACE was " +
+        "written over (MEASURED by the review through a racing writer) while the README promised " +
+        "the params file is never overwritten by anything in this version. Whitespace is " +
+        "somebody's bytes; zero length is not, and zero length is what the case this branch " +
+        "exists for produces"));
+  assert.ok(!/after\.trim\(\)/.test(createBody),
+    pin("the create is back to trimming the read-back", "the same (M-5)"));
+  assert.ok(createBody.lastIndexOf("return core.createOutcome(core.EXISTED);") > readBack,
+    pin("the create no longer leaves a file whose bytes are not ours alone",
+        "THE RACE, ANSWERED: a params file that appeared while the schema was being worked out " +
+        "is left exactly as it is"));
+
+  // THE RACE'S OWN RENDER, now the same scheduled one every successful write
+  // gets (M-4), and the notice/open still only for a file WE wrote.
+  assert.ok(/if \(applied\.existed\) \{[\s\S]{0,600}?return core\.firstPickResult\(\{ wrote: true, raced: true \}\);/.test(firstPickBody),
+    pin("a params file that APPEARED during the schema request is no longer reported as such",
+        "that the render is still scheduled for it (M-4's one call covers both) and that it is " +
+        "never announced or opened as one we wrote"));
+  assert.ok(/if \(applied\.wrote\.indexOf\(core\.WRITE_PARAMS\) < 0\) return core\.firstPickResult\(\{\}\);/.test(firstPickBody) &&
+            firstPickBody.indexOf("openParamsDocument(paths.paramsPath)") >
+            firstPickBody.indexOf("core.paramsWrittenNotice(paths, plan.embeddable)"),
+    pin("the params document is opened, or announced, for a file this branch did not write",
+        "U2: the document that opens is the skeleton we just wrote, and nothing else"));
+
+  // ---- Q7: ONE BOOT, THE SAME ROOTS --------------------------------------
+  assert.ok(/sendRequest\("ermine\/schema", core\.schemaParams\(attempt\.pick\)\)/.test(src),
+    pin("the schema request is not built from core.schemaParams over the SNAPSHOT's pick",
+        "Q7: a schema and the render that follows must carry the SAME roots, or the root set — " +
+        "the render session's discard key (section 2.4) — throws the session away and the next " +
+        "render pays a boot, which is the cost Q7 removed"));
+  assert.ok(/const still = core\.mayUseSchemaAnswer\(/.test(src) && /if \(!still\.send\) return core\.schemaAbandoned\(still\);/.test(src),
+    pin("the schema answer's staleness check is gone, or its answer is discarded",
+        "D7: ermine/schema carries no generation and no pick identity, so a late answer can only " +
+        "be recognised by the snapshot it is compared against"));
+
+  // ---- THE THIRD PLACE THE ONE CONSULTATION IS REACHED FROM ---------------
+  const refreshFor = src.slice(src.indexOf("async function refreshSchemaFor("),
+                               src.indexOf("function onClientStopped("));
+  assert.ok(/const permitted = core\.mayAutoRender\(wedgeMark, pick, trigger\);/.test(refreshFor) &&
+            /if \(!permitted\.render\) \{/.test(refreshFor),
+    pin("the schema refresh no longer asks the ONE consultation, or ignores its answer",
+        "that a held report is not handed a job that compiles and evaluates it — the refresh is " +
+        "an AUTOMATIC action on the preview queue, not a read"));
+  assert.ok(/if \(\(await readTextIfPresent\(paths\.paramsPath\)\) === null\) return;/.test(refreshFor),
+    pin("the schema file is refreshed for a report that has no params file",
+        "that a <binding>.schema.json referenced by nothing does not cost a preview job that " +
+        "compiles and evaluates the report to produce"));
+  assert.ok(/const refresh = core\.shouldRefreshSchema\(answer, trigger\);/.test(renderBody) &&
+            /if \(refresh\.refresh\) \{/.test(renderBody),
+    pin("the post-render refresh no longer asks core.shouldRefreshSchema, or ignores its answer",
+        "D8: only an answer that says the report COMPILED, and only a trigger that could have " +
+        "moved its parameter TYPE"));
+  assert.ok(/refreshSchemaFor\(sentPick, core\.TRIGGER_SCHEMA, refresh\.why\)/.test(renderBody),
+    pin("the post-render refresh is asked about something other than the snapshot's pick, or " +
+        "does not declare itself as core.TRIGGER_SCHEMA",
+        "that the consultation sees a declared trigger (D2 fails CLOSED on anything else) and " +
+        "that the pick it refreshes for is the one this render was decided on"));
+
+  // ---- N-11 / M8c: the SECOND consultation site, pinned at last ----------
+  //
+  // "Guard skipped at applyStuck's rerender" has survived every mutation
+  // round on this branch, and both the WP-22 review and the S3 review
+  // recorded it as irreducible glue. It is not: the STATEMENT can be pinned
+  // exactly as the other two sites are. It is pre-existing and it is closed
+  // here because S3 added a third site and the three should be held alike.
+  const stuckBody = src.slice(src.indexOf("function applyStuck("), src.indexOf("function holdRender("));
+  assert.ok(/const permitted = core\.mayAutoRender\(wedgeMark, picked, trigger\);/.test(stuckBody) &&
+            /if \(permitted\.render\) \{/.test(stuckBody),
+    pin("applyStuck's rerender no longer asks the ONE consultation, or ignores its answer",
+        "WP-22's original site: the Stopped -> Running re-render is the automatic render this " +
+        "whole ticket exists to hold, and a mutant that skipped it survived every round until now"));
+
+  // ---- the write-failure sentence is minted once (M-1's treatment) -------
+  assert.ok(/core\.writeFailedProblem\(file\.what, file\.path, outcome\.why\)/.test(src),
+    pin("applyWritePlan builds the write-failure sentence by hand again",
+        "M-1's class: the MODEL said something different, so a test could pass on a message the " +
+        "developer never sees — N-5's whole point is in that sentence"));
+
+  // ---- fx.schema: the seam that used to only say it existed ---------------
+  assert.ok(/if \(fx\.schema && picked\) \{/.test(stuckBody) &&
+            /\n    refreshSchemaFor\(picked, trigger, trigger === core\.TRIGGER_RESTART/.test(stuckBody),
+    pin("applyStuck's fx.schema effect no longer asks for the schema",
+        "that every `invalidate` DROPPED while the preview was stuck (Q10) is made good: the " +
+        "generated schema file may describe a parameter type that has since moved, and these two " +
+        "edges are when nothing else will say so"));
+  assert.ok(!/a schema re-request belongs here \(WP-8\)/.test(raw),
+    pin("the fx.schema seam still only LOGS that a re-request belongs there", "the same"));
+  assert.ok(/forgetSchemaAttempts\(\);[\s\S]{0,200}refreshSchemaFor\(picked, trigger,/.test(stuckBody),
+    pin("the fx.schema seam no longer forgets the first-pick attempt",
+        "that a report whose first-pick write failed while the server was wedged gets another " +
+        "attempt once it comes back"));
+
+  // ---- U2: the params document is opened once, without stealing focus -----
+  const openBody = src.slice(src.indexOf("async function openParamsDocument("),
+                             src.indexOf("async function requestSchema("));
+  assert.ok(/openedParamsFiles\.has\(fsPath\)/.test(openBody) && /openedParamsFiles\.add\(fsPath\)/.test(openBody),
+    pin("the params document is opened more than once per path",
+        "U2: it is opened right after it is written, and never again"));
+  assert.ok(/preserveFocus: true/.test(openBody) && /ViewColumn\.Beside/.test(openBody),
+    pin("opening the params document steals focus, or does not go beside",
+        "that a file appearing must not take the cursor out of whatever is being typed"));
+
+  // ---- the reveal a first pick would otherwise lose (N-9) -----------------
+  assert.ok(/const revealThis = reveal === true \|\| revealNextRender;/.test(renderBody) &&
+            /revealNextRender = false;/.test(renderBody) &&
+            /revealNextRender = revealThis;/.test(renderBody),
+    pin("the reveal latch is gone, or is not consumed once",
+        "that picking a report with no params file still REVEALS the render tab. N-9: it cannot " +
+        "leak to an unrelated later render either, because M-4 schedules that render itself " +
+        "rather than waiting on an event that may never come"));
+  const armed = wroteBranch.indexOf("revealNextRender = revealThis;");
+  const sched = wroteBranch.indexOf("scheduleRender(");
+  assert.ok(armed >= 0 && sched > armed,
+    pin("the reveal latch is armed after the render that consumes it is scheduled", "the same (N-9)"));
+  for (const [what, needle, until] of [
+    ["a pick change", "async function pickReport(", "async function renderCommand("],
+    ["a teardown", "function disposePreview(", "function restorePick("],
+    ["learning the module name", "async function refreshModule(", "function installWatcher("],
+    ["a roots change", 'event.affectsConfiguration("ermine.preview.roots")', "ermine.preview.restartAfterStuckSeconds"],
+    ["a window reload", "function restorePick(", "function rememberPick("],
+  ]) {
+    const start = src.indexOf(needle);
+    assert.ok(start > 0 && src.slice(start, src.indexOf(until, start)).indexOf("forgetSchemaAttempts()") > 0,
+      pin(what + " no longer forgets the first-pick attempt",
+          "that the attempt is re-made when something could have changed the answer — the module " +
+          "IS the directory, and the roots decide which module of that name is resolved"));
+  }
+});
+
+// ==================== WP-8 S3, AFTER THE INDEPENDENT REVIEW (DESIGN RED,
+// ==================== IMPLEMENTATION RED, ON REPRODUCED DEFECTS)
+//
+// Five must-fixes and ten nits. What is below is the part that can be tested
+// here; the rest is in the models above, in the glue pins, and in the
+// documentation. Each defect was REPRODUCED before it was fixed -- M-1 as a
+// mutant that leaves 249/249 green, M-2/M-3/M-5 on a real disk through a
+// scripted `vscode`, N-1/N-2/N-10 as surviving mutants, N-3 with the
+// review's own `edge-empty.js`.
+
+// ------------------------------------------------- M-1: one shape, one place
+
+test("S3 M-1: every prepareParams outcome carries `paths`, and the MODEL mints the same shape", () => {
+  // THE FOURTH OCCURRENCE of this branch's recurring defect. `prepareParams`
+  // built four object literals and the model built its own; deleting the one
+  // word `paths,` from the missing-file literal made `schemaOrder(undefined,
+  // true)` answer "render first, write nothing" -- THE WHOLE STAGE DEAD --
+  // with 249 of 249 tests green. MEASURED by the review, reproduced here.
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  const outcomes = [
+    [core.PREPARED_MISSING, {}],
+    [core.PREPARED_READ, { params: { a: 1 }, warnings: [] }],
+    [core.PREPARED_REFUSAL, { problem: { reason: "invalid-json", message: "not JSON" } }],
+  ];
+  for (const [kind, over] of outcomes) {
+    const prepared = core.preparedParams(paths, Object.assign({ kind }, over));
+    assert.strictEqual(prepared.paths, paths, kind + " carries `paths`");
+    assert.strictEqual(prepared.path, paths.paramsPath, kind + " carries `path`");
+    // AND THE THING THE DROPPED FIELD BROKE: the ordering rule answers.
+    assert.strictEqual(core.schemaOrder(prepared.paths, kind === core.PREPARED_MISSING).first,
+                       kind === core.PREPARED_MISSING ? "schema" : "render", kind);
+  }
+  // A `paramsPaths` PROBLEM is carried too -- `schemaOrder` reads it and
+  // answers "nowhere to write", which is right, and which is exactly what a
+  // DROPPED `paths` looks like. The two must be distinguishable.
+  const outside = core.paramsPaths(SALES_PICK, "/elsewhere", "posix");
+  const problem = core.preparedParams(outside, { kind: core.PREPARED_PATH_PROBLEM });
+  assert.strictEqual(problem.paths, outside);
+  assert.strictEqual(problem.notice.reason, outside.problem.reason);
+  assert.strictEqual(problem.path, null, "there is no params file to name");
+  assert.deepStrictEqual(problem.params, {});
+
+  // FAIL CLOSED on a kind nothing declares, like every other unknown here.
+  const junk = core.preparedParams(paths, { kind: "typo" });
+  assert.strictEqual(junk.refusal.reason, "bad-prepared-kind");
+  assert.strictEqual(junk.params, undefined, "an unknown outcome sends nothing");
+  assert.deepStrictEqual(core.PREPARED_KINDS.slice().sort(),
+                         ["missing", "path-problem", "read", "refusal"]);
+});
+
+test("S3 M-1: the other three glue shapes are minted once too", () => {
+  // The audit the must-fix asked for: every object the glue hands one of its
+  // own decisions, not just `prepareParams`'s.
+  assert.deepStrictEqual(core.createOutcome(core.CREATED), { outcome: "created", why: null });
+  assert.deepStrictEqual(core.createOutcome(core.CREATE_FAILED, "EROFS"),
+                         { outcome: "failed", why: "EROFS" });
+  assert.deepStrictEqual(core.writeOutcome({}), { wrote: [], existed: false, problems: [] });
+  assert.deepStrictEqual(core.writeOutcome({ wrote: ["schema"], existed: true, problems: [1] }),
+                         { wrote: ["schema"], existed: true, problems: [1] });
+  // Every field is present whatever it is handed, so a caller that forgets
+  // one reads a default rather than `undefined`.
+  for (const junk of [undefined, null, 7, { wrote: "not an array" }]) {
+    const out = core.writeOutcome(junk);
+    assert.ok(Array.isArray(out.wrote) && Array.isArray(out.problems), JSON.stringify(junk));
+    assert.strictEqual(typeof out.existed, "boolean");
+  }
+  assert.deepStrictEqual(core.schemaAbandoned({ reason: "pick-changed", why: "x" }),
+                         { schema: null, problem: null, abandoned: { reason: "pick-changed", why: "x" } });
+  assert.strictEqual(core.schemaAbandoned(undefined).abandoned.reason, "pick-cleared");
+  // D-1's builder audit: the two shapes that were still raw literals on BOTH
+  // sides, which is M-1's class once more.
+  assert.deepStrictEqual(core.firstPickResult({}), { wrote: false, raced: false, abandoned: false });
+  assert.deepStrictEqual(core.firstPickResult({ wrote: true, raced: true }),
+                         { wrote: true, raced: true, abandoned: false });
+  for (const junk of [undefined, null, 7, { wrote: "yes" }]) {
+    const out = core.firstPickResult(junk);
+    assert.strictEqual(typeof out.wrote, "boolean", JSON.stringify(junk));
+    assert.strictEqual(typeof out.raced, "boolean");
+    assert.strictEqual(typeof out.abandoned, "boolean");
+  }
+  assert.deepStrictEqual(core.writeResult({ wrote: true }), { wrote: true, problem: null });
+  assert.deepStrictEqual(core.writeResult(undefined), { wrote: false, problem: null });
+});
+
+// --------------------------------------------- M-2: the write step, closed
+
+test("S3 M-2: an unknown write mode is a NAMED REFUSAL, never an overwrite", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  const params = paths.paramsPath;
+
+  assert.deepStrictEqual(core.writeStep({ what: core.WRITE_PARAMS, path: params, mode: core.WRITE_IF_ABSENT }, params),
+                         { act: "ifAbsent", problem: null });
+  assert.deepStrictEqual(core.writeStep({ what: core.WRITE_SCHEMA, path: paths.schemaPath, mode: core.WRITE_IF_DIFFERENT }, params),
+                         { act: "ifDifferent", problem: null });
+
+  // **THE MEASURED ONE**: one lowercase letter overwrote `{"COMMITTED":"SOURCE"}`
+  // on a real disk under the fail-OPEN `else` this replaces.
+  assert.strictEqual(core.writeStep({ what: core.WRITE_PARAMS, path: params, mode: "ifabsent" }, params).problem.reason,
+                     "params-not-creatable");
+  // And the params file is refused by any route but the create, whatever the
+  // mode says -- identified BOTH by `what` and by its path.
+  assert.strictEqual(core.writeStep({ what: core.WRITE_PARAMS, path: params, mode: core.WRITE_IF_DIFFERENT }, params).problem.reason,
+                     "params-not-creatable");
+  assert.strictEqual(core.writeStep({ what: "something-else", path: params, mode: core.WRITE_IF_DIFFERENT }, params).problem.reason,
+                     "params-not-creatable", "the PATH gives it away even when the label does not");
+  assert.strictEqual(core.writeStep({ what: core.WRITE_PARAMS, path: params, mode: core.WRITE_IF_DIFFERENT }, undefined).problem.reason,
+                     "params-not-creatable", "and the label gives it away even without the path");
+
+  // Anything else is named, and nothing is written.
+  for (const mode of [undefined, null, "", "overwrite", 7, {}]) {
+    const step = core.writeStep({ what: core.WRITE_SCHEMA, path: paths.schemaPath, mode }, params);
+    assert.strictEqual(step.problem.reason, "unknown-write-mode", JSON.stringify(mode));
+    assert.strictEqual(step.act, undefined);
+  }
+  for (const junk of [undefined, null, {}, { path: "" }, { path: 7, mode: core.WRITE_IF_ABSENT }]) {
+    assert.strictEqual(core.writeStep(junk, params).problem.reason, "bad-write-entry", JSON.stringify(junk));
+  }
+  // THE PRODUCER AND THE CONSUMER SHARE THE VOCABULARY, which is what makes
+  // a typo unwritable rather than merely caught.
+  const plan = core.paramsWritePlan(paths, SALES_SCHEMA, TODAY);
+  for (const file of plan.files) {
+    assert.ok(file.mode === core.WRITE_IF_ABSENT || file.mode === core.WRITE_IF_DIFFERENT, file.mode);
+    assert.strictEqual(core.writeStep(file, params).problem, null, file.what);
+  }
+  assert.deepStrictEqual(plan.files.map((f) => f.what),
+                         [core.WRITE_GITIGNORE, core.WRITE_SCHEMA, core.WRITE_PARAMS]);
+});
+
+// ----------------------------------------------------------- M-3: symlinks
+
+test("S3 M-3: every directory component and every target is checked, outermost first", () => {
+  const paths = core.paramsPaths(SALES_PICK, "/w", "posix");
+  assert.deepStrictEqual(
+    core.writeTargetPaths(paths, [paths.gitignorePath, paths.schemaPath, paths.paramsPath], "posix"),
+    ["/w/.ermine", "/w/.ermine/preview", "/w/.ermine/preview/Sales",
+     "/w/.ermine/preview/.gitignore",
+     "/w/.ermine/preview/Sales/report.schema.json",
+     "/w/.ermine/preview/Sales/report.params.json"]);
+  // `.ermine/preview/<Module>` is in the list because `createDirectory` would
+  // make the module directory INSIDE a symlinked preview/, after which every
+  // write lands wherever it points.
+  assert.deepStrictEqual(core.writeTargetPaths(paths, [paths.schemaPath], "posix").slice(0, 3),
+                         ["/w/.ermine", "/w/.ermine/preview", "/w/.ermine/preview/Sales"]);
+  // THE WORKSPACE FOLDER ITSELF IS NOT IN IT: `/home/me/work -> /mnt/big/work`
+  // is an ordinary setup and refusing it would buy nothing.
+  assert.ok(core.writeTargetPaths(paths, [], "posix").indexOf("/w") < 0);
+  // A duplicate target is listed once.
+  assert.strictEqual(core.writeTargetPaths(paths, [paths.dir, paths.dir], "posix").length, 3);
+  // Nothing to write, nothing to check.
+  for (const nowhere of [undefined, null, {}, core.paramsPaths(SALES_PICK, "/elsewhere", "posix")]) {
+    assert.deepStrictEqual(core.writeTargetPaths(nowhere, ["/x"], "posix"), []);
+  }
+  // win32 too, since the components are derived with the path flavour.
+  const win = core.paramsPaths(
+    core.makePick("file:///c/w/Sales.e", "C:\\w\\doc\\Sales.e", "report", "Sales", []), "C:\\w", "win32");
+  assert.deepStrictEqual(core.writeTargetPaths(win, [], "win32"),
+                         ["C:\\w\\.ermine", "C:\\w\\.ermine\\preview", "C:\\w\\.ermine\\preview\\Sales"]);
+});
+
+test("S3 M-3: a symbolic link anywhere on the way refuses the write, by name", () => {
+  // VS Code documents FileType as a BITMASK: SymbolicLink | File, or
+  // SymbolicLink | Directory.
+  assert.strictEqual(core.FILE_TYPE_SYMLINK, 64);
+  const link = (path, kind) => ({ path, type: core.FILE_TYPE_SYMLINK | kind });
+
+  assert.strictEqual(core.writeTargetProblem([]), null);
+  assert.strictEqual(core.writeTargetProblem(undefined), null);
+  assert.strictEqual(core.writeTargetProblem([{ path: "/w/.ermine", type: 2 },
+                                              { path: "/w/.ermine/preview/Sales/report.params.json", type: 1 }]), null);
+  for (const kind of [1, 2]) {
+    const out = core.writeTargetProblem([{ path: "/w/.ermine", type: 2 }, link("/w/.ermine/preview", kind)]);
+    assert.strictEqual(out.reason, "symlink", "FileType " + (core.FILE_TYPE_SYMLINK | kind));
+    assert.match(out.message, /\/w\/\.ermine\/preview/);
+    assert.match(out.message, /empty parameters/);
+  }
+  // THE MEASURED CASES, both of which wrote OUTSIDE the workspace before
+  // this existed: the schema file itself (from the REFRESH path, which is
+  // reachable from an ANSWER), and a DANGLING params link.
+  assert.strictEqual(core.writeTargetProblem(
+    [link("/w/.ermine/preview/Sales/report.schema.json", 1)]).reason, "symlink");
+  assert.strictEqual(core.writeTargetProblem(
+    [link("/w/.ermine/preview/Sales/report.params.json", 1)]).reason, "symlink");
+  // A path that is not there, or that could not be stat'd, contributes
+  // nothing -- we are about to create it.
+  assert.strictEqual(core.writeTargetProblem([{ path: "/w/nope", type: null },
+                                              { path: "/w/also-nope" }]), null);
+  // The FIRST one found is the one named, so the message points at the
+  // outermost problem rather than at a consequence of it.
+  const two = core.writeTargetProblem([link("/w/.ermine", 2), link("/w/.ermine/preview", 2)]);
+  assert.match(two.message, /"\/w\/\.ermine"/);
+});
+
+test("S3 ASYNC M-3: a symlinked target writes NOTHING, and the report still renders", async () => {
+  for (const linked of ["/w/.ermine/preview",
+                        "/w/.ermine/preview/Sales/report.params.json",
+                        "/w/.ermine/preview/Sales/report.schema.json",
+                        "/w/.ermine/preview/.gitignore"]) {
+    const disk = diskModel({ links: [[linked, "/outside/precious"]] });
+    const m = firstPickModel({ disk });
+    m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+    await flush();
+    m.readMissing(0);
+    await flush();
+    m.answerSchema(0, SALES_SCHEMA);
+    await flush();
+    assert.strictEqual(disk.files.size, 0, linked + ": nothing is written");
+    assert.deepStrictEqual(m.opened, [], linked + ": and nothing is opened");
+    assert.strictEqual(m.notices.length, 1, linked);
+    assert.strictEqual(m.notices[0].reason, "symlink", linked);
+    // NON-FATAL, like every other write failure: the report renders with `{}`.
+    assert.strictEqual(m.sent.length, 1, linked + ": the render still happens");
+    assert.deepStrictEqual(m.sent[0].params, {}, linked);
+  }
+});
+
+test("S3 MUTANT M-3: without the check, the write goes THROUGH the link and lands outside", async () => {
+  const disk = diskModel({ links: [["/w/.ermine/preview/Sales/report.params.json", "/outside/precious"]] });
+  const m = firstPickModel({ disk, mutantNoSymlinkCheck: true });
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+  assert.ok(disk.files.has("/outside/precious"),
+    "the mutant creates the skeleton OUTSIDE the workspace folder, which is what the review MEASURED");
+  assert.deepStrictEqual(m.opened, ["/w/.ermine/preview/Sales/report.params.json"],
+    "and opens a document that is not where it thinks it is");
+});
+
+// --------------------------------------------- M-5: zero bytes, not "empty"
+
+test("S3 M-5: only ZERO BYTES are written over -- whitespace is somebody's bytes", async () => {
+  // The review MEASURED both through a racing writer that lands between the
+  // look-before and the read-back. Whitespace used to be treated as empty,
+  // while the README promised the params file is never overwritten by
+  // anything in this version.
+  for (const [label, racing, expected] of [
+    ["zero bytes", "", core.CREATED],
+    ["whitespace only", "   \n \t ", core.EXISTED],
+    ["a newline", "\n", core.EXISTED],
+    ["real content", '{"MY":"WORK"}', core.EXISTED],
+  ]) {
+    const disk = diskModel({ racingCreate: racing });
+    const out = disk.create("/p.json", "SKELETON");
+    assert.strictEqual(out.outcome, expected, label);
+    assert.strictEqual(disk.read("/p.json"), expected === core.CREATED ? "SKELETON" : racing, label);
+  }
+  // AND A FILE ALREADY THERE, whatever it holds, is `existed` at the
+  // look-before and is never even reached by the branch above.
+  for (const already of ["", "   ", '{"MY":"WORK"}']) {
+    const disk = diskModel({ files: [["/p.json", already]] });
+    assert.strictEqual(disk.create("/p.json", "SKELETON").outcome, core.EXISTED, JSON.stringify(already));
+    assert.strictEqual(disk.read("/p.json"), already);
+  }
+});
+
+// ------------------------------------------------------------ N-4 and N-6
+
+test("S3 N-4: the consenting render DOES qualify for a schema refresh", () => {
+  // The review read the consenting render as carrying `restart`. It does
+  // not: `holdRender`'s answer calls `renderNow("Render anyway", true,
+  // core.TRIGGER_EXPLICIT)` (`src/extension.js`), and `explicit` IS in
+  // `SCHEMA_REFRESH_TRIGGERS` -- so the seam's purpose is not lost in the
+  // held case. Asserted rather than argued, and pinned to the source below.
+  assert.ok(core.SCHEMA_REFRESH_TRIGGERS.indexOf(core.TRIGGER_EXPLICIT) >= 0);
+  assert.strictEqual(core.shouldRefreshSchema({ ok: true, generation: 1 }, core.TRIGGER_EXPLICIT).refresh, true);
+  // And the render itself is permitted, because explicit is consent.
+  const mark = core.guardReduce(null, {
+    type: "answer", stuck: true, applies: true, pick: SALES_PICK, params: {}, at: 1 }).mark;
+  assert.strictEqual(core.mayAutoRender(mark, SALES_PICK, core.TRIGGER_EXPLICIT, 5).render, true);
+  const fsMod = require("node:fs");
+  const src = fsMod.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  assert.ok(/renderNow\("Render anyway", true, core\.TRIGGER_EXPLICIT\)/.test(src),
+    "source pin: the consenting render no longer carries `explicit`, so N-4 becomes real");
+});
+
+test("S3 N-6: a refresh whose attempt is no longer current writes NOTHING", async () => {
+  // Fired and forgotten, uncoalesced and uncancelled -- so the one thing it
+  // MUST do is notice that the world moved before it touches the disk.
+  const disk = diskModel({ files: [["/w/.ermine/preview/Sales/report.params.json", "{}"],
+                                   ["/w/.ermine/preview/Sales/report.schema.json", "OLD"]] });
+  const m = firstPickModel({ disk });
+  const attempt = core.renderAttempt(m.generation, m.picked, m.clientEpoch, m.stopCount, 0);
+  const pending = m.requestSchema(attempt);
+  await flush();
+  m.picked = core.makePick(OTHER_PICK.uri, OTHER_PICK.fsPath, "report", "Other", ["/w/doc"]);
+  m.answerSchema(0, SALES_SCHEMA);
+  const outcome = await pending;
+  assert.ok(outcome.abandoned, "the answer is discarded BEFORE anything is written");
+  assert.strictEqual(disk.read("/w/.ermine/preview/Sales/report.schema.json"), "OLD");
+  // And the glue returns on `abandoned` before its symlink check and before
+  // its write -- pinned in the glue pins, because the order is glue.
+  const fsMod = require("node:fs");
+  const src = fsMod.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  const body = src.slice(src.indexOf("async function refreshSchemaFile("),
+                         src.indexOf("async function refreshSchemaFor("));
+  assert.ok(body.indexOf("if (outcome.abandoned)") < body.indexOf("await symlinkProblem("),
+    "source pin: the refresh acts on a stale answer before it checks anything");
+  assert.ok(body.indexOf("if (outcome.abandoned)") < body.indexOf("writeIfDifferent("),
+    "source pin: the refresh writes before it notices the world moved");
+});
+
+// ----------------------------------------------------------- N-5: the .gitignore
+
+test("S3 N-5: a .gitignore that cannot be written does NOT block the two files that matter", async () => {
+  // MEASURED by the review with a stray DIRECTORY named `.gitignore`: the
+  // whole plan aborted, and `firstPickTried` then disabled params files for
+  // that workspace folder for the rest of the session.
+  const disk = diskModel({ directories: ["/w/.ermine/preview/.gitignore"] });
+  // A directory at that path: the create cannot make a file there.
+  const realCreate = disk.create.bind(disk);
+  disk.create = (p, text) =>
+    p === "/w/.ermine/preview/.gitignore"
+      ? core.createOutcome(core.CREATE_FAILED, "it is a directory")
+      : realCreate(p, text);
+  const m = firstPickModel({ disk });
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+  assert.ok(disk.read("/w/.ermine/preview/Sales/report.params.json") !== null,
+    "the params file is written anyway");
+  assert.ok(disk.read("/w/.ermine/preview/Sales/report.schema.json") !== null,
+    "and so is the schema file");
+  assert.deepStrictEqual(m.opened, ["/w/.ermine/preview/Sales/report.params.json"]);
+  // TWO notices: what went wrong, and what was written.
+  assert.deepStrictEqual(m.notices.map((n) => n.reason).sort(), ["write-failed", "written"]);
+  assert.match(m.notices.find((n) => n.reason === "write-failed").line, /written anyway/);
+  assert.match(m.notices.find((n) => n.reason === "write-failed").line, /\.gitignore is missing/);
+  // And the render comes from the write, as it does on the ordinary path.
+  assert.strictEqual(m.scheduled.length, 1);
+});
+
+test("S3: a PARAMS file that cannot be written still stops the branch", async () => {
+  // The other side of N-5: the gitignore is a convenience, the params file
+  // is the point. Its failure means no file, so the render goes with `{}`.
+  const disk = diskModel();
+  const realCreate2 = disk.create.bind(disk);
+  disk.create = (p, text) =>
+    /params\.json$/.test(p) ? core.createOutcome(core.CREATE_FAILED, "EACCES") : realCreate2(p, text);
+  const m = firstPickModel({ disk });
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  m.answerSchema(0, SALES_SCHEMA);
+  await flush();
+  assert.strictEqual(disk.read("/w/.ermine/preview/Sales/report.params.json"), null);
+  assert.deepStrictEqual(m.opened, []);
+  assert.strictEqual(m.notices.filter((n) => n.reason === "written").length, 0);
+  assert.strictEqual(m.sent.length, 1, "the render still happens, with `{}`");
+  assert.deepStrictEqual(m.sent[0].params, {});
+  assert.deepStrictEqual(m.scheduled, [], "and nothing is scheduled, because nothing was written");
+});
+
+
+// ============= WP-8 S3, AFTER THE DELTA RE-REVIEW (DESIGN GREEN,
+// ============= IMPLEMENTATION RED on one reproduced defect)
+//
+// D-1 is the defect a faithful model cannot see: the model reproduced the
+// GLUE correctly, and the glue and the pure core disagreed about a SHAPE.
+// Both callers tested `outcome.problem`, which is `undefined` for the bare
+// `{reason, message}` three of the five failure modes answered -- so they
+// fell straight through the handler, and the D8 refresh wrote the literal
+// text `undefined` into `<binding>.schema.json`. MEASURED on a real disk
+// with a stub client, reproduced here before the fix.
+
+const GOOD_SCHEMA_FILE = core.schemaFileBytes(SALES_SCHEMA).text;
+
+test("S3 D-1: EVERY schema failure reaches its OWN notice and LEAVES THE SCHEMA FILE ALONE", async () => {
+  const cases = [
+    ["a server {error}", { error: "no module named Sales", reason: "not-placed" }, "refresh-error"],
+    ["Q8's stuck refusal", { error: "the preview is stuck", stuck: true }, "refresh-stuck"],
+    ["an answer that is not an object", 7, "refresh-no-schema"],
+    ["a JSON-RPC error", { __reject: true, err: { code: -32603, message: "internal" } }, "refresh-request-failed"],
+    ["a transport rejection", { __reject: true, err: new Error("Connection got disposed") }, "refresh-request-failed"],
+  ];
+  for (const [label, reply, reason] of cases) {
+    const disk = diskModel({ files: [
+      ["/w/.ermine/preview/Sales/report.params.json", "{}"],
+      ["/w/.ermine/preview/Sales/report.schema.json", GOOD_SCHEMA_FILE]] });
+    const m = firstPickModel({ disk });
+    const attempt = core.renderAttempt(m.generation, m.picked, m.clientEpoch, m.stopCount, 0);
+    const pending = m.refreshSchemaFile(attempt, SALES_PATHS, "a test");
+    await flush();
+    if (reply && reply.__reject) m.rejectSchema(0, reply.err); else m.answerSchema(0, reply);
+    await pending;
+
+    // THE FILE IS EXACTLY WHAT IT WAS -- not `undefined\n`, not truncated.
+    assert.strictEqual(disk.read("/w/.ermine/preview/Sales/report.schema.json"), GOOD_SCHEMA_FILE, label);
+    assert.deepStrictEqual(disk.writes, [], label + ": nothing was written at all");
+    // AND ITS OWN NAMED NOTICE, which was dead code for the first three.
+    assert.strictEqual(m.notices.length, 1, label);
+    assert.strictEqual(m.notices[0].reason, reason, label);
+    assert.ok(m.notices[0].line.length > 20, label);
+    // The params file is untouched either way -- it always was.
+    assert.strictEqual(disk.read("/w/.ermine/preview/Sales/report.params.json"), "{}", label);
+  }
+  // THE CONTROL: a good answer really does rewrite it.
+  const disk = diskModel({ files: [
+    ["/w/.ermine/preview/Sales/report.params.json", "{}"],
+    ["/w/.ermine/preview/Sales/report.schema.json", "OLD\n"]] });
+  const m = firstPickModel({ disk });
+  const pending = m.refreshSchemaFile(
+    core.renderAttempt(m.generation, m.picked, m.clientEpoch, m.stopCount, 0), SALES_PATHS, "a test");
+  await flush();
+  m.answerSchema(0, SALES_SCHEMA);
+  await pending;
+  assert.strictEqual(disk.read("/w/.ermine/preview/Sales/report.schema.json"), GOOD_SCHEMA_FILE);
+  assert.ok(JSON.parse(GOOD_SCHEMA_FILE), "and it is valid JSON");
+});
+
+test("S3 D-1: the FIRST-PICK path names each failure too, and writes nothing", async () => {
+  for (const [label, reply, reason] of [
+    ["a server {error}", { error: "no module named Sales" }, "error"],
+    ["Q8's stuck refusal", { error: "stuck", stuck: true }, "stuck"],
+    ["not an object", 7, "no-schema"],
+  ]) {
+    const m = firstPickModel();
+    m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+    await flush();
+    m.readMissing(0);
+    await flush();
+    m.answerSchema(0, reply);
+    await flush();
+    assert.strictEqual(m.disk.files.size, 0, label);
+    assert.strictEqual(m.notices.length, 1, label + ": the named reason was DEAD CODE before D-1");
+    assert.strictEqual(m.notices[0].reason, reason, label);
+    assert.strictEqual(m.sent.length, 1, label + ": the render still happens with `{}`");
+  }
+});
+
+test("S3 D-1: a write of the literal text `undefined` is unreachable BY CONSTRUCTION", () => {
+  // Not merely because the control flow above now returns. `schemaFileFor`
+  // answers its input unchanged for a non-object and `schemaFileText` is
+  // JSON.stringify plus a newline -- which for `undefined` is the six-letter
+  // word. That is exactly what reached the disk.
+  assert.strictEqual(core.schemaFileText(core.schemaFileFor(undefined)), "undefined\n",
+    "the mechanism, pinned so nobody re-discovers it");
+  for (const junk of [undefined, null, 7, "x", [], true, NaN]) {
+    const out = core.schemaFileBytes(junk);
+    assert.strictEqual(out.problem.reason, "not-a-schema", JSON.stringify(junk));
+    assert.strictEqual(out.text, undefined, JSON.stringify(junk));
+  }
+  // A real schema round-trips to an object, which is the test it must pass.
+  const good = core.schemaFileBytes(SALES_SCHEMA);
+  assert.strictEqual(good.problem, undefined);
+  assert.ok(good.text.endsWith("}\n"));
+  assert.strictEqual(good.text, core.schemaFileText(core.schemaFileFor(SALES_SCHEMA)));
+  // `schemaFileText` itself is NOT narrowed: it renders the PARAMS file too,
+  // whose value may legitimately be a number or a string (G5, MEASURED on
+  // WpInt: the skeleton is `0`).
+  assert.strictEqual(core.schemaFileText(0), "0\n");
+  assert.strictEqual(core.schemaFileText(null), "null\n");
+});
+
+test("S3 D-2: a path that EXISTS but cannot be stat'd refuses, like everything else this round", () => {
+  // It used to answer null for every throw, which reads as "not there" --
+  // MEASURED, a schema symlink outside the workspace was written THROUGH.
+  const out = core.writeTargetProblem([
+    { path: "/w/.ermine", type: 2 },
+    { path: "/w/.ermine/preview/Sales/report.schema.json", unknown: "EACCES: permission denied" },
+  ]);
+  assert.strictEqual(out.reason, "unstattable");
+  assert.match(out.message, /report\.schema\.json/);
+  assert.match(out.message, /EACCES/);
+  assert.match(out.message, /cannot rule out a symbolic link/);
+  assert.match(out.message, /empty parameters/);
+  // A path that is REALLY absent still contributes nothing: we create it.
+  assert.strictEqual(core.writeTargetProblem([{ path: "/w/.ermine/preview", type: 2 }]), null);
+  // AN EMPTY `unknown` IS STILL AN UNKNOWN (N-g). This line used to assert
+  // the opposite, which was fail-OPEN on truthiness; see the N-g test below.
+  assert.strictEqual(core.writeTargetProblem([{ path: "/x", unknown: "" }]).reason, "unstattable");
+  // The first problem on the way is the one named, whichever kind it is.
+  assert.strictEqual(core.writeTargetProblem([
+    { path: "/w/.ermine", unknown: "EACCES" },
+    { path: "/w/.ermine/preview", type: core.FILE_TYPE_SYMLINK | 2 }]).reason, "unstattable");
+  assert.strictEqual(core.writeTargetProblem([
+    { path: "/w/.ermine", type: core.FILE_TYPE_SYMLINK | 2 },
+    { path: "/w/.ermine/preview", unknown: "EACCES" }]).reason, "symlink");
+});
+
+test("S3 N-f: the no-client arm answers the SAME shape as every other failure", async () => {
+  // Latent -- nothing drives it today -- and it double-wrapped the builder
+  // under a comment saying it did not, which is exactly the class D-1 was.
+  const m = firstPickModel();
+  m.hasClient = false;
+  const outcome = await m.requestSchema(core.renderAttempt(1, m.picked, 1, 0, 0));
+  assert.strictEqual(outcome.problem.reason, "request-failed");
+  assert.match(outcome.problem.message, /no language client/);
+  assert.strictEqual(outcome.schema, null);
+  assert.strictEqual(outcome.abandoned, null);
+  // The glue's own arm, for the same input, is the same shape.
+  const glue = core.schemaRequestFailure(new Error("there is no language client"));
+  assert.deepStrictEqual(Object.keys(outcome).sort(), Object.keys(glue).sort());
+  assert.strictEqual(glue.problem.reason, outcome.problem.reason);
+});
+
+test("S3 N-g: an EMPTY `unknown` refuses too -- no truthiness anywhere in the defence", () => {
+  // A provider that throws an empty message answered `{unknown: ""}`, and
+  // the defence answered null: fail-OPEN on truthiness, one level below the
+  // shape D-2 closed.
+  for (const unknown of ["", "EACCES", " ", "0"]) {
+    const out = core.writeTargetProblem([{ path: "/w/.ermine/preview", unknown }]);
+    assert.strictEqual(out && out.reason, "unstattable", JSON.stringify(unknown));
+    assert.match(out.message, /\/w\/\.ermine\/preview/);
+    assert.ok(out.message.indexOf("()") < 0, "the sentence never has an empty reason in it");
+  }
+  assert.match(core.writeTargetProblem([{ path: "/x", unknown: "" }]).message, /did not say why/);
+  // A non-string `unknown` is still an unknown: the KEY is what decides.
+  for (const unknown of [null, undefined, 0, false, {}]) {
+    assert.strictEqual(core.writeTargetProblem([{ path: "/x", unknown }]).reason, "unstattable",
+                       JSON.stringify(unknown));
+  }
+  // And an entry with no `unknown` key at all is unaffected.
+  assert.strictEqual(core.writeTargetProblem([{ path: "/x", type: 1 }]), null);
+});
+
+test("S3 D-2: a link to a DIRECTORY is 66, not 65 (N-c)", () => {
+  // The summary said 65. MEASURED: `SymbolicLink | File` is 65 and
+  // `SymbolicLink | Directory` is 66, and the code is right either way
+  // because it tests the BIT and not the number.
+  assert.strictEqual(core.FILE_TYPE_SYMLINK | 1, 65);
+  assert.strictEqual(core.FILE_TYPE_SYMLINK | 2, 66);
+  for (const type of [65, 66, 64, 64 | 8]) {
+    assert.strictEqual(core.writeTargetProblem([{ path: "/w/.ermine/preview", type }]).reason,
+                       "symlink", "FileType " + type);
+  }
+  for (const type of [0, 1, 2, 8]) {
+    assert.strictEqual(core.writeTargetProblem([{ path: "/w/.ermine/preview", type }]), null,
+                       "FileType " + type);
+  }
+});

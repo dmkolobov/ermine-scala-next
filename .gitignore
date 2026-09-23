@@ -10,3 +10,12 @@ client/node_modules/
 client/dist/
 .gate-cache/
 .mutation-runs/
+
+# The preview's GENERATED params schemas (tracker/JSON-WIDGET-PLAYGROUND.md
+# section 6, U7). The *.params.json files beside them are ORDINARY COMMITTED
+# SOURCE -- they are the parameters a fresh clone renders each report with --
+# and are deliberately NOT ignored. The preview also writes a self-contained
+# .ermine/preview/.gitignore in every workspace folder it uses, which covers
+# WP-13/WP-14's *.db as well; this line is the one THIS checkout wants, in
+# the place people look.
+**/.ermine/preview/**/*.schema.json

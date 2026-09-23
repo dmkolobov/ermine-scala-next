@@ -26,7 +26,8 @@ OFF by default (`ermine.preview.restartAfterStuckSeconds` = 0) precisely
 because none of these steps has ever been run -- §2.28 is the step that
 checks the default changes nothing, and the other nine are the only things
 that can observe the feature at all. **AND SINCE 2026-09-21 IT CARRIES WP-8
-S2'S PARAMS FILES (§2.33-2.42, TEN STEPS), WHICH ARE EQUALLY UNRUN.** S2
+S2'S PARAMS FILES (§2.33-2.42, TEN STEPS) AND S3'S FIRST-PICK WRITES
+(§2.43-2.52, TWELVE MORE WITH §2.45b AND §2.52b), WHICH ARE EQUALLY UNRUN.** S2
 writes nothing to disk, so every step below starts by asking YOU to write the
 file; the measured part of it (that a real server renders what a real file on
 disk turns into) is in section 6 of `tracker/JSON-WIDGET-PLAYGROUND.md`, and
@@ -37,7 +38,7 @@ tab, the notification, the status bar.**
 
 | | |
 |---|---|
-| The extension | `editor/vscode` in this worktree, version **0.1.8** (0.1.7 plus WP-8 S2's params files, §2.33-2.42, which write nothing to disk) |
+| The extension | `editor/vscode` in this worktree, version **0.1.9** (independently reviewed 2026-09-21/23: DESIGN RED and IMPLEMENTATION RED on reproduced defects, all five must-fixes and ten nits applied) (0.1.8 plus WP-8 S3, §2.43-2.52 -- **the first version that WRITES to your disk**: on the first pick of a report with no params file it creates three files under `.ermine/preview/`. Nothing else in the extension writes anything) |
 | `node_modules` | **Already there.** The build session copied it from `/home/dmitry/research/ermine/ermine-scala/editor/vscode/node_modules` (there is no network here, and it is gitignored, so it is in neither `git status` nor the commit). If it goes missing, copy it again the same way |
 | The server | `target/ermine-classpath` already exists here, so the first start does **not** shell out to sbt |
 | Do NOT package or install | this is an Extension Development Host session; nothing touches your installed 0.1.4 |
@@ -226,7 +227,7 @@ called it.
 DISK when a render is sent. **S2 WRITES NOTHING**: the skeleton, the generated
 `report.schema.json` and the `.gitignore` are S3, so every step here begins
 with you writing the file by hand. The PURE half is unit-tested (`npm run
-test:preview`, 216 tests as of 0.1.8, after the independent review and its delta round) and the SEND half was measured against a
+test:preview`, 216 tests as of 0.1.8 and 266 as of 0.1.9) and the SEND half was measured against a
 real server without an editor (section 6 of the ticket). What no test and no
 instrument can reach is below.
 
@@ -280,6 +281,69 @@ which discards the scheme and the authority, so on a `vscode-remote:` or a
 virtual workspace the read and the watcher both point at a local path that is
 not there. Everything in this section assumes a local folder. Nobody has run
 any of it either way.
+
+### The first pick writes (WP-8 S3, 0.1.9) -- NEVER RUN BY ANYONE
+
+**WHAT THESE STEPS ARE FOR.** 0.1.9 is the first version of this extension
+that writes to the developer's disk. On the first pick of a report that has
+NO params file it asks the language server for the parameter schema, writes
+three files and opens the params file beside the render. Everything
+decidable from data alone is unit tested (`npm run test:preview`, 266 tests
+at 0.1.9 after the independent review) and the whole chain -- the real `ermine/schema`, the shipped
+`paramsWritePlan` over the real answer, the three files on a real disk, and
+the written file read back and SENT -- was MEASURED against a real
+`bin/ermine-lsp` with no editor (`scratchpad/wp8-s3/measure.py`, and section
+6's S3 block has the table). **WHAT NO TEST AND NO INSTRUMENT CAN REACH IS
+BELOW: every claim in this section about VS Code's own behaviour is
+UNOBSERVED BY ANYONE.**
+
+**START FROM A CLEAN CHECKOUT.** `rm -rf .ermine` in the worktree root and
+`git status` must show nothing under it before §2.43. If you did §2.33-2.42
+you have a hand-written `Sales` params file: delete it, or these steps test
+the wrong branch.
+
+| # | Do | Expect |
+|---|---|---|
+| 2.43 | **THE FIRST PICK WRITES THREE FILES.** With no `.ermine` directory at all, run **Ermine: Preview Report...** and pick `core/src/test/resources/doc/Sales.e` -> `report` | three files appear: `.ermine/preview/.gitignore`, `.ermine/preview/Sales/report.schema.json` and `.ermine/preview/Sales/report.params.json`. The params file holds exactly `{"$schema": "./report.schema.json", "fromDay": "<today>", "toDay": "<today>", "orderBy": "ByDay"}` pretty-printed -- **`onlyRegion` is ABSENT**, because a `Maybe` key is omitted and not nulled. The channel says it once, naming all three. **The dates are TODAY's in YOUR timezone**, not UTC's |
+| 2.44 | **AND OPENS THE PARAMS FILE WITHOUT STEALING FOCUS (U2).** Before picking, start typing in some other editor; then do §2.43 | the params document opens **beside** the render tab, and **the cursor stays where you were typing**. The render tab is revealed too -- the pick asked for it, and the render that actually happens is the one the params file's creation triggers, which normally reveals nothing |
+| 2.45 | **AT MOST ONE RENDER PER COALESCING WINDOW.** Watch the channel through §2.43 | **REWORDED AFTER THE S3 REVIEW (M-4), and the expectation is now weaker on purpose.** The extension SCHEDULES the render itself after the write rather than waiting on the params watcher, because a first pick whose watcher event never fires would otherwise show NO document and NO message at all. So: the line before is `preview: render N is yielding to the parameter schema` (that render is NOT sent), then **ONE** `preview: render N (...)` line with `params from .../report.params.json` if the watcher's own event lands inside the 150 ms window, or **TWO IDENTICAL ones** if it lands outside it. Two identical renders are expected and harmless -- same session, no boot, same parameters, the wedge mark untouched. **What would be a defect is ZERO**, or two renders that differ |
+| 2.45b | **AND THE SECOND ONE IS NOT A QUESTION.** Do §2.43 on a report that previously wedged the preview and whose params type has NO required fields (so the skeleton sends `{}`) | the render happens. **A Render anyway / Not now question here is the defect** (the review's N-3): the scheduled render carries the trigger of the render that wrote the file -- `explicit` for a pick -- so consent stays consent. The watcher's own event carries `params-file`, which is unconfirmed, and under the first cut it was the only render there was. **ONE RESIDUE, AND IT IS SMALL (N-d)**: if the watcher's event lands OUTSIDE the 150 ms window it is a SECOND render still carrying `params-file`, so on this same empty-params report it can ASK -- but the document has already arrived from the first one, so what you see is a question beside a rendered tab, not instead of it. Answer it either way; **a question with NO document is the defect** |
+| 2.46 | **`git status` SHOWS THE PARAMS FILE AND NOT THE SCHEMA.** Run `git status --short` in the worktree | `?? .ermine/` listing the params file and the generated `.gitignore`, and **NOT** `report.schema.json`. `git check-ignore -v .ermine/preview/Sales/report.schema.json` names this repository's own `.gitignore` line, `**/.ermine/preview/**/*.schema.json`. `git check-ignore -v .ermine/preview/Sales/report.params.json` names **nothing** |
+| 2.47 | **THE `$schema` LINE IS NOT SQUIGGLED, AND A WRONG KEY IS (D1, D3's go/no-go).** Open the params file | **no squiggle on the `"$schema"` line** -- that is D1, and it is why `schemaFileFor` injects a `$schema` property into the object the root `$ref` names. Type `"nope": 1` into the object: **that** squiggles (`additionalProperties: false`). **If the `$schema` line itself squiggles, D1's fix does not work in this editor and the whole scheme needs rethinking** |
+| 2.48 | **COMPLETION OFFERS THE KEYS AND THE ENUM VALUES (D3's go/no-go).** In the params file, delete `orderBy` and press Ctrl+Space inside the object; then type `"orderBy": ` and press Ctrl+Space again | the first offers `fromDay`, `toDay`, `onlyRegion`, `orderBy`; the second offers `ByDay`, `ByAmount`, `ByUnits`. **The second is the `$ref` -> `$defs` hop**, which is what U1's `$id` drop was for: if the values do not appear, VS Code's JSON language service is not resolving a fragment `$ref` in a file loaded by relative path, and D3 is answered NO |
+| 2.49 | **A SECOND PICK DOES NOT REWRITE THE PARAMS FILE.** Edit the params file to `"fromDay": "2026-01-05", "toDay": "2026-03-17"`, save, then pick another report and pick `Sales.report` again. Also try **Developer: Reload Window** and pick it again | **your edit survives, every time.** Nothing in this version ever overwrites a params file. Check with `git diff` or just by looking. The channel says nothing about writing it again |
+| 2.50 | **EDITING THE PARAMS TYPE UPDATES THE SCHEMA FILE, AND THE EDITOR NOTICES (G17).** With the params file open, edit `core/src/test/resources/doc/Sales.e`'s `data Query` -- rename `onlyRegion` to `onlyReg` -- and save it | the render re-runs, `report.schema.json` is rewritten (`stat` it, or watch `git status`), and **the params file's completion and squiggles follow WITHOUT a window reload**: `onlyRegion` now squiggles as an unknown key and Ctrl+Space offers `onlyReg`. **Whether VS Code re-reads a relative `$schema` file that changed on disk is UNVERIFIED** -- if it does not, G17 needs its own ticket. Put it back afterwards. Save the `.e` file again with NO change to the type: `report.schema.json`'s mtime must NOT move (D8's write-if-different) |
+| 2.51 | **A READ-ONLY WORKSPACE FALLS BACK TO `{}`.** `chmod -R a-w .ermine` (or open a checkout you cannot write to), `rm` the params file first so the first-pick branch runs again, and pick `Sales.report` | ONE channel line saying the preview could not write under that directory, **no notification storm**, and the report renders with empty parameters -- which for `Sales` is `400 the required key "fromDay" is missing`. The important half: **it is not retried on the next render**. Save an `.e` file a few times and check that the line appears ONCE and no further `ermine/schema` request goes out. `chmod -R u+w .ermine` afterwards |
+| 2.52 | **A REPORT THAT WEDGED IS NEVER HANDED A SCHEMA REQUEST.** Add `/tmp/wp7` as a workspace folder and delete `/tmp/wp7/.ermine` so `WpSpin.report` has NO params file. Wedge it as in §2.15 until the status bar reads `held`. Now trigger a render whose trigger carries no evidence of change: edit `ermine.preview.roots` to a value that resolves to the SAME list, exactly as §2.41d does | **NO `ermine/schema` request goes out** and **no file is written**: the channel shows the render `HELD` and the **Render anyway / Not now** question, and nothing under `/tmp/wp7/.ermine` appears. **Working out the schema COMPILES AND EVALUATES the report on the preview queue** (`json/Runner.scala:849-852`; `lsp/Preview.scala:596-598` says so in the server's own words), so handing one to a server this report has just wedged is the same mistake as re-rendering it. Press **Render anyway**: the files are written and the report renders (and wedges again) |
+
+**§2.43's `500` IS NOT A DEFECT OF THIS STEP, AND IT IS THE USER'S QUESTION.**
+With today's dates the `Sales` skeleton selects no rows and the first render
+answers `ok=false, status=500` -- *"Sales.report produced a document that
+cannot be encoded: an empty relation built from no rows carries no columns;
+give it a header (mkRelationWithHeader#) or a static hint"* at
+`$.children[1].cells[0][0].props`. **MEASURED twice against a real server**
+(the S1 review, and again by S3's own run on the bytes the shipped code
+writes). Controls in the same boot: the same file with `fromDay`
+`2026-01-05` and `toDay` `2026-03-17` renders `ok=true`, a 1407-byte
+document. So the skeleton DECODES and the report is fine; what the first
+minute should show instead is **Q21 in section 13 of the ticket, which is the
+user's and is not answered here.** §2.49 is where you edit the dates, and
+§2.44's opened document is what makes that the natural next thing to do.
+
+| 2.52b | **A SYMLINK ANYWHERE ON THE WAY REFUSES (the S3 review's M-3).** With no `.ermine` yet, make one of the paths a symbolic link out of the workspace and then pick `Sales.report`: `mkdir -p /tmp/outside && echo PRECIOUS > /tmp/outside/p.json && mkdir -p .ermine/preview/Sales && ln -s /tmp/outside/p.json .ermine/preview/Sales/report.params.json`. Repeat for `report.schema.json`, for `.ermine/preview/.gitignore`, and for the directory itself (`rm -rf .ermine/preview && ln -s /tmp/outside .ermine/preview`) | each one: ONE channel line naming THAT path -- *"The preview will not write through the symbolic link ..."* -- **nothing under `/tmp/outside` is touched** (`cat /tmp/outside/p.json` still says `PRECIOUS`), and the report renders with empty parameters. **MEASURED on a real disk without VS Code for all four**, so what this step really observes is that VS Code's `workspace.fs.stat` reports the `SymbolicLink` bit the way the API documents it. **If a file outside the workspace changes, `workspace.fs` does not report links and this needs its own ticket** |
+
+**WHAT §2.43-2.52 CANNOT TELL YOU EITHER.** Whether
+`WorkspaceEdit.createFile({overwrite: false, ignoreIfExists: true, contents})`
+is an ATOMIC create at the filesystem level -- the API is documented, its
+implementation is not read (project rule), and the code reads the file back
+rather than trusting it; whether VS Code's `contents` option is honoured at
+all on this version (if it is not, the read-back sees an empty file and
+writes the text separately, which §2.43 would show as the right content
+either way); whether `workspace.fs.createDirectory` really is recursive;
+whether the params file's creation fires `onDidCreate` on the S2 watcher (if
+it does not, §2.45 shows NO render at all rather than two, and the report
+renders on the next trigger); and whether a `.gitignore` written while VS
+Code is open takes effect in its SCM view without a refresh.
 
 **WHAT §2.33-2.42 CANNOT TELL YOU, and it is the same class of thing as
 §2.32b.** After the independent review's round, **exactly ONE source mutant
