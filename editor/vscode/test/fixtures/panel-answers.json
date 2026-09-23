@@ -1,0 +1,575 @@
+{
+  "_note": [
+    "REAL answers, CAPTURED (not written by hand) from ONE boot of this worktree's bin/ermine-lsp, no editor, 2026-09-23, HEAD fbfb5ed3.",
+    "Harness: scratch-widget-preview/wp10-s1/capture.py -- the wire helpers frame/read are exec'd verbatim from tracker/playtest/check-server.py; launch = bin/ermine-lsp with cwd = the worktree root, ERMINE_LSP_XMX=1g, initializationOptions {fastMode:false, preview:{timeoutSeconds:4}}.",
+    "Workspace: a scratch copy of core/src/test/resources/doc/*.e plus tracker/playtest/fixtures/{WpSpin,WpChain,WpBlow,WpInt}.e; roots = [that doc dir]. The absolute paths in `request` are that scratch directory's and are kept only as provenance.",
+    "`answer` is the JSON-RPC `result` verbatim; `rejection` is the JSON-RPC `error` verbatim (burst-1 is the server's own -32800 for a render displaced by a newer one).",
+    "The burst: three renders sent back to back (generations 8, 9, 10); the server keeps one in flight and one queued, latest wins, so 9 was displaced.",
+    "The wedge: WpSpin with a 4 s watchdog answers stuck:true; every later render in that process (WpInt, WpChain, WpBlow) is refused with the same stuck:true 500 -- WpChain and WpBlow therefore appear ONLY as stuck refusals, since one boot can wedge once.",
+    "`notifications` holds the ermine/* notifications the server sent during the run, in arrival order."
+  ],
+  "cases": {
+    "ok-wpint": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/WpInt.e",
+        "binding": "report",
+        "params": 5,
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 1
+      },
+      "answer": {
+        "ok": true,
+        "document": {
+          "version": 1,
+          "settings": {},
+          "root": {
+            "tag": "Widget",
+            "name": "int",
+            "props": 5
+          }
+        },
+        "generation": 1
+      }
+    },
+    "ok-sales": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/Sales.e",
+        "binding": "report",
+        "params": {
+          "fromDay": "2026-01-05",
+          "toDay": "2026-02-20",
+          "onlyRegion": "north",
+          "orderBy": "ByAmount"
+        },
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 2
+      },
+      "answer": {
+        "ok": true,
+        "document": {
+          "version": 1,
+          "settings": {},
+          "root": {
+            "tag": "VFlow",
+            "children": [
+              {
+                "tag": "Widget",
+                "name": "heading",
+                "props": {
+                  "title": "Sales",
+                  "sortColumn": "amount",
+                  "matched": 3,
+                  "total": 4350.75
+                }
+              },
+              {
+                "tag": "Grid",
+                "cells": [
+                  [
+                    {
+                      "tag": "Widget",
+                      "name": "table",
+                      "props": {
+                        "kind": "inline",
+                        "columns": [
+                          {
+                            "name": "amount",
+                            "type": "Double",
+                            "nullable": false
+                          },
+                          {
+                            "name": "day",
+                            "type": "Date",
+                            "nullable": false
+                          },
+                          {
+                            "name": "region",
+                            "type": "String",
+                            "nullable": false
+                          },
+                          {
+                            "name": "units",
+                            "type": "Int",
+                            "nullable": false
+                          }
+                        ],
+                        "rows": [
+                          [
+                            840,
+                            "2026-01-19",
+                            "north",
+                            2
+                          ],
+                          [
+                            1200.5,
+                            "2026-01-05",
+                            "north",
+                            3
+                          ],
+                          [
+                            2310.25,
+                            "2026-02-14",
+                            "north",
+                            7
+                          ]
+                        ],
+                        "rowCount": 3
+                      }
+                    },
+                    {
+                      "tag": "Widget",
+                      "name": "table",
+                      "props": {
+                        "kind": "inline",
+                        "columns": [
+                          {
+                            "name": "region",
+                            "type": "String",
+                            "nullable": false
+                          }
+                        ],
+                        "rows": [
+                          [
+                            "east"
+                          ],
+                          [
+                            "north"
+                          ],
+                          [
+                            "south"
+                          ],
+                          [
+                            "west"
+                          ]
+                        ],
+                        "rowCount": 4
+                      }
+                    }
+                  ],
+                  [
+                    {
+                      "tag": "Widget",
+                      "name": "table",
+                      "props": {
+                        "kind": "deferred",
+                        "columns": [
+                          {
+                            "name": "amount",
+                            "type": "Double",
+                            "nullable": false
+                          },
+                          {
+                            "name": "item",
+                            "type": "String",
+                            "nullable": false
+                          },
+                          {
+                            "name": "units",
+                            "type": "Int",
+                            "nullable": false
+                          }
+                        ],
+                        "token": "d9Rfeu3GLhTiPjKEqMkpww",
+                        "expires": "2026-09-23T16:43:57.653Z"
+                      }
+                    },
+                    {
+                      "tag": "Widget",
+                      "name": "text",
+                      "props": "line items on demand"
+                    }
+                  ]
+                ]
+              }
+            ]
+          }
+        },
+        "generation": 2
+      }
+    },
+    "error-400-wpint": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/WpInt.e",
+        "binding": "report",
+        "params": "not a number",
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 3
+      },
+      "answer": {
+        "ok": false,
+        "status": 400,
+        "message": "expected an integer (Int), found the string \"not a number\"",
+        "path": "$.params",
+        "generation": 3
+      }
+    },
+    "error-400-sales-key": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/Sales.e",
+        "binding": "report",
+        "params": {
+          "fromDay": "2026-01-05",
+          "toDay": "2026-02-20",
+          "onlyRegion": "north",
+          "orderBy": "ByAmount",
+          "fromDy": "2026-01-05"
+        },
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 4
+      },
+      "answer": {
+        "ok": false,
+        "status": 400,
+        "message": "the key \"fromDy\" is not allowed here",
+        "path": "$.params.fromDy",
+        "generation": 4
+      }
+    },
+    "error-404-binding": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/WpInt.e",
+        "binding": "noSuchBinding",
+        "params": 5,
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 5
+      },
+      "answer": {
+        "ok": false,
+        "status": 404,
+        "message": "module WpInt has no binding named noSuchBinding",
+        "generation": 5
+      }
+    },
+    "error-404-placement": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/nowhere/Missing.e",
+        "binding": "report",
+        "params": 5,
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 6
+      },
+      "answer": {
+        "ok": false,
+        "status": 404,
+        "message": "cannot read Missing.e",
+        "reason": "unreadable",
+        "generation": 6
+      }
+    },
+    "error-500-sales": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/Sales.e",
+        "binding": "report",
+        "params": {
+          "fromDay": "2099-01-01",
+          "toDay": "2099-01-02",
+          "onlyRegion": "north",
+          "orderBy": "ByAmount"
+        },
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 7
+      },
+      "answer": {
+        "ok": false,
+        "status": 500,
+        "message": "Sales.report produced a document that cannot be encoded: an empty relation built from no rows carries no columns; give it a header (mkRelationWithHeader#) or a static hint",
+        "path": "$.children[1].cells[0][0].props",
+        "generation": 7
+      }
+    },
+    "burst-0": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/Sales.e",
+        "binding": "report",
+        "params": {
+          "fromDay": "2026-01-05",
+          "toDay": "2026-02-20",
+          "onlyRegion": "north",
+          "orderBy": "ByAmount"
+        },
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 8
+      },
+      "answer": {
+        "ok": true,
+        "document": {
+          "version": 1,
+          "settings": {},
+          "root": {
+            "tag": "VFlow",
+            "children": [
+              {
+                "tag": "Widget",
+                "name": "heading",
+                "props": {
+                  "title": "Sales",
+                  "sortColumn": "amount",
+                  "matched": 3,
+                  "total": 4350.75
+                }
+              },
+              {
+                "tag": "Grid",
+                "cells": [
+                  [
+                    {
+                      "tag": "Widget",
+                      "name": "table",
+                      "props": {
+                        "kind": "inline",
+                        "columns": [
+                          {
+                            "name": "amount",
+                            "type": "Double",
+                            "nullable": false
+                          },
+                          {
+                            "name": "day",
+                            "type": "Date",
+                            "nullable": false
+                          },
+                          {
+                            "name": "region",
+                            "type": "String",
+                            "nullable": false
+                          },
+                          {
+                            "name": "units",
+                            "type": "Int",
+                            "nullable": false
+                          }
+                        ],
+                        "rows": [
+                          [
+                            840,
+                            "2026-01-19",
+                            "north",
+                            2
+                          ],
+                          [
+                            1200.5,
+                            "2026-01-05",
+                            "north",
+                            3
+                          ],
+                          [
+                            2310.25,
+                            "2026-02-14",
+                            "north",
+                            7
+                          ]
+                        ],
+                        "rowCount": 3
+                      }
+                    },
+                    {
+                      "tag": "Widget",
+                      "name": "table",
+                      "props": {
+                        "kind": "inline",
+                        "columns": [
+                          {
+                            "name": "region",
+                            "type": "String",
+                            "nullable": false
+                          }
+                        ],
+                        "rows": [
+                          [
+                            "east"
+                          ],
+                          [
+                            "north"
+                          ],
+                          [
+                            "south"
+                          ],
+                          [
+                            "west"
+                          ]
+                        ],
+                        "rowCount": 4
+                      }
+                    }
+                  ],
+                  [
+                    {
+                      "tag": "Widget",
+                      "name": "table",
+                      "props": {
+                        "kind": "deferred",
+                        "columns": [
+                          {
+                            "name": "amount",
+                            "type": "Double",
+                            "nullable": false
+                          },
+                          {
+                            "name": "item",
+                            "type": "String",
+                            "nullable": false
+                          },
+                          {
+                            "name": "units",
+                            "type": "Int",
+                            "nullable": false
+                          }
+                        ],
+                        "token": "XI19yDG4cirlr9WRCIgSYA",
+                        "expires": "2026-09-23T16:43:57.690Z"
+                      }
+                    },
+                    {
+                      "tag": "Widget",
+                      "name": "text",
+                      "props": "line items on demand"
+                    }
+                  ]
+                ]
+              }
+            ]
+          }
+        },
+        "generation": 8
+      }
+    },
+    "burst-1": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/WpInt.e",
+        "binding": "report",
+        "params": 1,
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 9
+      },
+      "rejection": {
+        "code": -32800,
+        "message": "replaced by a newer render"
+      }
+    },
+    "burst-2": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/WpInt.e",
+        "binding": "report",
+        "params": 2,
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 10
+      },
+      "answer": {
+        "ok": true,
+        "document": {
+          "version": 1,
+          "settings": {},
+          "root": {
+            "tag": "Widget",
+            "name": "int",
+            "props": 2
+          }
+        },
+        "generation": 10
+      }
+    },
+    "stuck-wpspin": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/WpSpin.e",
+        "binding": "report",
+        "params": 5,
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 11
+      },
+      "answer": {
+        "ok": false,
+        "status": 500,
+        "message": "evaluation did not finish after 4s; the preview is stuck. It recovers by itself if that evaluation ever finishes; if it does not, restart the language server -- run \"Ermine: Restart Language Server\" (ermine.restartServer)",
+        "generation": 11,
+        "stuck": true
+      }
+    },
+    "while-stuck-wpint": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/WpInt.e",
+        "binding": "report",
+        "params": 5,
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 12
+      },
+      "answer": {
+        "ok": false,
+        "status": 500,
+        "message": "evaluation did not finish after 4s; the preview is stuck. It recovers by itself if that evaluation ever finishes; if it does not, restart the language server -- run \"Ermine: Restart Language Server\" (ermine.restartServer)",
+        "generation": 12,
+        "stuck": true
+      }
+    },
+    "while-stuck-wpchain": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/WpChain.e",
+        "binding": "report",
+        "params": 5,
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 13
+      },
+      "answer": {
+        "ok": false,
+        "status": 500,
+        "message": "evaluation did not finish after 4s; the preview is stuck. It recovers by itself if that evaluation ever finishes; if it does not, restart the language server -- run \"Ermine: Restart Language Server\" (ermine.restartServer)",
+        "generation": 13,
+        "stuck": true
+      }
+    },
+    "while-stuck-wpblow": {
+      "request": {
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/WpBlow.e",
+        "binding": "report",
+        "params": 5,
+        "roots": [
+          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+        ],
+        "generation": 14
+      },
+      "answer": {
+        "ok": false,
+        "status": 500,
+        "message": "evaluation did not finish after 4s; the preview is stuck. It recovers by itself if that evaluation ever finishes; if it does not, restart the language server -- run \"Ermine: Restart Language Server\" (ermine.restartServer)",
+        "generation": 14,
+        "stuck": true
+      }
+    }
+  },
+  "notifications": [
+    {
+      "jsonrpc": "2.0",
+      "method": "ermine/preview/stuck",
+      "params": {
+        "stuck": true,
+        "message": "evaluation did not finish after 4s; the preview is stuck. It recovers by itself if that evaluation ever finishes; if it does not, restart the language server -- run \"Ermine: Restart Language Server\" (ermine.restartServer)",
+        "seq": 1
+      }
+    }
+  ]
+}

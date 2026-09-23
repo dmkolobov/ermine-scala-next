@@ -120,6 +120,24 @@ gate_lsp() {
   return $rc
 }
 
+gate_def extension commit 300 "editor/vscode: node --test test/preview-core.test.js (the preview loop's pure decisions; no node_modules)"
+# WP-10 S1 (U7, the orchestrator's call on the design review's measurement: ~2 s, no precondition but
+# `node`).  Registered straight at COMMIT rather than entering at nightly: it guards the one file every
+# WP-7/8/10/22 decision lives in, and until now no gate ran node at all.  `npm run test:preview` is this
+# exact command; it is spelled out so the gate needs no npm.  gate_client (npm test in client/) is NOT
+# registered here -- that is WP-10 S3's, at nightly, and it needs client/node_modules.
+GATE_NOSCOPE[extension]="scripts/mutate.py's operators are Scala-shaped; the suite's own reverse-mutant batteries are run on copies per stage (scratch-widget-preview/)"
+gate_extension() {
+  command -v node > /dev/null || { echo "SUMMARY no node on PATH"; return 3; }
+  ( cd editor/vscode && node --test test/preview-core.test.js ); local rc=$?
+  local t p f
+  t=$(grep -oE '^ℹ tests [0-9]+' "$GATE_LOG" | tail -1 | grep -oE '[0-9]+$')
+  p=$(grep -oE '^ℹ pass [0-9]+' "$GATE_LOG" | tail -1 | grep -oE '[0-9]+$')
+  f=$(grep -oE '^ℹ fail [0-9]+' "$GATE_LOG" | tail -1 | grep -oE '[0-9]+$')
+  echo "SUMMARY ${t:-?} tests, ${p:-?} pass, ${f:-?} fail"
+  [[ $rc == 0 && -n $t && $t == "$p" && ${f:-1} == 0 ]]
+}
+
 # DELETED 2026-09-17 (docs/gate-audit.md §6): `g1` (tracker/tools/g1-validate.sh) was a pr gate.
 # It caught two real defects in the record, both while comparing two builds during an intended change,
 # but as a gate on one commit it caught 0 of 8 injected mutants -- 4 from the row solver (invisible:

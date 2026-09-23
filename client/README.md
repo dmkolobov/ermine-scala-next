@@ -52,7 +52,7 @@ is long-standing, not new.
 With that checkout present, the command above is green. Eight of the tests skip, each
 naming what would make it run: three need FIXTURES the Scala side writes — property (b)'s
 200-document corpus, its negative half, and the end-to-end document — and five need the
-browser bundle, which `npm run bundle` builds. That is **90 tests, 82 passed, 8 skipped**
+browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (now 100 tests: 97 passed, 3 skipped with the bundle built, MEASURED 2026-09-23)
 (MEASURED 2026-09-21 on node v24.20.0; the count this paragraph carried before WP-9 was
 33/3 and was stale by 29 passing tests). `npm run test:bundle` builds the bundle first and
 gives 87 passed, 3 skipped; writing the fixtures as well runs all 90:

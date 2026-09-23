@@ -10315,3 +10315,402 @@ test("glue pins (S4): U3's command, the overwrite chain, and D6's scan", () => {
   assert.ok(/orphanNotices = new Set\(\);/.test(disposeBody),
     pin("the orphan notices outlive the window", "the same: they die with the session and nowhere else"));
 });
+
+// ===========================================================================
+// WP-10 S1: THE PANEL'S PURE HALF -- `panelMessagesFor`, its shared view
+// builder, and the host page's HTML.  NOTHING OF IT IS WIRED: `extension.js`
+// creates no panel yet (S2).  The builders the glue will call are the ones
+// called here (`panelAnswerStep`, `panelView`, `unsavedNames`), per the rule at
+// the head of this file; no test below hand-writes a view object.
+//
+// The cross-language half -- these messages folded through the REAL
+// `client/src/host/index.ts` reducer, and H7's snapshot-equals-incremental
+// property over generated extension histories -- is `client/test/page.test.ts`,
+// because the reducer is TypeScript and this suite needs no build.
+// ===========================================================================
+
+const PANEL_ANSWERS = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "panel-answers.json"), "utf8"));
+const PANEL_PICK = core.makePick("file:///w/doc/WpSpin.e", "/w/doc/WpSpin.e", "report", "WpSpin", []);
+
+/** The panel view after a list of render outcomes, through the SHARED
+ *  builders, with the extension's generation advanced as `renderNow` does. */
+function panelAfter(outcomes, extra) {
+  let answers = core.initialPanelAnswers();
+  let current = 0;
+  for (const o of outcomes) {
+    current = Math.max(current, o.current || 0);
+    answers = core.panelAnswerStep(answers, o.outcome, current);
+  }
+  return core.panelView(Object.assign({ answers }, extra || {}));
+}
+const kinds = (msgs) => msgs.map((m) => m.kind);
+const captured = (name) => PANEL_ANSWERS.cases[name];
+const answerOutcome = (name) => ({ current: captured(name).request.generation, outcome: { answer: captured(name).answer } });
+
+test("panel (csp): the policy is EXACTLY the design review's one line, character for character", () => {
+  const src = "https://file+.vscode-resource.vscode-cdn.net";
+  assert.strictEqual(core.previewCsp(src),
+    "default-src 'none'; script-src https://file+.vscode-resource.vscode-cdn.net 'unsafe-eval'; " +
+    "style-src https://file+.vscode-resource.vscode-cdn.net 'unsafe-inline'; " +
+    "img-src https://file+.vscode-resource.vscode-cdn.net data:;");
+  const html = core.buildPreviewHtml({ cspSource: src, client: "c.js", host: "h.js" });
+  const metas = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/g) || [];
+  assert.strictEqual(metas.length, 1, "exactly one CSP meta");
+  assert.ok(html.indexOf('<meta http-equiv="Content-Security-Policy" content="' + core.previewCsp(src) + '">') > 0);
+  // no nonce (W3), no blob: (U5), no font-src / connect-src (F2, F3), one line
+  for (const absent of ["nonce", "blob:", "font-src", "connect-src", "\n"]) {
+    assert.ok(core.previewCsp(src).indexOf(absent) < 0, absent + " is not in the policy");
+  }
+});
+
+test("panel (csp): a cspSource that would change the policy is REFUSED, never escaped into it", () => {
+  for (const bad of ["", "  ", "a; script-src *", "a 'unsafe-inline'", 'a"', "a\nb", undefined, 7]) {
+    assert.throws(() => core.buildPreviewHtml({ cspSource: bad, client: "c.js", host: "h.js" }),
+      /buildPreviewHtml: cspSource/, "cspSource " + JSON.stringify(bad));
+  }
+});
+
+test("panel (html): scripts load writers -> client -> host, classic, stamped, and NO inline script body", () => {
+  const html = core.buildPreviewHtml(
+    { cspSource: "vscode-src", writers: "w/htmlwriter.js", client: "b/ermine-client.js", host: "b/ermine-host.js" },
+    { stamp: 1234 });
+  const tags = html.match(/<script\b[^>]*>[\s\S]*?<\/script>/g) || [];
+  assert.deepStrictEqual(tags, [
+    '<script src="w/htmlwriter.js"></script>',
+    '<script src="b/ermine-client.js?v=1234"></script>',
+    '<script src="b/ermine-host.js?v=1234"></script>',
+  ]);
+  assert.strictEqual((html.match(/<script/g) || []).length, 3, "no <script> the tag list missed");
+  const inlineBodies = tags.filter((t) => !/^<script src="[^"]+"><\/script>$/.test(t));
+  assert.strictEqual(inlineBodies.length, 0, "W3: zero inline script bodies");
+  for (const attr of ["defer", "async", "type=", "nonce"]) assert.ok(html.indexOf(attr) < 0, attr);
+  assert.ok(html.indexOf('<div id="' + core.PREVIEW_ROOT_ID + '"></div>') > 0, "the root element");
+  assert.ok(html.indexOf("<div id") < html.indexOf("<script"), "the root exists before any script runs");
+  // the writers slot is optional in S1, and the order holds without it
+  const bare = core.buildPreviewHtml({ cspSource: "vscode-src", client: "c.js", host: "h.js" });
+  assert.deepStrictEqual(bare.match(/<script\b[^>]*>/g), ['<script src="c.js">', '<script src="h.js">']);
+  // a URI that already has a query keeps it
+  assert.ok(core.buildPreviewHtml({ cspSource: "s", client: "c.js?x=1", host: "h.js" }, { stamp: "a b" })
+    .indexOf('src="c.js?x=1&amp;v=a%20b"') > 0);
+});
+
+test("panel (html): the writers' CSS links are optional, in order, and at most three", () => {
+  const html = core.buildPreviewHtml({ cspSource: "s", client: "c.js", host: "h.js",
+    styles: ["web/common.css", "web/htmlwriter.css", "web/htmlwriter_classic.css"] });
+  assert.deepStrictEqual(html.match(/<link [^>]*>/g), [
+    '<link rel="stylesheet" href="web/common.css">',
+    '<link rel="stylesheet" href="web/htmlwriter.css">',
+    '<link rel="stylesheet" href="web/htmlwriter_classic.css">',
+  ]);
+  assert.strictEqual((core.buildPreviewHtml({ cspSource: "s", client: "c.js", host: "h.js" }).match(/<link/g) || []).length, 0);
+  assert.throws(() => core.buildPreviewHtml({ cspSource: "s", client: "c.js", host: "h.js", styles: ["a", "b", "c", "d"] }), /styles/);
+  assert.throws(() => core.buildPreviewHtml({ cspSource: "s", client: "c.js" }), /host script URI is missing/);
+  assert.throws(() => core.buildPreviewHtml({ cspSource: "s", host: "h.js" }), /client script URI is missing/);
+});
+
+test("panel (html): every URI is HTML-escaped, so a hostile path cannot add a tag", () => {
+  const evil = 'x"><script>alert(1)</script><x a="';
+  const html = core.buildPreviewHtml({ cspSource: "s", client: evil, host: "h.js", writers: evil, styles: [evil] });
+  assert.strictEqual((html.match(/<script/g) || []).length, 3);
+  assert.ok(html.indexOf("alert(1)</script>") < 0);
+  assert.ok(html.indexOf("&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;") > 0);
+  assert.strictEqual((html.match(/<link/g) || []).length, 1);
+});
+
+test("panel (target): U1's contract -- panel | json | both, default panel, anything else refused AND named", () => {
+  assert.deepStrictEqual(core.PANEL_TARGETS, ["panel", "json", "both"]);
+  assert.deepStrictEqual(core.panelTarget(undefined), { target: "panel", problem: null });
+  assert.deepStrictEqual(core.panelTarget("json"), { target: "json", problem: null });
+  assert.deepStrictEqual(core.panelTarget("both"), { target: "both", problem: null });
+  const bad = core.panelTarget("tab");
+  assert.strictEqual(bad.target, "panel");
+  assert.match(bad.problem, /"tab"/);
+  assert.match(core.panelTarget(3).problem, /a number/);
+});
+
+test("panel (kinds): the kind list is the host reducer's nine, in its order", () => {
+  const hostSrc = fs.readFileSync(path.join(__dirname, "..", "..", "..", "client", "src", "host", "index.ts"), "utf8");
+  const block = hostSrc.slice(hostSrc.indexOf("export const MESSAGE_KINDS = ["), hostSrc.indexOf("] as const;"));
+  assert.deepStrictEqual(core.PANEL_MESSAGE_KINDS, (block.match(/"([A-Za-z]+)"/g) || []).map((s) => s.slice(1, -1)));
+});
+
+test("panel (table): each of the nine kinds is produced by at least one view built by the shared builder", () => {
+  const good = { current: 1, outcome: { answer: captured("ok-wpint").answer } };
+  const stuck = core.stuckReduce(core.initialStuckState(),
+    { type: "notification", stuck: true, message: "evaluation did not finish", seq: 3 }).state;
+  const offline = core.stuckReduce(core.initialStuckState(), { type: "clientState", to: "Stopped" }).state;
+  const mark = core.guardReduce(null, { type: "answer", stuck: true, applies: true, pick: PANEL_PICK, at: 1 }).mark;
+  const table = [
+    ["render", panelAfter([good])],
+    ["error", panelAfter([good, answerOutcome("error-400-wpint")])],
+    ["stale", panelAfter([good], { pending: true })],
+    ["stuck", panelAfter([], { stuckState: stuck })],
+    ["held", panelAfter([], { mark, pick: PANEL_PICK })],
+    ["offline", panelAfter([], { stuckState: offline })],
+    ["switching", panelAfter([], { switching: "prod" })],
+    ["unsaved", panelAfter([], { unsaved: core.unsavedNames([{ fileName: "/w/Chart.e", isDirty: true, languageId: "ermine" }]) })],
+    ["reloadBundle", panelAfter([good], { reloading: true })],
+  ];
+  assert.deepStrictEqual(table.map((r) => r[0]), core.PANEL_MESSAGE_KINDS.slice());
+  const on = {
+    render: (m) => m.document !== undefined,
+    error: (m) => m.status === 400,
+    stale: (m) => m.stale === true,
+    stuck: (m) => m.stuck === true && m.seq === 3 && m.message === "evaluation did not finish",
+    held: (m) => m.held === true && /WpSpin\.report wedged/.test(m.message),
+    offline: (m) => m.offline === true,
+    switching: (m) => m.to === "prod",
+    unsaved: (m) => m.names.length === 1 && m.names[0] === "Chart.e",
+    reloadBundle: () => true,
+  };
+  for (const [kind, view] of table) {
+    const msgs = core.panelMessagesFor(view);
+    const hit = msgs.filter((m) => m.kind === kind);
+    assert.strictEqual(hit.length, 1, kind + " appears exactly once");
+    assert.ok(on[kind](hit[0]), kind + " carries its RAISED value: " + JSON.stringify(hit[0]));
+  }
+});
+
+test("panel (snapshot): every slice is sent on BOTH edges, in the order the reducer needs", () => {
+  // H7: the resync must overwrite a panel that missed any post, so the six
+  // latch slices are always present -- lowered as well as raised.
+  const idle = core.panelMessagesFor(core.panelView({}));
+  assert.deepStrictEqual(idle, [
+    { kind: "stale", stale: false },
+    { kind: "stuck", stuck: false },
+    { kind: "held", held: false },
+    { kind: "offline", offline: false },
+    { kind: "switching", to: null },
+    { kind: "unsaved", names: [] },
+  ]);
+  const busy = core.panelMessagesFor(panelAfter(
+    [{ current: 1, outcome: { answer: captured("ok-wpint").answer } }, answerOutcome("error-400-wpint")],
+    { reloading: true, pending: true }));
+  assert.deepStrictEqual(kinds(busy),
+    ["render", "error", "stale", "stuck", "held", "offline", "switching", "unsaved", "reloadBundle"]);
+  // `held` carries NO button (U4, WP-22), and nothing else names an action
+  for (const m of busy) assert.ok(!("action" in m), m.kind + " carries no action");
+  const held = core.panelMessagesFor(core.panelView({
+    mark: core.guardReduce(null, { type: "answer", stuck: true, applies: true, pick: PANEL_PICK, at: 1 }).mark,
+    pick: PANEL_PICK })).find((m) => m.kind === "held");
+  assert.deepStrictEqual(Object.keys(held).sort(), ["held", "kind", "message"]);
+});
+
+test("panel (displaced): a displaced render produces NOTHING -- the answers are returned by identity", () => {
+  const before = core.panelAnswerStep(core.initialPanelAnswers(), { answer: captured("burst-0").answer }, 8);
+  const rej = captured("burst-1").rejection;
+  assert.strictEqual(rej.code, -32800, "the captured rejection is the server's own displacement");
+  const after = core.panelAnswerStep(before, { rejection: rej, generation: 9 }, 9);
+  assert.strictEqual(after, before, "displaced: nothing changes");
+  assert.deepStrictEqual(core.panelMessagesFor(core.panelView({ answers: after })),
+                         core.panelMessagesFor(core.panelView({ answers: before })));
+  // the vscode-languageclient shape (code under `data`) is displaced too
+  assert.strictEqual(core.panelAnswerStep(before, { rejection: { data: { code: -32800 } }, generation: 9 }, 9), before);
+  // and any OTHER rejection is dressed by errorAnswer and shown
+  const lost = core.panelAnswerStep(before, { rejection: new Error("connection got disposed"), generation: 9 }, 9);
+  const err = core.panelMessagesFor(core.panelView({ answers: lost })).find((m) => m.kind === "error");
+  assert.deepStrictEqual(err, { kind: "error", status: 0, message: "connection got disposed", path: null, reason: null });
+});
+
+test("panel (generation): an answer behind the current generation is discarded, a newer one is shown", () => {
+  // REAL: burst-2 (generation 10) answered; burst-0 (generation 8) arriving
+  // after it, while the extension is at 10, must change nothing.
+  const at10 = core.panelAnswerStep(core.initialPanelAnswers(), { answer: captured("burst-2").answer }, 10);
+  assert.strictEqual(core.panelAnswerStep(at10, { answer: captured("burst-0").answer }, 10), at10);
+  const msgs = core.panelMessagesFor(core.panelView({ answers: at10 }));
+  assert.deepStrictEqual(msgs[0], { kind: "render", document: captured("burst-2").answer.document, generation: 10 });
+  // a generation that is not a number is ACCEPTED (isCurrentGeneration's rule)
+  const nullGen = core.panelAnswerStep(at10, { answer: { ok: false, status: 400, message: "m", generation: null } }, 10);
+  assert.notStrictEqual(nullGen, at10);
+});
+
+test("panel (answers): an error keeps the last GOOD document, which the snapshot re-sends below it", () => {
+  const v = panelAfter([answerOutcome("ok-sales"), answerOutcome("error-500-sales")]);
+  const msgs = core.panelMessagesFor(v);
+  assert.deepStrictEqual(kinds(msgs).slice(0, 2), ["render", "error"]);
+  assert.deepStrictEqual(msgs[0].document, captured("ok-sales").answer.document);
+  assert.strictEqual(msgs[0].generation, 2);
+  assert.strictEqual(msgs[1].status, 500);
+  // an error with nothing ever rendered sends no render
+  assert.deepStrictEqual(kinds(core.panelMessagesFor(panelAfter([answerOutcome("error-404-binding")]))).slice(0, 1), ["error"]);
+});
+
+test("panel (stale): from the answer's OWN key, or while a render is pending -- and after the answer pair", () => {
+  const staleAnswer = Object.assign({}, captured("ok-wpint").answer, { stale: true });
+  const v = panelAfter([{ current: 1, outcome: { answer: staleAnswer } }]);
+  const msgs = core.panelMessagesFor(v);
+  assert.deepStrictEqual(msgs.slice(0, 2).map((m) => [m.kind, m.stale]), [["render", undefined], ["stale", true]]);
+  assert.strictEqual(core.panelMessagesFor(panelAfter([answerOutcome("ok-wpint")])).find((m) => m.kind === "stale").stale, false);
+});
+
+test("panel (fast mode): W5 -- the sentence is composed into `error`, never a tenth kind", () => {
+  const v = panelAfter([answerOutcome("error-400-sales-key")], { fastMode: true });
+  const err = core.panelMessagesFor(v).find((m) => m.kind === "error");
+  assert.strictEqual(err.message, 'the key "fromDy" is not allowed here' + core.FAST_MODE_SUFFIX);
+  assert.strictEqual(err.path, "$.params.fromDy");
+  assert.match(core.FAST_MODE_SUFFIX, /fast mode is on: type errors are not shown in Problems/);
+  // a blank message still says something before the suffix
+  const blank = core.panelMessagesFor(panelAfter([{ current: 1, outcome: { answer: { ok: false, status: 500, message: " ", generation: 1 } } }],
+    { fastMode: true })).find((m) => m.kind === "error");
+  assert.strictEqual(blank.message, "the render failed" + core.FAST_MODE_SUFFIX);
+  // off: the message is the server's, verbatim
+  assert.strictEqual(core.panelMessagesFor(panelAfter([answerOutcome("error-400-sales-key")])).find((m) => m.kind === "error").message,
+    'the key "fromDy" is not allowed here');
+  assert.ok(core.panelMessagesFor(panelAfter([answerOutcome("ok-wpint")], { fastMode: true })).every((m) => m.kind !== "error"));
+});
+
+test("panel (stuck): from the ARBITRATED stuck state, never from the answer's own key (D10, rule 3)", () => {
+  const ans = captured("stuck-wpspin").answer;
+  assert.strictEqual(ans.stuck, true);
+  // rule (3) APPLIES the marker: no notification since the send
+  const applied = core.stuckReduce(core.initialStuckState(),
+    { type: "answer", stuck: true, message: ans.message, seqAtSend: 0 }).state;
+  const v = panelAfter([answerOutcome("stuck-wpspin")], { stuckState: applied });
+  const msgs = core.panelMessagesFor(v);
+  assert.deepStrictEqual(msgs.find((m) => m.kind === "stuck"), { kind: "stuck", stuck: true, message: ans.message });
+  assert.strictEqual(msgs.find((m) => m.kind === "error").status, 500);
+  // rule (3) REFUSES it (a clear arrived after the send): the SAME answer raises no banner
+  const cleared = core.stuckReduce(core.initialStuckState(), { type: "notification", stuck: false, seq: 5 }).state;
+  const refused = core.stuckReduce(cleared, { type: "answer", stuck: true, message: ans.message, seqAtSend: 0 }).state;
+  assert.deepStrictEqual(core.panelMessagesFor(panelAfter([answerOutcome("stuck-wpspin")], { stuckState: refused }))
+    .find((m) => m.kind === "stuck"), { kind: "stuck", stuck: false });
+  // the captured notification carries the seq through
+  const note = PANEL_ANSWERS.notifications.find((n) => n.method === "ermine/preview/stuck").params;
+  const noted = core.stuckReduce(core.initialStuckState(), Object.assign({ type: "notification" }, note)).state;
+  assert.strictEqual(core.panelMessagesFor(core.panelView({ stuckState: noted })).find((m) => m.kind === "stuck").seq, note.seq);
+});
+
+test("panel (held): H6 -- only the guard's own clears lower it; a restart (offline -> running) does not", () => {
+  const mark = core.guardReduce(null, { type: "answer", stuck: true, applies: true, pick: PANEL_PICK, at: 1 }).mark;
+  const heldOf = (extra) => core.panelMessagesFor(core.panelView(Object.assign({ mark, pick: PANEL_PICK }, extra)))
+    .find((m) => m.kind === "held");
+  assert.strictEqual(heldOf({}).held, true);
+  assert.strictEqual(heldOf({ restartedByUs: true }).message, core.heldMessage(mark, PANEL_PICK, true));
+  const running = core.stuckReduce(core.stuckReduce(core.initialStuckState(), { type: "clientState", to: "Stopped" }).state,
+    { type: "clientState", to: "Running" }).state;
+  assert.strictEqual(heldOf({ stuckState: running }).held, true, "a bare Stopped -> Running keeps it");
+  const recovered = core.guardReduce(mark, { type: "notification", stuck: false, pick: PANEL_PICK });
+  assert.strictEqual(recovered.effects.cleared, true);
+  assert.strictEqual(heldOf({ mark: recovered.mark }).held, false, "a {stuck:false} recovery lowers it");
+  // a mark for ANOTHER pick is never spoken about (markMatches)
+  const other = core.makePick("file:///w/doc/WpInt.e", "/w/doc/WpInt.e", "report", "WpInt", []);
+  assert.strictEqual(heldOf({ pick: other }).held, false);
+});
+
+test("panel (unsaved): dirty Ermine documents by base name, sorted, de-duplicated, nothing else", () => {
+  assert.deepStrictEqual(core.unsavedNames([
+    { fileName: "/w/b/Sales.e", isDirty: true, languageId: "ermine" },
+    { fileName: "/w/a/Chart.e", isDirty: true, languageId: "ermine" },
+    { fileName: "/w/c/Sales.e", isDirty: true, languageId: "ermine" },
+    { fileName: "/w/Clean.e", isDirty: false, languageId: "ermine" },
+    { fileName: "/w/p.params.json", isDirty: true, languageId: "json" },
+    null, { isDirty: true, languageId: "ermine" },
+  ]), ["Chart.e", "Sales.e"]);
+  assert.deepStrictEqual(core.unsavedNames(undefined), []);
+});
+
+test("panel (switching): W6 -- NOT WIRED, so a view built with no producer always lowers it", () => {
+  const sw = (parts) => core.panelMessagesFor(core.panelView(parts)).find((m) => m.kind === "switching");
+  assert.deepStrictEqual(sw({}), { kind: "switching", to: null });
+  assert.deepStrictEqual(sw({ switching: "  " }), { kind: "switching", to: null });
+});
+
+test("panel (real answers): every captured answer from a real bin/ermine-lsp maps to the message stream it should", () => {
+  // `test/fixtures/panel-answers.json`: CAPTURED, one boot, no editor -- its
+  // `_note` says how.  Each case is fed through the shared builders exactly as
+  // S2's glue will: outcome -> panelAnswerStep -> panelView -> panelMessagesFor.
+  const expect = {
+    "ok-wpint":            { first: "render" },
+    "ok-sales":            { first: "render" },
+    "burst-0":             { first: "render" },
+    "burst-2":             { first: "render" },
+    "error-400-wpint":     { first: "error", status: 400, path: "$.params" },
+    "error-400-sales-key": { first: "error", status: 400, path: "$.params.fromDy" },
+    "error-404-binding":   { first: "error", status: 404, reason: null },
+    "error-404-placement": { first: "error", status: 404, reason: "unreadable" },
+    "error-500-sales":     { first: "error", status: 500 },
+    "stuck-wpspin":        { first: "error", status: 500, stuck: true },
+    "while-stuck-wpint":   { first: "error", status: 500, stuck: true },
+    "while-stuck-wpchain": { first: "error", status: 500, stuck: true },
+    "while-stuck-wpblow":  { first: "error", status: 500, stuck: true },
+    "burst-1":             { none: true },
+  };
+  assert.deepStrictEqual(Object.keys(expect).sort(), Object.keys(PANEL_ANSWERS.cases).sort(), "every capture has a row");
+  for (const [name, want] of Object.entries(expect)) {
+    const c = PANEL_ANSWERS.cases[name];
+    const gen = c.request.generation;
+    const outcome = c.rejection ? { rejection: c.rejection, generation: gen } : { answer: c.answer };
+    const answers = core.panelAnswerStep(core.initialPanelAnswers(), outcome, gen);
+    // the glue feeds a stuck-marked answer to stuckReduce; the view takes that state
+    const stuckState = core.stuckReduce(core.initialStuckState(),
+      { type: "answer", stuck: !!(c.answer && c.answer.stuck === true), message: c.answer && c.answer.message, seqAtSend: 0 }).state;
+    const msgs = core.panelMessagesFor(core.panelView({ answers, stuckState }));
+    if (want.none) {
+      assert.strictEqual(answers, core.panelAnswerStep(answers, outcome, gen), name);
+      assert.ok(msgs.every((m) => m.kind !== "render" && m.kind !== "error"), name + ": displaced shows nothing");
+      continue;
+    }
+    assert.strictEqual(msgs[0].kind, want.first, name);
+    if (want.first === "render") {
+      assert.deepStrictEqual(msgs[0].document, c.answer.document, name);
+      assert.strictEqual(msgs[0].generation, gen, name);
+    } else {
+      assert.strictEqual(msgs[0].status, want.status, name);
+      assert.strictEqual(msgs[0].message, c.answer.message, name);
+      if ("path" in want) assert.strictEqual(msgs[0].path, want.path, name);
+      if ("reason" in want) assert.strictEqual(msgs[0].reason, want.reason, name);
+    }
+    assert.strictEqual(msgs.find((m) => m.kind === "stuck").stuck, want.stuck === true, name + ": stuck");
+    // and a real answer at an OLDER generation than the extension's changes nothing
+    const later = core.panelAnswerStep(core.initialPanelAnswers(), outcome, gen + 1);
+    if (!c.rejection) assert.deepStrictEqual(later, core.initialPanelAnswers(), name + ": discarded when behind");
+  }
+});
+
+test("panel (explorer): over generated views, the stream's shape never breaks", () => {
+  // A small seeded explorer (no fast-check here: this suite needs no
+  // node_modules).  Draws every input `panelView` reads from the real
+  // reducers and the captured answers, and checks the invariants S2 relies on.
+  // The xorshift (`wp8Rnd`), NOT the LCG: WP-27 measured the LCG's `% 2` as
+  // 1992 zeros in 2000, and half the draws below are `% 2`.
+  const rnd = wp8Rnd(20260923);
+  const names = Object.keys(PANEL_ANSWERS.cases);
+  const mark = core.guardReduce(null, { type: "answer", stuck: true, applies: true, pick: PANEL_PICK, at: 1 }).mark;
+  const stuckEvents = [
+    { type: "notification", stuck: true, message: "m", seq: 1 }, { type: "notification", stuck: false, seq: 2 },
+    { type: "clientState", to: "Stopped" }, { type: "clientState", to: "Running" },
+  ];
+  for (let run = 0; run < 3000; run++) {
+    let answers = core.initialPanelAnswers();
+    let current = 0;
+    let stuckState = core.initialStuckState();
+    for (let i = rnd(6); i > 0; i--) {
+      const c = PANEL_ANSWERS.cases[names[rnd(names.length)]];
+      current = Math.max(current, rnd(12));
+      const outcome = c.rejection ? { rejection: c.rejection, generation: c.request.generation } : { answer: c.answer };
+      answers = core.panelAnswerStep(answers, outcome, current);
+      stuckState = core.stuckReduce(stuckState, stuckEvents[rnd(stuckEvents.length)]).state;
+    }
+    const view = core.panelView({
+      answers, stuckState, mark: rnd(2) ? mark : null, pick: PANEL_PICK, pending: !!rnd(2),
+      unsaved: rnd(2) ? ["A.e"] : [], fastMode: !!rnd(2), reloading: rnd(4) === 0,
+    });
+    const msgs = core.panelMessagesFor(view);
+    const ks = kinds(msgs);
+    for (const k of ks) assert.ok(core.PANEL_MESSAGE_KINDS.indexOf(k) >= 0, k);
+    for (const k of ["stale", "stuck", "held", "offline", "switching", "unsaved"]) {
+      assert.strictEqual(ks.filter((x) => x === k).length, 1, k + " exactly once");
+    }
+    assert.strictEqual(ks.indexOf("render") >= 0, view.document !== null);
+    assert.strictEqual(ks.indexOf("error") >= 0, view.answer !== null && !core.isOk(view.answer));
+    if (ks.indexOf("render") >= 0) assert.strictEqual(ks.indexOf("render"), 0);
+    if (ks.indexOf("error") >= 0) assert.ok(ks.indexOf("error") < ks.indexOf("stale"));
+    assert.strictEqual(ks.indexOf("reloadBundle") >= 0, view.reloading);
+    if (view.reloading) assert.strictEqual(ks[ks.length - 1], "reloadBundle");
+    assert.ok(msgs.every((m) => !("action" in m)));
+    assert.strictEqual(msgs.find((m) => m.kind === "offline").offline, stuckState.running === false);
+    assert.strictEqual(msgs.find((m) => m.kind === "stuck").stuck, stuckState.stuck === true);
+    assert.doesNotThrow(() => JSON.parse(JSON.stringify(msgs)), "postMessage-clonable");
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(msgs)), msgs, "nothing is lost to a JSON round trip");
+  }
+});

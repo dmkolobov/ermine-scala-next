@@ -5099,6 +5099,326 @@ function paramsToSend(text, maxBytes) {
   return { params: params, warnings: warnings };
 }
 
+// ------------------------------------------------ the panel (WP-10, S1)
+//
+// THE PURE HALF OF THE WEBVIEW PANEL.  Nothing here is wired: `extension.js`
+// creates no panel, posts nothing and reads none of this until S2.  What S1
+// fixes is the CONTRACT S2's glue and every test must share, per the rule at
+// the head of test/preview-core.test.js (a model must capture exactly what the
+// glue captures): the glue will build the panel's view with `panelView` --
+// the SAME builder the tests call -- and post exactly `panelMessagesFor(view)`.
+//
+// THE BOUNDARY (the WP-9 review's D10, kept): every DECISION stays on this
+// side.  `client/src/host/index.ts`'s `applyMessage` is a PRESENTATION
+// reducer: it is handed messages that have already been believed.  So:
+//
+//   * is this answer current?    `isCurrentGeneration`, inside `panelAnswerStep`
+//   * was this render displaced? `isDisplaced`, inside `panelAnswerStep`
+//   * is the wedge stuck?        `stuckReduce`'s state, handed in whole; this
+//                                code NEVER reads an answer's own `stuck` key,
+//                                because that marker is per-request and rule
+//                                (3) decides whether it applies
+//   * is the pick held?          `heldMessage(mark, pick)`, the same
+//                                `markMatches` consultation the status bar uses
+//
+// THE LIST IS A SNAPSHOT, NOT A DELTA (design review H7/H10).  `postMessage`
+// to a webview that is not live is DOCUMENTED to drop the message
+// (`@types/vscode` index.d.ts:10018-10019), so the panel can miss any single
+// post; the resync on `ready` / visibility must therefore carry EVERY slice.
+// `panelMessagesFor` always emits `stale`, `stuck`, `held`, `offline`,
+// `switching` and `unsaved`, so the list folded onto ANY reachable panel state
+// equals the list folded from a fresh one (`client/test/page.test.ts`'s
+// `(pg-h7-*)` properties drive the REAL reducer over the REAL builders).
+
+/** The nine kinds of `client/src/host/index.ts`'s `MESSAGE_KINDS`, in its order. */
+const PANEL_MESSAGE_KINDS = Object.freeze([
+  "render", "error", "stale", "stuck", "held", "offline", "switching", "unsaved", "reloadBundle",
+]);
+
+/**
+ * U1, TAKEN BY THE ORCHESTRATOR on the design review's recommendation (b), NOT
+ * asked of the user: `ermine.preview.target` is `panel | json | both`, default
+ * `panel`.  S1 declares the contract only; S2 contributes the setting and
+ * reads it.  An unknown value is REFUSED AND NAMED and the default is used,
+ * the same shape as `previewSettings`' refusals.
+ */
+const PANEL_TARGETS = Object.freeze(["panel", "json", "both"]);
+const PANEL_TARGET_DEFAULT = "panel";
+
+function panelTarget(raw) {
+  if (raw === undefined || raw === null || raw === "") return { target: PANEL_TARGET_DEFAULT, problem: null };
+  if (typeof raw === "string" && PANEL_TARGETS.indexOf(raw) >= 0) return { target: raw, problem: null };
+  return {
+    target: PANEL_TARGET_DEFAULT,
+    problem: 'ermine.preview.target is one of "panel", "json" or "both", not ' +
+      (typeof raw === "string" ? JSON.stringify(raw) : "a " + typeName(raw)) +
+      '; the preview uses "' + PANEL_TARGET_DEFAULT + '"',
+  };
+}
+
+/**
+ * The design review's W5 / §2(g) option 1: the reducer has no fast-mode state
+ * and gets no tenth kind; the sentence §5's Errors row wants is composed HERE,
+ * into the `error` message, from the same `fastMode` read `extension.js`
+ * already makes.
+ */
+const FAST_MODE_SUFFIX = " -- fast mode is on: type errors are not shown in Problems";
+/** The reducer's own ERROR_DEFAULT; used so a blank message plus the suffix
+ *  never becomes a banner that says ONLY the suffix. */
+const PANEL_ERROR_DEFAULT = "the render failed";
+
+/** What the panel has been told about answers: the LAST current one, and the
+ *  last GOOD one (the reducer keeps the last document below an error, so a
+ *  snapshot must be able to re-send it). */
+function initialPanelAnswers() {
+  return { last: null, good: null };
+}
+
+/**
+ * One render outcome folded into the panel's answers.  `outcome` is exactly
+ * one of `{answer}` (what `sendRequest` resolved with, or a params refusal)
+ * and `{rejection, generation}` (what it rejected with, and the generation of
+ * the render that sent it).  `current` is the extension's generation NOW.
+ *
+ * THE SAME THREE DECISIONS `renderNow` makes, in its order, by the same
+ * functions: a displaced render (`isDisplaced`, -32800) changes NOTHING; any
+ * other rejection is dressed by `errorAnswer`; an answer behind `current` is
+ * discarded (`isCurrentGeneration`, section 2.5).  Returns `answers` BY
+ * IDENTITY whenever nothing is to be shown, so a caller can compare.
+ */
+function panelAnswerStep(answers, outcome, current) {
+  const a = answers || initialPanelAnswers();
+  if (!outcome || typeof outcome !== "object") return a;
+  let answer;
+  if (Object.prototype.hasOwnProperty.call(outcome, "rejection")) {
+    if (isDisplaced(outcome.rejection)) return a;
+    answer = errorAnswer(outcome.rejection, outcome.generation);
+  } else {
+    answer = outcome.answer;
+  }
+  if (!answer || typeof answer !== "object") return a;
+  if (!isCurrentGeneration(current, answer)) return a;
+  return { last: answer, good: isOk(answer) ? answer : a.good };
+}
+
+/**
+ * §5's Unsaved row: the dirty Ermine documents, by base name, sorted and
+ * de-duplicated.  `documents` is what the glue maps `workspace.textDocuments`
+ * to -- `{fileName, isDirty, languageId}` each -- so nothing here knows the
+ * editor.  W6: S2 wires the producer; nothing produces it today.
+ */
+function unsavedNames(documents) {
+  const out = new Set();
+  for (const d of Array.isArray(documents) ? documents : []) {
+    if (!d || d.isDirty !== true || d.languageId !== "ermine") continue;
+    if (typeof d.fileName !== "string" || !d.fileName.trim()) continue;
+    out.add(path.basename(d.fileName));
+  }
+  return Array.from(out).sort();
+}
+
+/**
+ * THE SHARED BUILDER: the extension-side view the panel's messages are a
+ * function of.  S2's glue calls this with its module globals and the tests
+ * call it with theirs; `panelMessagesFor` reads nothing else.
+ *
+ *   answers        `panelAnswerStep`'s result (`initialPanelAnswers()` if none)
+ *   stuckState     `stuckReduce`'s state (`initialStuckState()` if none) --
+ *                  its `stuck`/`message`/`highWater` are the ARBITRATED wedge,
+ *                  its `running` is the offline flag
+ *   mark, pick,    WP-22's wedge mark, the current pick and whether WE
+ *   restartedByUs  restarted the server -- handed to `heldMessage` unchanged
+ *   pending        a render is scheduled or in flight (§5's Stale row)
+ *   unsaved        `unsavedNames(...)`
+ *   fastMode       `config().get("fastMode")`
+ *   switching      ALWAYS null today: NO PRODUCER EXISTS (W6; profiles are
+ *                  WP-13/14).  The slot is here so the snapshot still
+ *                  overwrites the reducer's slice.
+ *   reloading      a bundle reload was ANNOUNCED and `webview.html` has not
+ *                  been re-set yet (S3's watcher)
+ *
+ * The result is a frozen plain object with no functions in it.
+ */
+function panelView(parts) {
+  const p = parts || {};
+  const answers = p.answers && typeof p.answers === "object" ? p.answers : initialPanelAnswers();
+  const s = p.stuckState && typeof p.stuckState === "object" ? p.stuckState : initialStuckState();
+  const held = heldMessage(p.mark, p.pick, p.restartedByUs === true);
+  return Object.freeze({
+    answer: answers.last && typeof answers.last === "object" ? answers.last : null,
+    document: isOk(answers.good) ? answers.good : null,
+    pending: p.pending === true,
+    stuck: s.stuck === true
+      ? Object.freeze({
+          message: typeof s.message === "string" && s.message.trim() ? s.message : null,
+          seq: typeof s.highWater === "number" && s.highWater > 0 ? s.highWater : null,
+        })
+      : null,
+    held: typeof held === "string" && held ? held : null,
+    offline: s.running === false,
+    unsaved: Object.freeze(Array.isArray(p.unsaved) ? p.unsaved.filter((n) => typeof n === "string" && n.trim() !== "") : []),
+    fastMode: p.fastMode === true,
+    switching: typeof p.switching === "string" && p.switching.trim() ? p.switching : null,
+    reloading: p.reloading === true,
+  });
+}
+
+/** An `{ok:false}` answer as the reducer's `error` message, with W5's suffix. */
+function panelErrorMessage(answer, fastMode) {
+  const text = typeof answer.message === "string" && answer.message.trim() ? answer.message : PANEL_ERROR_DEFAULT;
+  return {
+    kind: "error",
+    status: typeof answer.status === "number" && isFinite(answer.status) ? answer.status : 0,
+    message: fastMode === true ? text + FAST_MODE_SUFFIX : text,
+    path: typeof answer.path === "string" && answer.path.trim() ? answer.path : null,
+    reason: typeof answer.reason === "string" && answer.reason.trim() ? answer.reason : null,
+  };
+}
+
+/**
+ * THE WHOLE PROTOCOL, extension -> panel: the ordered host-reducer messages
+ * for a view built by `panelView`.  Order, and why:
+ *
+ *   1. `render` of the last GOOD document, if there is one;
+ *   2. `error`, if the last current answer was not ok (it keeps the document
+ *      from 1 below it, dimmed -- §5's Errors row);
+ *   3. `stale` -- AFTER the answer pair, because both answers clear it: true
+ *      when a render is pending or the last answer carried the server's own
+ *      `stale: true` (§2.5's hint, read off the answer);
+ *   4. `stuck`, `held`, `offline`, `switching`, `unsaved` -- every slice,
+ *      always, both edges (the snapshot rule above).  `held` carries NO
+ *      button: WP-22's Render anyway is the extension's `showWarningMessage`
+ *      (U4, TAKEN: Restart only);
+ *   5. `reloadBundle` LAST and only while announced: an answer clears it, so
+ *      it must follow the answer pair or the snapshot would lose it.
+ */
+function panelMessagesFor(view) {
+  const v = view && typeof view === "object" ? view : panelView({});
+  const out = [];
+  const good = v.document;
+  if (isOk(good)) {
+    out.push({
+      kind: "render",
+      document: good.document,
+      generation: typeof good.generation === "number" && isFinite(good.generation) ? good.generation : null,
+    });
+  }
+  const last = v.answer;
+  if (last && typeof last === "object" && !isOk(last)) out.push(panelErrorMessage(last, v.fastMode));
+  out.push({ kind: "stale", stale: v.pending === true || !!(last && typeof last === "object" && last.stale === true) });
+  if (v.stuck) {
+    const m = { kind: "stuck", stuck: true };
+    if (v.stuck.message) m.message = v.stuck.message;
+    if (typeof v.stuck.seq === "number") m.seq = v.stuck.seq;
+    out.push(m);
+  } else {
+    out.push({ kind: "stuck", stuck: false });
+  }
+  out.push(typeof v.held === "string" && v.held ? { kind: "held", held: true, message: v.held } : { kind: "held", held: false });
+  out.push({ kind: "offline", offline: v.offline === true });
+  // W6: NOT WIRED.  `panelView` has no producer for it, so this is always
+  // `{to: null}` today -- sent so a snapshot overwrites the slice.
+  out.push({ kind: "switching", to: typeof v.switching === "string" && v.switching ? v.switching : null });
+  out.push({ kind: "unsaved", names: Array.isArray(v.unsaved) ? v.unsaved.slice() : [] });
+  if (v.reloading === true) out.push({ kind: "reloadBundle" });
+  return out;
+}
+
+// ------------------------------------------------- the host page (WP-10, S1)
+
+/** The id of the one element the page draws into. */
+const PREVIEW_ROOT_ID = "ermine-preview-root";
+
+/**
+ * THE CSP, one line, character for character (design review §2(b)):
+ * `'unsafe-eval'` is the user's Q19 decision (the writers bundle is a
+ * webpack-4 eval build), in THIS webview only; NO nonce, because no inline
+ * script remains (W3: `acquireVsCodeApi()` lives in the host bundle); no
+ * `blob:` (U5, F3) and no `font-src` (F3); and `default-src 'none'` is what
+ * keeps `connect-src` shut, which is F2's check that the preview never
+ * minted a deferred token.
+ */
+function previewCsp(cspSource) {
+  return "default-src 'none'; script-src " + cspSource + " 'unsafe-eval'; style-src " + cspSource +
+    " 'unsafe-inline'; img-src " + cspSource + " data:;";
+}
+
+/** A `cspSource` that could break out of its directive is refused, not escaped. */
+function cspSourceProblem(s) {
+  if (typeof s !== "string" || !s.trim()) return "cspSource is not a non-empty string";
+  if (/[\s;,'"<>&\\]/.test(s)) return "cspSource " + JSON.stringify(s) + " contains a character that would change the policy";
+  return null;
+}
+
+function htmlEscape(s) {
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+/** `?v=<stamp>` (or `&v=`) -- the cache-buster S3's reload needs, and what
+ *  makes a re-set `webview.html` differ from the last one. */
+function withStamp(uri, stamp) {
+  if (stamp === undefined || stamp === null || stamp === "") return uri;
+  return uri + (uri.indexOf("?") >= 0 ? "&" : "?") + "v=" + encodeURIComponent(String(stamp));
+}
+
+/**
+ * The host page's HTML.  `uris` are webview URIs as STRINGS (S2 calls
+ * `asWebviewUri(...).toString()`):
+ *
+ *   cspSource   `webview.cspSource`                       required
+ *   client      `client/dist/browser/ermine-client.js`    required
+ *   host        `client/dist/browser/ermine-host.js`      required
+ *   writers     the writers' `web/htmlwriter.js`          optional (WP-11 / S4)
+ *   styles      up to the writers' three CSS files, in    optional (WP-11 / S4)
+ *               order: common.css, htmlwriter.css, a theme
+ *
+ * `opts.stamp` is appended to the client and host URIs only.
+ *
+ * SCRIPT ORDER IS LOAD-BEARING: writers -> client -> host, plain classic
+ * `<script src>`, no defer / async / module.  The writers assign
+ * `window.ermine_htmlwriter` inside a `DOMContentLoaded` LISTENER, listeners
+ * fire in registration order, so the host's own listener (script 3) runs after
+ * the global exists (READ, `ermine-writers/writers/js/htmlwriter.js:10-13`;
+ * UNOBSERVED in any browser).  NO INLINE SCRIPT BODY, ever: the CSP has no
+ * nonce and the page's bootstrap is the host bundle's.  Every URI is
+ * HTML-escaped.  Bad input THROWS a named Error; S2 checks the bundle exists
+ * before it calls this, and a throw here is a bug to see, not a state.
+ */
+function buildPreviewHtml(uris, opts) {
+  const u = uris || {};
+  const o = opts || {};
+  const bad = cspSourceProblem(u.cspSource);
+  if (bad) throw new Error("buildPreviewHtml: " + bad);
+  for (const key of ["client", "host"]) {
+    if (typeof u[key] !== "string" || !u[key].trim()) throw new Error("buildPreviewHtml: the " + key + " script URI is missing");
+  }
+  if (u.writers !== undefined && u.writers !== null && (typeof u.writers !== "string" || !u.writers.trim())) {
+    throw new Error("buildPreviewHtml: the writers script URI is not a non-empty string");
+  }
+  const styles = u.styles === undefined || u.styles === null ? [] : u.styles;
+  if (!Array.isArray(styles) || styles.length > 3 || styles.some((s) => typeof s !== "string" || !s.trim())) {
+    throw new Error("buildPreviewHtml: styles is at most three non-empty URI strings");
+  }
+  const scripts = [];
+  if (typeof u.writers === "string") scripts.push(u.writers);
+  scripts.push(withStamp(u.client, o.stamp), withStamp(u.host, o.stamp));
+  return [
+    "<!DOCTYPE html>",
+    '<html lang="en">',
+    "<head>",
+    '<meta charset="utf-8">',
+    '<meta http-equiv="Content-Security-Policy" content="' + previewCsp(u.cspSource) + '">',
+    "<title>Ermine preview</title>",
+  ]
+    .concat(styles.map((s) => '<link rel="stylesheet" href="' + htmlEscape(s) + '">'))
+    .concat(["</head>", "<body>", '<div id="' + PREVIEW_ROOT_ID + '"></div>'])
+    .concat(scripts.map((s) => '<script src="' + htmlEscape(s) + '"></script>'))
+    .concat(["</body>", "</html>", ""])
+    .join("\n");
+}
+
 module.exports = {
   absoluteRoots,
   makePick,
@@ -5272,4 +5592,18 @@ module.exports = {
   MAX_NAME_LENGTH,
   MAX_SKELETON_DEPTH,
   RESERVED_DEVICE_NAMES,
+  // WP-10 S1: the panel's pure half -- nothing of it is wired yet.
+  PANEL_MESSAGE_KINDS,
+  PANEL_TARGETS,
+  PANEL_TARGET_DEFAULT,
+  panelTarget,
+  FAST_MODE_SUFFIX,
+  initialPanelAnswers,
+  panelAnswerStep,
+  unsavedNames,
+  panelView,
+  panelMessagesFor,
+  PREVIEW_ROOT_ID,
+  previewCsp,
+  buildPreviewHtml,
 };

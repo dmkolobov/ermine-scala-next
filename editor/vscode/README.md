@@ -57,8 +57,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.10.vsix
-code --install-extension ermine-lang-0.1.10.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.11.vsix
+code --install-extension ermine-lang-0.1.11.vsix
 ```
 
 `npm run package` does the same. Upgrading is the same command with the new
@@ -119,7 +119,8 @@ A **report** is any top-level binding whose type is `Node`, `Params -> Node`,
 server, in a second session of its own, and re-renders it when a file it
 depends on is saved — with no JVM restart and no build.
 
-At 0.1.10 there is **no webview panel** (that is a later ticket): the answer is
+At 0.1.11 there is still **no webview panel** (WP-10; 0.1.11 adds only its pure
+half, see below): the answer is
 shown as JSON in an ordinary editor tab. Parameters come from a file you write
 yourself — see **Params files** below; with no such file the render still sends
 empty parameters, so a report with required ones shows the refusal that names
@@ -406,6 +407,35 @@ type one frame early and without its constraints (`go : List a -> a -> a` for
 a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
+
+### 0.1.11
+
+**Nothing you can see changed.** 0.1.11 is the pure half of the webview panel
+(WP-10 stage 1): functions in `src/preview-core.js` that decide what the panel
+will be told and what page it will load. `src/extension.js` does not call any
+of them yet — no panel is created, nothing is posted, no setting was added.
+
+| Export | What it is |
+|---|---|
+| `panelMessagesFor(view)` | the whole extension -> panel protocol: the ordered messages of `client/src/host/index.ts`'s nine kinds (`render`, `error`, `stale`, `stuck`, `held`, `offline`, `switching`, `unsaved`, `reloadBundle`) for one view. It is a **snapshot**, not a delta: every latch is sent on both edges, so a panel that missed posts while hidden is put right by the next list |
+| `panelView(parts)` | the one builder of that view, from the extension's own state: `answers`, `stuckState` (the arbitrated wedge and the offline flag), the wedge `mark` + `pick` + `restartedByUs` (through `heldMessage`), `pending`, `unsaved`, `fastMode`, `switching` (no producer yet), `reloading` |
+| `panelAnswerStep(answers, outcome, current)`, `initialPanelAnswers()` | folds one render outcome — `{answer}` or `{rejection, generation}` — into the last answer and the last good one: a displaced render (`-32800`) and an answer behind the current generation change nothing |
+| `unsavedNames(documents)` | the dirty Ermine documents by base name, for the `unsaved` hint |
+| `panelTarget(raw)`, `PANEL_TARGETS` | the contract of the coming `ermine.preview.target` setting: `panel` (default), `json` or `both` |
+| `buildPreviewHtml(uris, opts)`, `previewCsp(cspSource)`, `PREVIEW_ROOT_ID` | the host page: one CSP line, the writers' CSS links (optional), a root element and three classic `<script src>` tags in the order writers -> client -> host, with **no inline script at all** |
+| `FAST_MODE_SUFFIX`, `PANEL_MESSAGE_KINDS` | the fast-mode sentence an `error` gains, and the nine kinds |
+
+**The panel's Content-Security-Policy**, exactly, on one line:
+
+```
+default-src 'none'; script-src ${cspSource} 'unsafe-eval'; style-src ${cspSource} 'unsafe-inline'; img-src ${cspSource} data:;
+```
+
+`'unsafe-eval'` is there for the committed `ermine-writers` bundle (a webpack-4
+`eval` build) and in this webview only; the client's own bundles contain no
+`eval`. There is no nonce because there is no inline script, no `blob:` and no
+`font-src` because the writers bundle uses neither, and no `connect-src`
+(`default-src 'none'`), so the panel can make no network request.
 
 ### 0.1.10
 
@@ -744,8 +774,13 @@ the schema request, a read-only workspace, and an editor that creates the
 file without its contents. What is NOT there is the glue that needs an editor
 to observe: when a document is created or revealed, the watcher's
 registration, the coalescing timer, and whether `WorkspaceEdit.createFile`
-really is an atomic create. It runs under `node --test` with no
-`node_modules` at all.
+really is an atomic create. **Since 0.1.11** it covers the panel's pure half:
+the CSP character for character, the script order and the absence of any
+inline script, each of the nine message kinds, and `panelMessagesFor` over
+real answers captured from `bin/ermine-lsp` (`test/fixtures/panel-answers.json`,
+whose `_note` says how). It runs under `node --test` with no
+`node_modules` at all, and it is the `extension` gate of `scripts/gate.sh`
+(commit tier).
 
 **`test/load-test.js`** stubs the `vscode` module in the loader and calls
 `activate()` exactly as the editor would, then checks that every command
