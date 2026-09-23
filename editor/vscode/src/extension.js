@@ -629,6 +629,17 @@ let panelSeq = 0;
 let panelAnswers = core.initialPanelAnswers();
 /** The bundle check the panel's html was last built from, or null. */
 let panelBundle = null;
+/**
+ * WP-10 S3: THE BUNDLE WATCHER -- `{dir, disposables}` while a panel exists
+ * and has a bundle directory to watch, else null.  Created by `watchBundle`
+ * from `openPanel` only, disposed by `unwatchBundle` with the panel and in
+ * `disposePreview`: it NEVER runs without a panel, because the only thing it
+ * does is re-set that panel's page.
+ */
+let bundleWatcher = null;
+/** `core.bundleWatchStep`'s state (the coalescer), and its ONE timer. */
+let bundleWatch = core.initialBundleWatch();
+let bundleTimer;
 /** `ermine.preview.target` values already refused, so it is said once. */
 const warnedTargets = new Set();
 /** @type {vscode.Disposable[]} */
@@ -2424,8 +2435,9 @@ function panelViewNow() {
     unsaved: [],
     fastMode: config().get("fastMode", false) === true,
     switching: null,
-    // S3's bundle watcher raises it; nothing does yet.
-    reloading: false,
+    // WP-10 S3: raised by the bundle watcher's FIRST event of a burst, lowered
+    // when the burst's quiet period ends and the page is re-set.
+    reloading: core.bundleReloading(bundleWatch),
   });
 }
 
@@ -2520,6 +2532,7 @@ function openPanel() {
       if (bundle.ok) {
         previewPanel.webview.options = panelOptions(bundle);
         setPanelHtml(previewPanel, bundle);
+        watchBundle(bundle.dir);
       }
     }
     return;
@@ -2549,6 +2562,7 @@ function openPanel() {
       previewPanel = undefined;
       panelReady = false;
       panelBundle = null;
+      unwatchBundle();
     }),
     // U2 / H2: a hidden webview may have dropped every post; becoming
     // visible resyncs. The event carries only the panel, so read the panel.
@@ -2557,6 +2571,101 @@ function openPanel() {
     }),
     panel.webview.onDidReceiveMessage((msg) => onPanelMessage(panel, msg))
   );
+  setPanelHtml(panel, bundle);
+  watchBundle(bundle.dir);
+}
+
+/**
+ * WP-10 S3: WATCH THE BUNDLE FOLDER (W4) -- the documented out-of-workspace
+ * form, `RelativePattern(Uri.file(dir), "*.js")`, so the two `.js.map` files a
+ * build also writes never fire it.  ONE `createFileSystemWatcher` site; its
+ * three arms build the SAME event (`core.bundleWatchEvent`) into the SAME
+ * coalescer (`bundleStep`).  A no-op when that directory is already watched;
+ * nothing at all when there is no directory (no workspace folder and no
+ * `ermine.serverPath`: the notice page says so, and a later command re-checks).
+ *
+ * UNVERIFIED (like everything the editor does): that a watcher rooted at a
+ * folder that does not exist yet -- W10, the default first experience -- or
+ * one that is deleted and re-created reports the files appearing in it. The
+ * params watcher's note below records the same caveat. If it does not, the
+ * page still recovers on the next explicit command (S2's re-check).
+ */
+function watchBundle(dir) {
+  if (bundleWatcher && bundleWatcher.dir === dir) return;
+  unwatchBundle();
+  if (!dir) return;
+  try {
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(vscode.Uri.file(dir), core.BUNDLE_WATCH_GLOB)
+    );
+    if (!watcher) return;
+    const fire = (kind) => (uri) =>
+      bundleStep({ type: "event", event: core.bundleWatchEvent(kind, uri && uri.fsPath), at: Date.now() });
+    bundleWatcher = {
+      dir,
+      disposables: [
+        watcher,
+        watcher.onDidCreate(fire("create")),
+        watcher.onDidChange(fire("change")),
+        watcher.onDidDelete(fire("delete")),
+      ],
+    };
+    log(`preview: watching ${dir} for bundle rebuilds`);
+  } catch (err) {
+    log(`preview: could not watch the bundle folder: ${err && err.message ? err.message : err}`);
+  }
+}
+
+/** The watcher, its listeners and its timer go; the coalescer is reset. */
+function unwatchBundle() {
+  const w = bundleWatcher;
+  bundleWatcher = null;
+  if (w) {
+    for (const d of w.disposables) {
+      try {
+        if (d && typeof d.dispose === "function") d.dispose();
+      } catch (_) {
+        /* a watcher that will not close is not worth a failed teardown */
+      }
+    }
+  }
+  bundleStep({ type: "dispose" });
+}
+
+/** One input into `core.bundleWatchStep`, and its effects -- nothing else
+ *  decides when the page reloads. */
+function bundleStep(input) {
+  const step = core.bundleWatchStep(bundleWatch, input);
+  bundleWatch = step.state;
+  const fx = step.effects;
+  if (fx.disarm || fx.armMs !== null) {
+    if (bundleTimer) clearTimeout(bundleTimer);
+    bundleTimer = undefined;
+  }
+  if (fx.armMs !== null) {
+    bundleTimer = setTimeout(() => {
+      bundleTimer = undefined;
+      bundleStep({ type: "timer", at: Date.now() });
+    }, fx.armMs);
+  }
+  if (fx.announce) postSnapshot("bundle changed");
+  if (fx.reload) reloadBundle(fx.events);
+}
+
+/**
+ * The burst is over: re-check the bundle and RE-SET THE PAGE -- the page with
+ * a fresh `?v=` stamp when the bundle is whole, the static notice page when it
+ * is gone or half-built, and the page again when it comes back (H4).
+ * `setPanelHtml` lowers the ready latch, so nothing is posted to the page
+ * being replaced, and the new page's `ready` brings the snapshot -- which is
+ * how a render that was in flight across the reload still arrives.
+ */
+function reloadBundle(events) {
+  const panel = previewPanel;
+  if (!panel) return;
+  const bundle = checkPreviewBundle();
+  log(core.bundleReloadLine(panelBundle, bundle, events));
+  if (bundle.ok) panel.webview.options = panelOptions(bundle);
   setPanelHtml(panel, bundle);
 }
 
@@ -2775,6 +2884,9 @@ function disposePreview() {
       log(`preview: could not close the panel: ${err && err.message ? err.message : err}`);
     }
   }
+  // WP-10 S3: the bundle watcher goes with the panel, whatever order the
+  // editor fires `onDidDispose` in.
+  unwatchBundle();
   panelBundle = null;
   panelAnswers = core.initialPanelAnswers();
   // WP-22 (c): the grace dies with the window. The reducer is asked rather

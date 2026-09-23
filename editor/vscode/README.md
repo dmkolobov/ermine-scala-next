@@ -57,8 +57,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.12.vsix
-code --install-extension ermine-lang-0.1.12.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.13.vsix
+code --install-extension ermine-lang-0.1.13.vsix
 ```
 
 `npm run package` does the same. Upgrading is the same command with the new
@@ -134,9 +134,15 @@ checkout that holds `bin/ermine-lsp`:
 cd client && npm install && npm run bundle
 ```
 
-then run **Ermine: Preview Report...** again; the same panel loads the page. A
+and the open panel loads the page by itself (since 0.1.13 it watches the bundle
+folder; running **Ermine: Preview Report...** again also works). A
 directory with only one of `ermine-client.js` / `ermine-host.js` in it is
 reported as **HALF-BUILT** — delete `client/dist/browser` and bundle again.
+
+**Working on the client?** Run `npm run bundle:watch` in `client/` and leave
+it running: every save of a `client/src` file rebuilds the bundle, and the open
+panel reloads itself about a quarter of a second after the build's last write
+— once per build, keeping the last document (see **0.1.13**).
 
 Parameters come from a file you write
 yourself — see **Params files** below; with no such file the render still sends
@@ -428,6 +434,33 @@ a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
 
+### 0.1.13
+
+**The panel follows the bundle** (WP-10 stage 3). While a panel is open the
+extension watches the bundle folder — `<checkout>/client/dist/browser`, the
+same folder the page loads from (`<checkout>` is where `bin/ermine-lsp` lives:
+`ermine.serverPath`'s, or the first workspace folder) — for `*.js` files, so
+the `.js.map` files never fire it.
+
+| | |
+|---|---|
+| **one build, one reload** | one webpack build writes four files. Every create, change or delete pushes ONE shared deadline 250 ms out; only a quiet 250 ms reloads the page, once. Two builds more than 250 ms apart are two reloads |
+| **what you see** | the first write of a build puts *"the client bundle changed; reloading"* over the page; when the build is quiet the page is replaced (a fresh `?v=` stamp on both scripts, so the new code loads) and the new page is sent the whole state again, so the last document comes back without a render. Scroll and drilldown are lost |
+| **the bundle vanishes** | deleting the bundle FILES (`rm client/dist/browser/*.js`) turns the panel into the static *not built* page; one entry without the other is the *HALF-BUILT* page; a build that brings both back turns it into the page again — no command needed. **Deleting the FOLDER (`rm -rf client/dist/browser`) probably does NOT flip it**: the typings say a watched path that is deleted makes the watcher *"suspend and not report any events until the path is created again"*, and that a folder delete may be folded into one event for the folder, which `*.js` does not match. The page then stays up (its scripts are already loaded) until the next build, or the next **Ermine: Preview Report...**, which re-checks. Each change writes one reload line in the Ermine output channel, and a not-whole bundle a second, naming what is missing |
+| **a render in flight** | an answer that arrives while the page is being replaced is not lost: the new page's `ready` carries it |
+| **only with a panel** | no panel, no watcher: it is created with the panel and disposed with it (and when the window closes) |
+| **deferred relations** | still refused by name: the page's `fetchData` rejects with *"the preview delivers every relation inline -- inline is the only delivery its render request asks for -- so it cannot fetch the deferred relation "…""*, which the widget's own error box shows, and nothing is fetched. The page's CSP has no `connect-src`, and a test pins that it never will |
+
+**`npm run bundle:watch`** in `client/` runs `tsc --watch` and `webpack --watch`
+together; with it running, a save of `client/src/widgets/scorecard.ts` becomes a
+banner, then the redrawn panel, with no restart. What the vendored typings
+say, and nobody has observed ((`editor/vscode/node_modules/@types/vscode/index.d.ts:13977-13979` and `:13996-14001`)): "paths that do not exist in the file system will be monitored with a delay until created and then watched depending on the parameters provided. If a watched path is deleted, the watcher will suspend and not report any events until the path is created again." and "file events from deleting a folder may not include events for the contained files. [...] performance optimizations are in place to fold multiple events that all belong to the same parent operation (e.g. delete folder) into one event for that parent." So the not-built first
+run should recover when the folder is created (after a delay), and deleting the
+folder should be silent until it is created again. Whenever the watcher stays
+silent, the next **Ermine: Preview Report...** re-checks, as in 0.1.12; playtest
+step E8 records which of these actually happens. **None of this has run in VS
+Code yet.**
+
 ### 0.1.12
 
 **The preview panel** (WP-10 stage 2). The two preview commands now show the
@@ -439,7 +472,7 @@ panel per window; closing it is fine — the next command makes a new one.
 |---|---|
 | **`ermine.preview.target`** | `panel` (default), `json` or `both`. `json` is the 0.1.11 tab, **byte for byte** — the tab code did not change. An unknown value is refused once in the output channel and the default used |
 | **what the panel shows** | the last good document, with a banner above it: *stuck* (with the one button, **Restart Language Server**, which runs the same command as the palette), *held*, *offline* (the document kept, dimmed), an *error* (`status: message (path)`, the last good document dimmed below it; in fast mode it adds that type errors are not shown in Problems), *re-rendering*, or *Pick a report* when nothing has rendered yet. Picking another report withdraws the old document at once |
-| **the bundle** | loaded from `<checkout>/client/dist/browser/` — `<checkout>` is the folder `bin/ermine-lsp` lives in (`ermine.serverPath`'s, or the first workspace folder). **Not built** and **HALF-BUILT** are a static page that says so, with the path, plus one line in the Ermine output channel. There is no watcher yet (stage 3): after building, run the command again |
+| **the bundle** | loaded from `<checkout>/client/dist/browser/` — `<checkout>` is the folder `bin/ermine-lsp` lives in (`ermine.serverPath`'s, or the first workspace folder). **Not built** and **HALF-BUILT** are a static page that says so, with the path, plus one line in the Ermine output channel. There is no watcher yet (stage 3, **0.1.13**): after building, run the command again |
 | **the page's own log** | anything the page wants to say — a widget that failed, a document it could not read — arrives in the Ermine output channel as `preview panel: ...` |
 | **deferred relations** | the preview never produces one (every relation is inline), so the page's `fetchData` refuses by name; a widget that asked would show its own error box |
 | **not yet** | the `unsaved` hint (no producer), the bundle watcher, the writers' legacy renderers (`table`, charts: WP-11), a Render anyway button in the panel (the held question stays a notification) |
@@ -845,7 +878,13 @@ dispose — driven through `ready` before and after the first answer, a hidden
 panel, a close and a teardown mid-render, two overlapping commands and a
 random interleaving explorer; and source pins that `extension.js` keeps that
 shape (one `createWebviewPanel`, one guarded `postMessage`, the latch consumed
-once, `showAnswer` byte-identical). It runs under `node --test` with no
+once, `showAnswer` byte-identical). **Since 0.1.13** it covers the bundle
+watcher: the coalescer over a fake clock (one reload per four-file build, two
+for two builds apart), the notice page on a vanished or half-built bundle and
+the page again on its return, a reload in the middle of a render, the watcher's
+lifetime, a random explorer, source pins for the one watcher and its three
+arms, the CSP's absent `connect-src`, and `gate_client`'s three verdicts over a
+stub `npm`. It runs under `node --test` with no
 `node_modules` at all, and it is the `extension` gate of `scripts/gate.sh`
 (commit tier).
 

@@ -124,8 +124,8 @@ gate_def extension commit 300 "editor/vscode: node --test test/preview-core.test
 # WP-10 S1 (U7, the orchestrator's call on the design review's measurement: ~2 s, no precondition but
 # `node`).  Registered straight at COMMIT rather than entering at nightly: it guards the one file every
 # WP-7/8/10/22 decision lives in, and until now no gate ran node at all.  `npm run test:preview` is this
-# exact command; it is spelled out so the gate needs no npm.  gate_client (npm test in client/) is NOT
-# registered here -- that is WP-10 S3's, at nightly, and it needs client/node_modules.
+# exact command; it is spelled out so the gate needs no npm.  gate_client (npm test in client/) is the
+# next gate, at nightly: it needs client/node_modules.
 GATE_NOSCOPE[extension]="scripts/mutate.py's operators are Scala-shaped; the suite's own reverse-mutant batteries are run on copies per stage (scratch-widget-preview/)"
 gate_extension() {
   command -v node > /dev/null || { echo "SUMMARY no node on PATH"; return 3; }
@@ -136,6 +136,29 @@ gate_extension() {
   f=$(grep -oE '^ℹ fail [0-9]+' "$GATE_LOG" | tail -1 | grep -oE '[0-9]+$')
   echo "SUMMARY ${t:-?} tests, ${p:-?} pass, ${f:-?} fail"
   [[ $rc == 0 && -n $t && $t == "$p" && ${f:-1} == 0 ]]
+}
+
+gate_def client nightly 1200 "client/: npm test (tsc, then node --test: the host reducer, the panel page, the widgets; the bundle tests SKIP unless built)"
+# WP-10 S3.  Enters at NIGHTLY per docs/gate-policy.md ("a new gate enters at nightly and moves up on
+# evidence").  UNAVAILABLE (3), never FAIL, where client/node_modules is absent: the closure (zod,
+# typescript, jsdom, fast-check, webpack) is not vendored (WP-17), so a checkout without `npm install`
+# cannot run it.  The gate never builds the bundle: the bundle tests SKIP by design when
+# client/dist/browser is absent, and three corpus tests SKIP without the sbt-written fixtures -- a skip is
+# counted and printed, not failed.  FAIL on any failing test, or when no counts were printed (tsc failed).
+# The editor/vscode test "gate_client (WP-10 S3) ..." runs THIS function against a stub npm.
+GATE_NOSCOPE[client]="scripts/mutate.py's operators are Scala-shaped; the client's reverse-mutant batteries are run on copies per stage (scratch-widget-preview/)"
+gate_client() {
+  command -v npm > /dev/null || { echo "SUMMARY no npm on PATH"; return 3; }
+  [[ -d client/node_modules ]] || { echo "SUMMARY no client/node_modules (run npm install in client/ where the closure is available)"; return 3; }
+  ( cd client && npm test ); local rc=$?
+  local t p f s
+  t=$(grep -oE '^ℹ tests [0-9]+' "$GATE_LOG" | tail -1 | grep -oE '[0-9]+$')
+  p=$(grep -oE '^ℹ pass [0-9]+' "$GATE_LOG" | tail -1 | grep -oE '[0-9]+$')
+  f=$(grep -oE '^ℹ fail [0-9]+' "$GATE_LOG" | tail -1 | grep -oE '[0-9]+$')
+  s=$(grep -oE '^ℹ skipped [0-9]+' "$GATE_LOG" | tail -1 | grep -oE '[0-9]+$')
+  if [[ -z $t || -z $p || -z $f ]]; then echo "SUMMARY npm test printed no test counts (did tsc fail?)"; return 1; fi
+  echo "SUMMARY $t tests, $p pass, $f fail, ${s:-0} skipped"
+  [[ $rc == 0 && $f == 0 && $((p + ${s:-0})) == "$t" ]]
 }
 
 # DELETED 2026-09-17 (docs/gate-audit.md §6): `g1` (tracker/tools/g1-validate.sh) was a pr gate.

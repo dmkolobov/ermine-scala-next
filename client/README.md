@@ -52,7 +52,7 @@ is long-standing, not new.
 With that checkout present, the command above is green. Eight of the tests skip, each
 naming what would make it run: three need FIXTURES the Scala side writes — property (b)'s
 200-document corpus, its negative half, and the end-to-end document — and five need the
-browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (100 tests: 97 passed, 3 skipped after S1; **112 tests: 109 passed, 3 skipped after WP-10 S2**, with the bundle built, MEASURED 2026-09-23)
+browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (100 tests: 97 passed, 3 skipped after S1; **112 tests: 109 passed, 3 skipped after WP-10 S2**; **114 tests: 111 passed, 3 skipped after WP-10 S3**, with the bundle built, MEASURED 2026-09-23)
 (MEASURED 2026-09-21 on node v24.20.0; the count this paragraph carried before WP-9 was
 33/3 and was stale by 29 passing tests). `npm run test:bundle` builds the bundle first and
 gives 87 passed, 3 skipped; writing the fixtures as well runs all 90:
@@ -125,6 +125,22 @@ because **webpack watches `dist/src/`, not the sources** — a bare `webpack --w
 nothing when you edit a `.ts` file, and fails outright from a clean checkout with
 `Module not found: Can't resolve './dist/src/index.js'`. That is the cost of the tsc-first
 decision below, and it is paid once, in that script, rather than by everyone who forgets.
+
+**With the preview panel open** (extension 0.1.13, WP-10 S3) the extension watches
+`dist/browser/*.js`: one build (four files, two of them `.js`) is ONE reload of the page,
+about 250 ms after its last write, with a *"the client bundle changed; reloading"* banner
+in between; deleting the bundle FILES shows the panel's *not built* page and the next build
+brings the page back. Deleting the FOLDER (`rm -rf dist/browser`) probably does NOT: the vendored
+typings say a deleted watched path makes the watcher *"suspend and not report any events until the
+path is created again"* and that a folder delete may fold into one event for the folder
+(`editor/vscode/node_modules/@types/vscode/index.d.ts:13977-13979`, `:13996-14001`); the page stays
+up until the next build or the next explicit preview command re-checks. Playtest E8 records which. The page's `fetchData` REJECTS (the preview only ever asks for inline
+relations, and the page's CSP has no `connect-src`), so a document with a deferred relation
+draws that widget's own error box and fetches nothing — `(pg-fetch-deferred-box)`.
+
+**`gate_client`** (`scripts/gates.sh`, nightly tier since WP-10 S3) runs `npm test` here and
+prints one `SUMMARY <n> tests, <p> pass, <f> fail, <s> skipped` line. Without
+`node_modules` it is UNAVAILABLE (exit 3), not FAIL; a skip is counted, a failure fails it.
 
 Two entries, no loaders (WP-9):
 

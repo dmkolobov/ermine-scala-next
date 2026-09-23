@@ -2,7 +2,7 @@
   "name": "ermine-lang",
   "displayName": "Ermine",
   "description": "Ermine language support: syntax highlighting, diagnostics, navigation, hover types, references, rename, symbols, completion and quick fixes, backed by bin/ermine-lsp.",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "publisher": "clarifi",
   "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {

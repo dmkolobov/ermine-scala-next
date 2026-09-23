@@ -160,15 +160,23 @@ export interface BootWindow {
 
 /**
  * U6, TAKEN: the preview never mints a deferred token (design review F2 --
- * `Preview.scala` sends `params` only, so every relation is inline), and the
- * CSP's `default-src 'none'` keeps `connect-src` shut.  So `fetchData` is a
- * stub that REJECTS, naming the token; the dispatcher turns that into the
- * widget's own error box.  S3 settles the final wording and its tests.
+ * `Preview.scala` sends `params` only, so `json.Request`'s defaults apply and
+ * every relation is delivered INLINE), and the CSP's `default-src 'none'` keeps
+ * `connect-src` shut, so the panel could not fetch even if it tried.  So
+ * `fetchData` is a stub that REJECTS, naming the token, and touches nothing:
+ * no `fetch`, no `XMLHttpRequest`, no message to the extension (there is no
+ * `fetch` message pair).  The dispatcher turns the rejection into that
+ * widget's own error box (`div.ermine-widget-error[data-widget]`, "a deferred
+ * relation could not be resolved: ..."), which therefore says why by itself.
+ * A document that reaches this was not made by the preview's render request.
  */
+const DEFERRED_REFUSAL =
+  "the preview delivers every relation inline -- inline is the only delivery its render request asks for -- " +
+  "so it cannot fetch the deferred relation";
+
 export function refuseDeferred(token: string): Promise<never> {
   return Promise.reject(new Error(
-    `the preview delivers every relation inline, but this document asked to fetch the deferred relation ` +
-    `"${token}"; the preview panel has no way to fetch it`));
+    `${DEFERRED_REFUSAL} "${token}" (the panel has no network access: its CSP has no connect-src)`));
 }
 
 /** The one element the extension's html builder puts in the body

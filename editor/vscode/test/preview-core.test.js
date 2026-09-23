@@ -10862,6 +10862,15 @@ test("panel S2 (roots): localResourceRoots is exactly what the page loads -- the
  * not model `webview.options = panelOptions(bundle)` (a fake panel loads from
  * nowhere), and `panelOptions` is not modelled at all -- both are pinned
  * instead, by `glue pins (WP-10 S2) one panel` and `... the page and the bundle`.
+ * WP-10 S3 (the S3 review's N1): `reloadBundle`'s
+ * `if (bundle.ok) panel.webview.options = panelOptions(bundle);` is not
+ * modelled either, nor `watchBundle`'s channel log, its try/catch and its
+ * `if (!watcher) return;` -- the first is pinned by the anchored reload regex
+ * in `glue pins (WP-10 S3) the coalescer and the reload`, the others are
+ * logging and editor-failure paths the fake watcher never takes.  The fake
+ * watcher is also MORE capable than the documented one: it reports per-file
+ * events for a folder that is absent or re-created and every deleted file,
+ * which the typings say a real one may not (the S3 review's M1).
  *
  * THE H-NUMBERS in the test names are the design review's §3: H1 a panel
  * disposed or replaced under a render, H2 an answer overtaken by a newer
@@ -10896,7 +10905,73 @@ function panelGlueModel(opts) {
     logs: [],
     wires: [],
     throwsOut: 0,
+    // WP-10 S3: the bundle watcher's globals, and the fake editor's clock,
+    // watchers and one timer (the glue's `setTimeout`/`clearTimeout`).
+    bundleWatcher: null,
+    bundleWatch: core.initialBundleWatch(),
+    bundleTimer: undefined,
+    now: 1000,
+    timers: [],
+    fsWatchers: [],
+    reloads: 0,
   };
+
+  /** `setTimeout` / `clearTimeout` on the virtual clock; `tick` runs what is due. */
+  m.setTimeout = (fn, ms) => { const t = { at: m.now + ms, fn, cleared: false }; m.timers.push(t); return t; };
+  m.clearTimeout = (t) => { if (t) t.cleared = true; };
+  m.tick = (ms) => {
+    const until = m.now + ms;
+    for (;;) {
+      const due = m.timers.filter((t) => !t.cleared && t.at <= until).sort((a, b) => a.at - b.at)[0];
+      if (!due) break;
+      m.now = Math.max(m.now, due.at);
+      due.cleared = true;
+      due.fn();
+    }
+    m.now = until;
+  };
+  m.liveTimers = () => m.timers.filter((t) => !t.cleared).length;
+  /** `vscode.workspace.createFileSystemWatcher(new RelativePattern(Uri.file(dir), glob))`:
+   *  it reports an event for a base name the glob matches, and nothing once disposed. */
+  m.fakeWatcher = (dir, glob) => {
+    const w = { dir, glob, disposed: false, handlers: { create: [], change: [], delete: [] } };
+    const sub = (list, fn) => { list.push(fn); return { dispose() { const i = list.indexOf(fn); if (i >= 0) list.splice(i, 1); } }; };
+    w.onDidCreate = (fn) => sub(w.handlers.create, fn);
+    w.onDidChange = (fn) => sub(w.handlers.change, fn);
+    w.onDidDelete = (fn) => sub(w.handlers.delete, fn);
+    w.dispose = () => { w.disposed = true; };
+    w.emit = (kind, file) => {
+      if (w.disposed) return;
+      if (!(glob === "*.js" && /^[^/]*\.js$/.test(file))) return;
+      w.handlers[kind].slice().forEach((f) => f({ fsPath: path.join(dir, file) }));
+    };
+    return w;
+  };
+  /** The file system: what webpack (or `rm -rf`) does to the bundle folder, as
+   *  the LISTING `checkPreviewBundle` reads plus the events every live watcher on
+   *  that folder reports.  A write is TWO events (open/truncate, then the data):
+   *  INFERRED, the per-write event count is UNVERIFIED -- the point is only that
+   *  one build is several events. */
+  m.fs = {
+    write(file, dt) {
+      const existed = m.listing !== null && m.listing.indexOf(file) >= 0;
+      if (!existed) m.listing = (m.listing || []).concat([file]).sort();
+      for (const w of m.fsWatchers) { w.emit(existed ? "change" : "create", file); w.emit("change", file); }
+      if (dt) m.tick(dt);
+    },
+    remove(file, dt) {
+      if (m.listing === null || m.listing.indexOf(file) < 0) return;
+      m.listing = m.listing.filter((f) => f !== file);
+      if (m.listing.length === 0) m.listing = null;
+      for (const w of m.fsWatchers) w.emit("delete", file);
+      if (dt) m.tick(dt);
+    },
+  };
+  /** ONE webpack build: four files, 5 ms apart (`client/webpack.config.js`'s two
+   *  entries, each with its `.map`). */
+  m.build = () => { for (const f of BUNDLE_OK) m.fs.write(f, 5); };
+  /** `rm -rf client/dist/browser`. */
+  m.removeBundle = () => { for (const f of BUNDLE_OK) m.fs.remove(f, 1); };
 
   m.fakePanel = function () {
     const p = {
@@ -10957,7 +11032,7 @@ function panelGlueModel(opts) {
     unsaved: [],
     fastMode: m.fastMode === true,
     switching: null,
-    reloading: false,
+    reloading: core.bundleReloading(m.bundleWatch),
   });
   /** `postSnapshot(why)`. */
   m.postSnapshot = (why) => {
@@ -10995,7 +11070,7 @@ function panelGlueModel(opts) {
     const uri = (file) => panel.webview.asWebviewUri({ fsPath: path.join(bundle.dir, file) }).toString();
     panel.webview.html = core.buildPreviewHtml(
       { cspSource: panel.webview.cspSource, client: uri("ermine-client.js"), host: uri("ermine-host.js") },
-      { stamp: 1 });
+      { stamp: m.now });
   };
   /** `openPanel()`. */
   m.openPanel = () => {
@@ -11003,7 +11078,10 @@ function panelGlueModel(opts) {
       m.previewPanel.reveal(undefined, true);
       if (!m.panelBundle || !m.panelBundle.ok) {
         const bundle = m.checkPreviewBundle();
-        if (bundle.ok) m.setPanelHtml(m.previewPanel, bundle);
+        if (bundle.ok) {
+          m.setPanelHtml(m.previewPanel, bundle);
+          m.watchBundle(bundle.dir);
+        }
       }
       return;
     }
@@ -11020,6 +11098,7 @@ function panelGlueModel(opts) {
         m.previewPanel = undefined;
         m.panelReady = false;
         m.panelBundle = null;
+        if (!o.mutantNoUnwatch) m.unwatchBundle();
       }),
       panel.onDidChangeViewState(() => {
         if (o.mutantNoResyncOnVisible) return;
@@ -11027,6 +11106,63 @@ function panelGlueModel(opts) {
       }),
       panel.webview.onDidReceiveMessage((msg) => m.onPanelMessage(panel, msg))
     );
+    m.setPanelHtml(panel, bundle);
+    m.watchBundle(bundle.dir);
+  };
+  /** `watchBundle(dir)`. */
+  m.watchBundle = (dir) => {
+    if (m.bundleWatcher && m.bundleWatcher.dir === dir) return;
+    m.unwatchBundle();
+    if (!dir) return;
+    const watcher = m.fakeWatcher(dir, core.BUNDLE_WATCH_GLOB);
+    m.fsWatchers.push(watcher);
+    const fire = (kind) => (uri) =>
+      m.bundleStep({ type: "event", event: core.bundleWatchEvent(kind, uri && uri.fsPath), at: m.now });
+    m.bundleWatcher = {
+      dir,
+      disposables: [
+        watcher,
+        watcher.onDidCreate(fire("create")),
+        watcher.onDidChange(fire("change")),
+        watcher.onDidDelete(o.mutantNoDeleteArm ? () => {} : fire("delete")),
+      ],
+    };
+  };
+  /** `unwatchBundle()`. */
+  m.unwatchBundle = () => {
+    const w = m.bundleWatcher;
+    m.bundleWatcher = null;
+    if (w) for (const d of w.disposables) d.dispose();
+    m.bundleStep({ type: "dispose" });
+  };
+  /** `bundleStep(input)`. */
+  m.bundleStep = (input) => {
+    const step = core.bundleWatchStep(m.bundleWatch, input);
+    m.bundleWatch = step.state;
+    const fx = step.effects;
+    if (o.mutantNoDebounce && input.type === "event" && fx.armMs !== null) { m.reloadBundle(1); return; }
+    if (fx.disarm || fx.armMs !== null) {
+      if (m.bundleTimer) m.clearTimeout(m.bundleTimer);
+      m.bundleTimer = undefined;
+    }
+    if (fx.armMs !== null) {
+      m.bundleTimer = m.setTimeout(() => {
+        m.bundleTimer = undefined;
+        m.bundleStep({ type: "timer", at: m.now });
+      }, fx.armMs);
+    }
+    if (fx.announce) m.postSnapshot("bundle changed");
+    if (fx.reload) m.reloadBundle(fx.events);
+  };
+  /** `reloadBundle(events)`. */
+  m.reloadBundle = (events) => {
+    const panel = m.previewPanel;
+    if (!panel) return;
+    const bundle = m.checkPreviewBundle();
+    m.logs.push(core.bundleReloadLine(m.panelBundle, bundle, events));
+    m.reloads += 1;
+    if (o.mutantReloadNoHtml) { m.postSnapshot("reloaded"); return; }
+    if (o.mutantNoticeNotRestored && m.panelBundle && !m.panelBundle.ok) return;
     m.setPanelHtml(panel, bundle);
   };
   /** `onPanelMessage(panel, msg)`. */
@@ -11112,6 +11248,7 @@ function panelGlueModel(opts) {
       m.panelReady = false;
       panel.dispose();
     }
+    if (!o.mutantNoUnwatch) m.unwatchBundle();
     m.panelBundle = null;
     m.panelAnswers = core.initialPanelAnswers();
   };
@@ -11625,7 +11762,9 @@ test("glue pins (WP-10 S2) the post -- one postMessage, guarded by the ready lat
   const fields = [
     "answers: panelAnswers,", "stuckState,", "mark: wedgeMark,", "pick: picked,",
     "restartedByUs: core.restartedByUs(restartState),", "pending: renderInFlight || coalesceTimer !== undefined,",
-    "unsaved: [],", 'fastMode: config().get("fastMode", false) === true,', "switching: null,", "reloading: false,",
+    "unsaved: [],", 'fastMode: config().get("fastMode", false) === true,', "switching: null,",
+    // WP-10 S3: the watcher's coalescer raises it (`glue pins (WP-10 S3) ...`).
+    "reloading: core.bundleReloading(bundleWatch),",
   ];
   const got = (viewNow.match(/^\s*[a-zA-Z]+[:,][^\n]*$/gm) || []).map((l) => l.trim());
   assert.deepStrictEqual(got, fields,
@@ -11686,4 +11825,403 @@ test("glue pins (WP-10 S2) teardown and a pick change -- the panel goes with the
     pin("disposePreview does not dispose the panel and clear its state", "teardown is a state"));
   assert.ok(/lastAnswer = undefined;[\s\S]{0,300}?panelAnswers = core\.initialPanelAnswers\(\);/.test(body("async function pickReport(", "async function renderCommand(")),
     pin("a pick change keeps the old report's document for the panel", "H2: never a document for a pick the user has left"));
+});
+
+// ===========================================================================
+// WP-10 STAGE 3: the bundle watcher (W4), the H4 notice page, the CSP's
+// missing connect-src, and gate_client.
+//
+// The watcher is glue -- a `createFileSystemWatcher` and a `setTimeout` in
+// extension.js -- but WHAT IT DECIDES is `core.bundleWatchStep`, a coalescer
+// with the clock as an argument, and the model above drives the SAME step
+// with a virtual clock (the style of the `scheduleRender` 150 ms model).
+// Glue edits are seen only by the `glue pins (WP-10 S3) ...` tests.
+// ===========================================================================
+
+/** A panel opened by an explicit render of "a", its page loaded. */
+async function s3OpenReady(m, note) {
+  const r = m.renderNow(true);
+  await flush();
+  m.answer(m.wires.length - 1, OK_DOC(note || "a"));
+  await r;
+  const p = m.created[m.created.length - 1];
+  p.loadPage();
+  return p;
+}
+const Q = core.BUNDLE_QUIET_MS;
+const liveWatchers = (m) => m.fsWatchers.filter((w) => !w.disposed);
+const hasReloadBanner = (env) => env.messages.some((x) => x.kind === "reloadBundle");
+
+test("panel S3 (step): every event pushes ONE shared deadline, whatever the file; only a quiet period reloads, once", () => {
+  assert.ok(Q >= 200, "W4: the quiet period is at least 200 ms, not " + Q);
+  assert.strictEqual(core.BUNDLE_WATCH_GLOB, "*.js");
+  const ev = (kind, file) => core.bundleWatchEvent(kind, "/w/client/dist/browser/" + file);
+  assert.deepStrictEqual(ev("change", "ermine-host.js"), { kind: "change", file: "ermine-host.js" });
+  let s = core.initialBundleWatch();
+  assert.strictEqual(core.bundleReloading(s), false);
+  let st = core.bundleWatchStep(s, { type: "event", event: ev("create", "ermine-client.js"), at: 0 });
+  assert.deepStrictEqual([st.effects.armMs, st.effects.announce, st.effects.reload], [Q, true, false], "the first event announces");
+  s = st.state;
+  assert.strictEqual(core.bundleReloading(s), true, "announced, not yet reloaded");
+  st = core.bundleWatchStep(s, { type: "event", event: ev("change", "ermine-host.js"), at: 100 });
+  assert.deepStrictEqual([st.effects.armMs, st.effects.announce, st.effects.reload], [Q, false, false], "a later event only pushes the deadline");
+  s = st.state;
+  assert.strictEqual(s.due, 100 + Q, "ONE deadline for the whole folder, from the LAST event");
+  st = core.bundleWatchStep(s, { type: "timer", at: Q });
+  assert.deepStrictEqual([st.effects.armMs, st.effects.reload], [100, false], "a timer before the deadline re-arms for the rest");
+  assert.strictEqual(st.state, s);
+  st = core.bundleWatchStep(s, { type: "timer", at: 100 + Q });
+  assert.deepStrictEqual([st.effects.reload, st.effects.events, st.effects.files], [true, 2, ["ermine-client.js", "ermine-host.js"]]);
+  assert.strictEqual(core.bundleReloading(st.state), false, "idle again: the new page's snapshot carries no reloadBundle");
+  assert.strictEqual(core.bundleWatchStep(st.state, { type: "timer", at: 9e9 }).effects.reload, false, "an idle timer does nothing");
+  // ignored BY IDENTITY: a .map, an unknown kind, no file, no clock
+  for (const bad of [
+    { type: "event", event: ev("change", "ermine-client.js.map"), at: 1 },
+    { type: "event", event: ev("rename", "ermine-client.js"), at: 1 },
+    { type: "event", event: core.bundleWatchEvent("change", undefined), at: 1 },
+    { type: "event", event: ev("change", "ermine-client.js") },
+    { type: "nonsense", at: 1 }, null,
+  ]) {
+    const r = core.bundleWatchStep(s, bad);
+    assert.strictEqual(r.state, s, JSON.stringify(bad));
+    assert.deepStrictEqual([r.effects.armMs, r.effects.reload, r.effects.announce], [null, false, false]);
+  }
+  // the DELETE arm is an event like the other two
+  assert.strictEqual(core.bundleWatchStep(core.initialBundleWatch(), { type: "event", event: ev("delete", "ermine-host.js"), at: 5 }).effects.armMs, Q);
+  const d = core.bundleWatchStep(s, { type: "dispose" });
+  assert.strictEqual(d.effects.disarm, true);
+  assert.strictEqual(core.bundleReloading(d.state), false);
+});
+
+test("panel S3 (reload line): the channel says what the page was and what it is now", () => {
+  const ok = core.previewBundleCheck("/w/client/dist/browser", BUNDLE_OK);
+  const gone = core.previewBundleCheck("/w/client/dist/browser", null);
+  assert.match(core.bundleReloadLine(ok, ok, 4), /changed \(4 file events\); reloading the panel$/);
+  assert.match(core.bundleReloadLine(gone, ok, 2), /whole again; loading the panel page$/);
+  assert.match(core.bundleReloadLine(ok, gone, 1), /\(1 file event\) and the bundle is not whole \(absent\); showing the notice page$/);
+});
+
+test("panel S3 watcher (one build): a four-file webpack write is ONE announcement and ONE reload, after the quiet period", async () => {
+  const m = panelGlueModel();
+  const p = await s3OpenReady(m);
+  assert.strictEqual(liveWatchers(m).length, 1);
+  assert.deepStrictEqual([liveWatchers(m)[0].dir, liveWatchers(m)[0].glob], [path.join("/w", "client", "dist", "browser"), "*.js"],
+    "the bundle FOLDER from resolveServer's root, with *.js (W4)");
+  const html0 = p.webview.html;
+  const posted = p.delivered.length;
+  m.build();                                                  // four files, 20 ms
+  const during = p.delivered.slice(posted);
+  assert.strictEqual(during.length, 1, "the page is told ONCE that a reload is coming");
+  assert.ok(hasReloadBanner(during[0]), "through the reducer's own reloadBundle kind");
+  assert.strictEqual(during[0].messages[0].document.root.note, "a", "the document stays under the banner");
+  assert.strictEqual(p.htmls.length, 1, "nothing reloads inside the quiet period");
+  m.tick(Q);
+  assert.strictEqual(m.reloads, 1, "ONE reload per build");
+  assert.strictEqual(p.htmls.length, 2);
+  assert.match(p.webview.html, /<script src=/);
+  assert.notStrictEqual(p.webview.html, html0, "a fresh stamp: the html string differs");
+  assert.ok(m.logs.some((l) => /changed \(4 file events\); reloading the panel/.test(l)), m.logs.join("\n"));
+  assert.strictEqual(m.panelReady, false, "the ready latch dropped with the page");
+  assert.strictEqual(m.liveTimers(), 0);
+  p.loadPage();
+  assert.ok(!hasReloadBanner(p.last()), "the NEW page's snapshot says nothing about a reload");
+  assert.strictEqual(p.last().messages[0].document.root.note, "a", "and it carries the document back");
+  m.tick(10 * Q);
+  assert.strictEqual(m.reloads, 1, "and nothing more");
+});
+
+test("panel S3 watcher (two builds): separated by more than the quiet period, TWO reloads; inside it, ONE", async () => {
+  const m = panelGlueModel();
+  const p = await s3OpenReady(m);
+  m.build(); m.tick(Q + 50); m.build(); m.tick(Q + 50);
+  assert.strictEqual(m.reloads, 2);
+  assert.strictEqual(p.htmls.length, 3);
+  const n = panelGlueModel();
+  const q = await s3OpenReady(n);
+  n.build(); n.tick(Q - 100); n.build(); n.tick(Q + 50);
+  assert.strictEqual(n.reloads, 1, "a second build inside the window is the same burst");
+  assert.strictEqual(q.htmls.length, 2);
+});
+
+test("panel S3 watcher MUTANT: without the debounce one build reloads the page FOUR times", async () => {
+  const m = panelGlueModel({ mutantNoDebounce: true });
+  await s3OpenReady(m);
+  m.build();
+  m.tick(Q);
+  assert.strictEqual(m.reloads, 4, "the model's teeth: every event reloads");
+});
+
+test("panel S3 H4 (vanish/appear): the bundle deleted flips the panel to the notice page, rebuilt flips it back and resyncs", async () => {
+  const m = panelGlueModel();
+  const p = await s3OpenReady(m);
+  m.removeBundle();                                            // rm -rf client/dist/browser
+  m.tick(Q);
+  assert.strictEqual(m.reloads, 1);
+  assert.ok(!/<script/.test(p.webview.html), "the static notice page");
+  assert.match(p.webview.html, /data-state="absent"/);
+  assert.ok(m.logs.some((l) => /not whole \(absent\); showing the notice page/.test(l)));
+  const before = p.delivered.length;
+  p.loadPage();
+  assert.strictEqual(p.delivered.length, before, "nothing can say ready on the notice page, so nothing is posted");
+  // half a build: only the client entry lands, then a pause
+  m.fs.write("ermine-client.js", 5); m.fs.write("ermine-client.js.map", 5);
+  m.tick(Q);
+  assert.match(p.webview.html, /data-state="half"/, "HALF-BUILT is its own, louder, notice");
+  m.fs.write("ermine-host.js", 5); m.fs.write("ermine-host.js.map", 5);
+  m.tick(Q);
+  assert.match(p.webview.html, /<script src=/, "the page is back");
+  assert.ok(m.logs.some((l) => /whole again; loading the panel page/.test(l)));
+  p.loadPage();
+  assert.strictEqual(p.last().messages[0].document.root.note, "a", "and the resync brings the document");
+  assert.strictEqual(m.created.length, 1, "the same panel throughout");
+});
+
+test("panel S3 H4 (W10 first experience): a panel opened on the not-built notice becomes the page when the bundle is built", async () => {
+  const m = panelGlueModel({ listing: null });
+  const r = m.renderNow(true); await flush(); m.answer(0, OK_DOC("a")); await r;
+  const p = m.created[0];
+  assert.ok(!/<script/.test(p.webview.html));
+  assert.strictEqual(liveWatchers(m).length, 1, "the folder is watched although nothing is in it yet (UNVERIFIED in a real editor)");
+  m.build();
+  m.tick(Q);
+  assert.match(p.webview.html, /<script src=/);
+  p.loadPage();
+  assert.strictEqual(p.last().messages[0].document.root.note, "a");
+});
+
+test("panel S3 H4 MUTANTS: the delete arm dropped, the notice page never left, the reload posted without a new page", async () => {
+  {
+    const m = panelGlueModel({ mutantNoDeleteArm: true });
+    const p = await s3OpenReady(m);
+    m.removeBundle(); m.tick(Q);
+    assert.match(p.webview.html, /<script src=/, "teeth: without the delete arm a vanished bundle is never noticed");
+  }
+  {
+    const m = panelGlueModel({ mutantNoticeNotRestored: true });
+    const p = await s3OpenReady(m);
+    m.removeBundle(); m.tick(Q); m.build(); m.tick(Q);
+    assert.ok(!/<script/.test(p.webview.html), "teeth: the notice page stays up after the rebuild");
+  }
+  {
+    const m = panelGlueModel({ mutantReloadNoHtml: true });
+    const p = await s3OpenReady(m);
+    m.build(); m.tick(Q);
+    assert.strictEqual(p.htmls.length, 1, "teeth: a reload that re-sets no html loads no new code");
+  }
+});
+
+test("panel S3 H4 (reload mid-render): an answer that settles while the page is being replaced arrives with the new page's ready", async () => {
+  const m = panelGlueModel();
+  const p = await s3OpenReady(m);
+  const r2 = m.renderNow(false);
+  await flush();
+  m.build();
+  m.tick(Q);                                                  // the page is replaced between send and answer
+  assert.strictEqual(m.panelReady, false);
+  const before = p.delivered.length + p.dropped + p.early;
+  m.answer(1, OK_DOC("b"));
+  await r2;
+  assert.strictEqual(p.delivered.length + p.dropped + p.early, before, "nothing is posted to a page that is not ready");
+  p.loadPage();
+  assert.strictEqual(p.last().messages[0].document.root.note, "b", "the new page's snapshot carries the answer");
+  assert.deepStrictEqual(p.last().messages, m.truth());
+});
+
+test("panel S3 watcher (lifetime): no panel, no watcher; the watcher, its listeners and its timer go with the panel and the window", async () => {
+  const m = panelGlueModel();
+  m.build(); m.tick(Q);
+  assert.strictEqual(m.fsWatchers.length, 0, "activation and a build with no panel: nothing watches");
+  const auto = m.renderNow(false); await flush(); m.answer(0, OK_DOC("x")); await auto;
+  assert.strictEqual(m.fsWatchers.length, 0, "an automatic render opens no panel, so no watcher");
+  const p = await s3OpenReady(m);
+  assert.strictEqual(liveWatchers(m).length, 1);
+  m.fs.write("ermine-client.js");                              // a burst begins ...
+  assert.strictEqual(m.liveTimers(), 1);
+  p.dispose();                                                 // ... and the user closes the panel
+  assert.strictEqual(liveWatchers(m).length, 0, "the watcher is disposed with the panel");
+  assert.strictEqual(m.liveTimers(), 0, "and its timer");
+  assert.strictEqual(core.bundleReloading(m.bundleWatch), false);
+  m.tick(4 * Q); m.build(); m.tick(4 * Q);
+  assert.strictEqual(m.reloads, 0, "nothing reloads a panel that is gone");
+  const p2 = await s3OpenReady(m, "b");
+  assert.notStrictEqual(p2, p);
+  assert.strictEqual(liveWatchers(m).length, 1, "a new panel, ONE new watcher");
+  m.renderNow(true); await flush(); m.answer(m.wires.length - 1, OK_DOC("c")); await flush();
+  assert.strictEqual(m.fsWatchers.length, 2, "a second command reveals; it does not watch twice");
+  m.fs.write("ermine-host.js");
+  m.disposePreview();
+  assert.strictEqual(liveWatchers(m).length, 0, "the window's teardown disposes it too");
+  assert.strictEqual(m.liveTimers(), 0);
+  // no root at all: the notice page, and nothing to watch
+  const n = panelGlueModel({ root: null });
+  const r = n.renderNow(true); await flush(); n.answer(0, OK_DOC("a")); await r;
+  assert.strictEqual(n.fsWatchers.length, 0);
+});
+
+test("panel S3 watcher MUTANT: a watcher left behind by a closed panel still holds a timer and a listener", async () => {
+  const m = panelGlueModel({ mutantNoUnwatch: true });
+  const p = await s3OpenReady(m);
+  m.fs.write("ermine-client.js");
+  p.dispose();
+  assert.strictEqual(liveWatchers(m).length, 1, "teeth: the watcher outlives its panel");
+  assert.strictEqual(m.liveTimers(), 1);
+});
+
+test("panel S3 watcher (explorer): over random builds, deletions, renders and closes -- at most one watcher, only with a panel, and the page ends on the truth", async () => {
+  const rnd = wp8Rnd(20260923);
+  for (let run = 0; run < 200; run++) {
+    const m = panelGlueModel();
+    const pending = [];
+    let wire = 0;
+    for (let step = 0; step < 16; step++) {
+      const p = m.previewPanel;
+      switch (rnd(10)) {
+        case 0: pending.push(m.renderNow(true)); break;
+        case 1: pending.push(m.renderNow(false)); break;
+        case 2: if (wire < m.wires.length) m.answer(wire++, [OK_DOC("x" + step), ERR_500][rnd(2)]); break;
+        case 3: if (p) p.loadPage(); break;
+        case 4: m.build(); break;
+        case 5: if (rnd(3) === 0) m.removeBundle(); else m.fs.write(BUNDLE_OK[rnd(4)]); break;
+        case 6: if (p && rnd(3) === 0) p.dispose(); break;
+        case 7: if (p) (rnd(2) ? p.hide() : p.show()); break;
+        default: m.tick(rnd(2 * Q)); break;
+      }
+      await flush();
+      const live = liveWatchers(m);
+      assert.ok(live.length <= 1, "run " + run + ": two live watchers");
+      assert.strictEqual(live.length === 1, !!m.previewPanel, "run " + run + ": a watcher without a panel, or a panel without one");
+    }
+    while (wire < m.wires.length) m.answer(wire++, OK_DOC("end"));
+    await Promise.all(pending);
+    m.listing = BUNDLE_OK.slice();
+    for (const w of liveWatchers(m)) w.emit("change", "ermine-host.js");
+    m.tick(Q + 1);
+    for (const p of m.created) {
+      assert.strictEqual(p.early, 0, "run " + run + ": a post before ready");
+      assert.strictEqual(p.afterDispose, 0, "run " + run + ": a post after dispose");
+    }
+    assert.strictEqual(m.liveTimers(), 0, "run " + run + ": a timer outlived its burst");
+    const live = m.previewPanel;
+    if (live) {
+      assert.match(live.webview.html, /<script src=/, "run " + run + ": a whole bundle, and the page is not the page");
+      live.show();
+      live.loadPage();
+      assert.ok(!hasReloadBanner(live.last()), "run " + run + ": a reload banner left up");
+      assert.deepStrictEqual(live.last().messages, m.truth(), "run " + run + ": the page ends on the truth");
+    }
+  }
+});
+
+test("panel S3 (csp): connect-src is ABSENT, ever -- F2's check that the preview never fetches -- from the page, the notice page and both sources", () => {
+  for (const src of ["vscode-webview-resource:", "https://file+.vscode-resource.vscode-cdn.net", "x"]) {
+    const csp = core.previewCsp(src);
+    assert.ok(csp.startsWith("default-src 'none'; "), "default-src 'none' is what shuts connect-src: " + csp);
+    assert.ok(!/connect-src/.test(csp), csp);
+    const html = core.buildPreviewHtml({ cspSource: src, client: "c.js", host: "h.js", writers: "w.js", styles: ["a.css"] }, { stamp: 7 });
+    assert.ok(!/connect-src/.test(html), "the page");
+  }
+  assert.ok(!/connect-src/.test(core.PANEL_NOTICE_CSP) && core.PANEL_NOTICE_CSP.startsWith("default-src 'none';"));
+  assert.ok(!/connect-src/.test(core.buildPanelNoticeHtml(core.previewBundleCheck("/d", null))));
+  const fsMod = require("node:fs");
+  for (const f of ["preview-core.js", "extension.js"]) {
+    const code = codeOf(fsMod.readFileSync(path.join(__dirname, "..", "src", f), "utf8"));
+    assert.ok(!/connect-src/.test(code), "source pin: src/" + f + " mentions connect-src outside a comment");
+  }
+});
+
+test("glue pins (WP-10 S3) one watcher -- ONE createFileSystemWatcher on the bundle folder, *.js, three arms into ONE coalescer, only from openPanel", () => {
+  const { src, pin, body, count } = s2Glue();
+  const watch = body("function watchBundle(", "function unwatchBundle(");
+  assert.strictEqual(count(/createFileSystemWatcher\(/g, watch), 1, pin("watchBundle does not create exactly one watcher", "W4"));
+  assert.ok(/createFileSystemWatcher\(\s*new vscode\.RelativePattern\(vscode\.Uri\.file\(dir\), core\.BUNDLE_WATCH_GLOB\)\s*\)/.test(watch),
+    pin("the bundle watcher is not the FOLDER with core.BUNDLE_WATCH_GLOB", "W4: the documented out-of-workspace form, and no .map"));
+  assert.strictEqual(count(/createFileSystemWatcher\(/g, src), 3,
+    pin("a createFileSystemWatcher was added or removed (the report file, the params file, the bundle folder)", "one watcher per thing watched"));
+  assert.ok(/if \(bundleWatcher && bundleWatcher\.dir === dir\) return;\s*unwatchBundle\(\);\s*if \(!dir\) return;/.test(watch),
+    pin("watchBundle can hold two watchers, or watches without a directory", "ONE watcher"));
+  assert.ok(/const fire = \(kind\) => \(uri\) =>\s*bundleStep\(\{ type: "event", event: core\.bundleWatchEvent\(kind, uri && uri\.fsPath\), at: Date\.now\(\) \}\);/.test(watch),
+    pin("the arms do not build core.bundleWatchEvent into bundleStep with the clock", "the model drives what the glue drives"));
+  assert.ok(/watcher,\s*watcher\.onDidCreate\(fire\("create"\)\),\s*watcher\.onDidChange\(fire\("change"\)\),\s*watcher\.onDidDelete\(fire\("delete"\)\),/.test(watch),
+    pin("one of the three arms (create, change, DELETE) is missing or not the shared fire", "H4: a deleted bundle flips the page to the notice"));
+  assert.strictEqual(count(/\bwatchBundle\(/g, src), 3, pin("watchBundle is called other than from openPanel's two branches", "never a watcher without a panel"));
+  const open = body("function openPanel(", "function watchBundle(");
+  assert.strictEqual(count(/\bwatchBundle\(bundle\.dir\);/g, open), 2, pin("openPanel does not watch in both branches", "the recovered page is watched too"));
+  assert.ok(/setPanelHtml\(panel, bundle\);\s*watchBundle\(bundle\.dir\);\s*\}/.test(open),
+    pin("the new panel is not watched after its page is set", "W4"));
+});
+
+test("glue pins (WP-10 S3) the coalescer and the reload -- one timer, the announcement, the html reset", () => {
+  const { src, pin, body, count } = s2Glue();
+  const stepBody = body("function bundleStep(", "function reloadBundle(");
+  assert.ok(/const step = core\.bundleWatchStep\(bundleWatch, input\);\s*bundleWatch = step\.state;\s*const fx = step\.effects;/.test(stepBody),
+    pin("bundleStep does not run core.bundleWatchStep", "W4: the coalescer decides, nothing else"));
+  assert.ok(/if \(fx\.disarm \|\| fx\.armMs !== null\) \{\s*if \(bundleTimer\) clearTimeout\(bundleTimer\);\s*bundleTimer = undefined;\s*\}/.test(stepBody) &&
+            /if \(fx\.armMs !== null\) \{\s*bundleTimer = setTimeout\(\(\) => \{\s*bundleTimer = undefined;\s*bundleStep\(\{ type: "timer", at: Date\.now\(\) \}\);\s*\}, fx\.armMs\);\s*\}/.test(stepBody),
+    pin("the ONE timer is not cleared and re-armed from the step's effects", "one reload per build (a second timer is a second reload)"));
+  assert.ok(/if \(fx\.announce\) postSnapshot\("bundle changed"\);\s*if \(fx\.reload\) reloadBundle\(fx\.events\);\s*\}/.test(stepBody),
+    pin("the announcement or the reload is not the step's", "the reloading banner, and ONE reload"));
+  assert.strictEqual(count(/\breloadBundle\(/g, src), 2, pin("reloadBundle is reached other than from bundleStep", "the debounce: no direct reload"));
+  // the definition, the arms' fire, the timer and the dispose -- nothing else feeds it
+  assert.strictEqual(count(/\bbundleStep\(/g, src), 4, pin("bundleStep is called from somewhere new", "the watcher's inputs are the arms, the timer and dispose"));
+  const reload = body("function reloadBundle(", "function onPanelMessage(");
+  assert.ok(/const panel = previewPanel;\s*if \(!panel\) return;\s*const bundle = checkPreviewBundle\(\);\s*log\(core\.bundleReloadLine\(panelBundle, bundle, events\)\);\s*if \(bundle\.ok\) panel\.webview\.options = panelOptions\(bundle\);\s*setPanelHtml\(panel, bundle\);\s*\}\s*$/.test(reload),
+    pin("reloadBundle is not: re-check, one channel line, the html re-set by setPanelHtml (page or notice)",
+        "a reload loads new code (the html reset), a vanished bundle shows the notice and a returned one the page (H4)"));
+  const viewNow = body("function panelViewNow(", "function postSnapshot(");
+  assert.ok(/reloading: core\.bundleReloading\(bundleWatch\),/.test(viewNow), pin("the view's reloading is not the coalescer's", "the reloadBundle banner"));
+});
+
+test("glue pins (WP-10 S3) disposal -- the watcher goes with the panel and with the window", () => {
+  const { src, pin, body } = s2Glue();
+  const open = body("function openPanel(", "function watchBundle(");
+  assert.ok(/if \(previewPanel !== panel\) return;\s*previewPanel = undefined;\s*panelReady = false;\s*panelBundle = null;\s*unwatchBundle\(\);\s*\}\),/.test(open),
+    pin("closing the panel does not dispose the bundle watcher", "never a watcher without a panel"));
+  assert.ok(/unwatchBundle\(\);\s*panelBundle = null;/.test(body("function disposePreview(", "function restorePick(")),
+    pin("disposePreview does not dispose the bundle watcher", "teardown is a state"));
+  const unwatch = body("function unwatchBundle(", "function bundleStep(");
+  assert.ok(/const w = bundleWatcher;\s*bundleWatcher = null;\s*if \(w\) \{\s*for \(const d of w\.disposables\) \{/.test(unwatch) &&
+            /d\.dispose\(\);/.test(unwatch) && /bundleStep\(\{ type: "dispose" \}\);\s*\}\s*$/.test(unwatch),
+    pin("unwatchBundle does not dispose every listener and reset the coalescer", "the timer dies with the watcher"));
+  void src;
+});
+
+test("gate_client (WP-10 S3): UNAVAILABLE (3) without client/node_modules, FAIL (1) on a red suite, PASS (0) with the counts -- one SUMMARY line", (t) => {
+  const cp = require("node:child_process");
+  const fsMod = require("node:fs");
+  const os = require("node:os");
+  if (cp.spawnSync("bash", ["-c", "true"]).status !== 0) { t.skip("no bash"); return; }
+  const gates = path.resolve(__dirname, "..", "..", "..", "scripts", "gates.sh");
+  assert.ok(fsMod.existsSync(gates), gates);
+  const tmp = fsMod.mkdtempSync(path.join(os.tmpdir(), "gate-client-"));
+  try {
+    fsMod.mkdirSync(path.join(tmp, "client"));
+    fsMod.mkdirSync(path.join(tmp, "bin"));
+    const run = (npmOut, npmRc) => {
+      fsMod.writeFileSync(path.join(tmp, "bin", "npm"),
+        "#!/bin/sh\nprintf '%s\\n' " + npmOut.map((l) => "'" + l + "'").join(" ") + "\nexit " + npmRc + "\n", { mode: 0o755 });
+      const r = cp.spawnSync("bash", ["-c", 'source "$1"; gate_client > "$GATE_LOG" 2>&1; rc=$?; cat "$GATE_LOG"; exit $rc', "-", gates], {
+        cwd: tmp, encoding: "utf8",
+        env: Object.assign({}, process.env, { GATE_LOG: path.join(tmp, "gate.log"), PATH: path.join(tmp, "bin") + path.delimiter + process.env.PATH }),
+      });
+      const summaries = r.stdout.split("\n").filter((l) => l.startsWith("SUMMARY"));
+      return { rc: r.status, summaries };
+    };
+    const green = ["ℹ tests 112", "ℹ pass 109", "ℹ fail 0", "ℹ skipped 3"];
+    const none = run(green, 0);
+    assert.strictEqual(none.rc, 3, "no client/node_modules is UNAVAILABLE, not FAIL: " + JSON.stringify(none));
+    assert.strictEqual(none.summaries.length, 1);
+    assert.match(none.summaries[0], /node_modules/);
+    fsMod.mkdirSync(path.join(tmp, "client", "node_modules"));
+    const pass = run(green, 0);
+    assert.deepStrictEqual(pass, { rc: 0, summaries: ["SUMMARY 112 tests, 109 pass, 0 fail, 3 skipped"] }, "the three sbt-fixture skips are acceptable");
+    const red = run(["ℹ tests 112", "ℹ pass 108", "ℹ fail 1", "ℹ skipped 3"], 1);
+    assert.deepStrictEqual(red, { rc: 1, summaries: ["SUMMARY 112 tests, 108 pass, 1 fail, 3 skipped"] });
+    const lying = run(["ℹ tests 112", "ℹ pass 108", "ℹ fail 1", "ℹ skipped 3"], 0);
+    assert.strictEqual(lying.rc, 1, "a fail count is a FAIL whatever npm exited with");
+    const noCounts = run(["error TS2322: nope"], 2);
+    assert.strictEqual(noCounts.rc, 1);
+    assert.match(noCounts.summaries[0] || "", /no test counts/);
+  } finally {
+    fsMod.rmSync(tmp, { recursive: true, force: true });
+  }
 });

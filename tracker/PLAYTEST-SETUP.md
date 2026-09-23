@@ -94,6 +94,13 @@ groups A and B are written against the JSON tab**: set `ermine.preview.target`
 to `json` (the 0.1.11 tab, unchanged) or `both` before running them as written.
 There is no panel group in the checklist yet (WP-10 S5).
 
+**Since 0.1.13 (WP-10 S3) an open panel follows the bundle by itself**: building
+it while the *not built* page is up should turn the panel into the page with no
+command (UNVERIFIED in VS Code for a folder that did not exist yet -- if nothing
+happens, run **Ermine: Preview Report...** again). To work on the client, leave
+`npm run bundle:watch` running in `client/`: each save becomes a *"the client
+bundle changed; reloading"* banner and then the redrawn panel, once per build.
+
 ## 4. Install it
 
 **One line, and it is yours to run — this was not run for you:**

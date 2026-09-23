@@ -379,8 +379,10 @@ test("(pg-root-id) the page draws into the element the extension's html builder 
   assert.equal(PREVIEW_ROOT_ID, core.PREVIEW_ROOT_ID);
 });
 
-test("(pg-fetch-refuses) U6: fetchData REJECTS, naming the token", async () => {
+test("(pg-fetch-refuses) U6: fetchData REJECTS, naming the token and that inline is the only delivery the preview asks for", async () => {
   await assert.rejects(refuseDeferred("tok-123"), /deferred relation "tok-123"/);
+  await assert.rejects(refuseDeferred("tok-123"), /delivers every relation inline -- inline is the only delivery its render request asks for/);
+  await assert.rejects(refuseDeferred("tok-123"), /no connect-src/);
 });
 
 // ------------------------------------------------------------- the real boot
@@ -488,4 +490,87 @@ test("(pg-boot-no-client) without window.ErmineClient the page says so and logs 
   assert.match(h.area().textContent!, /window\.ErmineClient\) is not loaded/);
   assert.ok(h.posted.some((m) => (m as { type?: string }).type === "log"));
   h.dom.window.close();
+});
+
+// ------------------------------------------------ WP-10 S3: the rejecting fetch
+
+test("(pg-fetch-deferred-box) WP-10 S3: a widget asking for deferred data shows its OWN error box, the page logs it, and NOTHING reaches the network", async () => {
+  const real = await import("../src/index");
+  const dom = new JSDOM(`<!doctype html><html><head></head><body><div id="${PREVIEW_ROOT_ID}"></div></body></html>`);
+  const w = dom.window as unknown as BootWindow & Record<string, unknown>;
+  const network: string[] = [];
+  // every door to the network, in the page's realm AND in node's, counts a call
+  w["fetch"] = (u: unknown) => { network.push("window.fetch " + String(u)); return Promise.reject(new Error("no network")); };
+  w["XMLHttpRequest"] = function XMLHttpRequest() { network.push("window.XMLHttpRequest"); };
+  const g = globalThis as Record<string, unknown>;
+  const saved = { fetch: g["fetch"], xhr: g["XMLHttpRequest"] };
+  g["fetch"] = (u: unknown) => { network.push("globalThis.fetch " + String(u)); return Promise.reject(new Error("no network")); };
+  g["XMLHttpRequest"] = function XMLHttpRequest() { network.push("globalThis.XMLHttpRequest"); };
+  try {
+    w.ErmineClient = {
+      parseDocument: real.parseDocument,
+      defaultRegistry: real.defaultRegistry,
+      render: real.render as unknown as NonNullable<BootWindow["ErmineClient"]>["render"],
+    };
+    const posted: unknown[] = [];
+    boot(w, { postMessage: (m: unknown) => { posted.push(m); } });
+    const d = dom.window.document;
+    if (d.readyState === "loading") await new Promise((r) => d.addEventListener("DOMContentLoaded", r));
+    const columns = [{ name: "region", type: "String", nullable: false }, { name: "sales", type: "Double", nullable: false }];
+    const table = {
+      tag: "Widget", name: "table", props: {
+        columns: [
+          { column: "region", header: "Region", cellFormat: { tag: "Default", args: [] }, align: "AlignLeft", kind: "OtherColumn" },
+          { column: "sales", header: "Sales", cellFormat: { tag: "Round", color: false, negParens: false, places: 1 }, align: "AlignRight", kind: "NumberColumn" },
+        ],
+        sorts: [], paginate: false, scroll: false,
+        rows: { kind: "deferred", columns, token: "tok-deferred-1", expires: "2099-01-01T00:00:00.000Z" },
+      },
+    };
+    const document = { version: 1, settings: {}, root: { tag: "VFlow", children: [table] } };
+    const env = core.panelSnapshot(core.panelView({
+      answers: core.panelAnswerStep(core.initialPanelAnswers(), { answer: { ok: true, document, generation: 1 } }, 1),
+    }), 1);
+    dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: env }));
+    for (let i = 0; i < 20 && !d.querySelector(".ermine-widget-error"); i++) await new Promise((r) => setTimeout(r, 5));
+    const box = d.querySelector(`#${PREVIEW_ROOT_ID} .ermine-document .ermine-widget-error`);
+    assert.ok(box, "the dispatcher drew the widget's own error box: " + d.body.innerHTML.slice(0, 300));
+    assert.equal(box!.getAttribute("data-widget"), "table");
+    assert.equal(box!.getAttribute("role"), "alert");
+    assert.match(box!.textContent!, /a deferred relation could not be resolved: the preview delivers every relation inline/);
+    assert.match(box!.textContent!, /"tok-deferred-1"/);
+    assert.equal(d.querySelector(".ermine-page-error"), null, "a widget failure, not a page failure");
+    const logs = posted.filter((m) => (m as { type?: string }).type === "log").map((m) => (m as { message: string }).message);
+    assert.equal(logs.length, 1, "the page logs the widget failure to the output channel once");
+    assert.match(logs[0]!, /^widget "table" at .*deferred relation "tok-deferred-1"/);
+    assert.deepStrictEqual(network, [], "no fetch and no XMLHttpRequest, in either realm");
+  } finally {
+    g["fetch"] = saved.fetch;
+    g["XMLHttpRequest"] = saved.xhr;
+    dom.window.close();
+  }
+});
+
+test("(pg-boot-listener-first) the message listener is in place BEFORE ready is posted (S2 review N2 / R23)", async () => {
+  // An extension that answers `ready` at once -- here synchronously, from
+  // inside postMessage -- must find the listener already there.
+  const dom = new JSDOM(`<!doctype html><html><head></head><body><div id="${PREVIEW_ROOT_ID}"></div></body></html>`);
+  const w = dom.window as unknown as BootWindow;
+  const renders: unknown[] = [];
+  w.ErmineClient = {
+    parseDocument: (v: unknown) => v,
+    defaultRegistry: () => ({}),
+    render: async (_t, d) => { renders.push((d as { note?: unknown }).note); return { errors: [] }; },
+  };
+  const answer = (m: unknown): void => {
+    if ((m as { type?: string }).type !== "ready") return;
+    dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: envelopeOf({ answers: okAnswers(1, "first") }, 1) }));
+  };
+  const h = boot(w, { postMessage: answer });
+  const d = dom.window.document;
+  if (d.readyState === "loading") await new Promise((r) => d.addEventListener("DOMContentLoaded", r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.model().seq, 1, "the snapshot answering ready was applied");
+  assert.deepStrictEqual(renders, ["first"]);
+  dom.window.close();
 });

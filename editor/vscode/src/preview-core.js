@@ -5605,6 +5605,121 @@ function buildPanelNoticeHtml(notice) {
 /** The notice page's CSP: the inline style block, nothing else at all. */
 const PANEL_NOTICE_CSP = "default-src 'none'; style-src 'unsafe-inline';";
 
+// ------------------------------------------- the bundle watcher (WP-10, S3)
+//
+// `extension.js` watches the bundle FOLDER (`previewBundleDir`, U3) with the
+// glob `*.js` -- the documented out-of-workspace form, `createFileSystemWatcher(
+// new RelativePattern(Uri.file(dir), "*.js"))` -- and hands every create,
+// change and delete, built by `bundleWatchEvent`, to `bundleWatchStep` with
+// `Date.now()`.  W4: ONE webpack build writes FOUR files (two `.js`, two
+// `.js.map`) and each `.js` may be reported more than once, so the step is a
+// COALESCER over the whole folder, not per file: every event pushes ONE shared
+// deadline `BUNDLE_QUIET_MS` further out, and only a quiet period with no
+// event at all reloads -- once, however many files moved.
+//
+// What the glue does with the effects, and nothing else:
+//   armMs     (re)arm its ONE timer for that many ms; the timer's callback is
+//             `{type: "timer", at: Date.now()}` back into this step;
+//   announce  the FIRST event of a burst: post a snapshot, whose view now says
+//             `reloading` (`bundleReloading`), so the page that is about to be
+//             replaced shows the reducer's own `reloadBundle` banner;
+//   reload    the burst is over: re-check the bundle (`previewBundleCheck`) and
+//             re-set `webview.html` -- the page with a fresh stamp when it is
+//             whole, the static notice page when it is gone or half-built (H4),
+//             and the page again when it comes back.  The ready latch drops and
+//             the new page's `ready` brings the snapshot (with `reloading`
+//             false: the state is idle again by then);
+//   disarm    clear the timer (the panel is gone).
+//
+// The step never sees the editor and never reads the disk; the clock is an
+// argument, so the models in test/preview-core.test.js drive it with a fake one.
+
+/** The glob the watcher is created with -- the `.js.map` files do not match. */
+const BUNDLE_WATCH_GLOB = "*.js";
+/** W4: >= 200 ms.  One webpack build's writes land well inside it (INFERRED:
+ *  webpack's write atomicity is UNVERIFIED -- a burst that straddles it costs a
+ *  second reload, and a half-written directory in between is the HALF-BUILT
+ *  notice for that moment, never a broken page). */
+const BUNDLE_QUIET_MS = 250;
+/** The three watcher events, by the names the glue's three arms pass. */
+const BUNDLE_WATCH_KINDS = Object.freeze(["create", "change", "delete"]);
+
+/** THE SHARED BUILDER for what the glue passes: the watcher arm's kind and the
+ *  event's `uri.fsPath`, reduced to the file's base name. */
+function bundleWatchEvent(kind, fsPath) {
+  return Object.freeze({
+    kind: typeof kind === "string" ? kind : String(kind),
+    file: typeof fsPath === "string" && fsPath ? path.basename(fsPath) : null,
+  });
+}
+
+function initialBundleWatch() {
+  return Object.freeze({ due: null, events: 0, files: Object.freeze([]) });
+}
+
+/** Is a reload announced and not yet done -- `panelView`'s `reloading`. */
+function bundleReloading(state) {
+  return !!state && typeof state === "object" && typeof state.due === "number";
+}
+
+const NO_BUNDLE_EFFECTS = Object.freeze({ armMs: null, announce: false, reload: false, disarm: false, events: 0, files: Object.freeze([]) });
+
+/**
+ * One input into the watcher's state:
+ *
+ *   {type: "event", event: bundleWatchEvent(..), at}   a watcher arm fired
+ *   {type: "timer", at}                                the one timer fired
+ *   {type: "dispose"}                                  the panel went away
+ *
+ * An event that is not one of the three kinds, or names no `.js` file, is
+ * IGNORED by identity (a `.js.map` never reaches here through the glob; the
+ * filter is the same rule said twice).  A timer that fires before the deadline
+ * -- a clock that stepped -- re-arms for the rest.  Returns `{state, effects}`.
+ */
+function bundleWatchStep(state, input) {
+  const s = state && typeof state === "object" ? state : initialBundleWatch();
+  const same = { state: s, effects: NO_BUNDLE_EFFECTS };
+  if (!input || typeof input !== "object") return same;
+  if (input.type === "dispose") {
+    return { state: initialBundleWatch(), effects: Object.freeze(Object.assign({}, NO_BUNDLE_EFFECTS, { disarm: true })) };
+  }
+  const at = typeof input.at === "number" && isFinite(input.at) ? input.at : null;
+  if (at === null) return same;
+  if (input.type === "event") {
+    const e = input.event;
+    if (!e || BUNDLE_WATCH_KINDS.indexOf(e.kind) < 0 || typeof e.file !== "string" || !/\.js$/.test(e.file)) return same;
+    const files = s.files.indexOf(e.file) >= 0 ? s.files : Object.freeze(s.files.concat([e.file]).sort());
+    return {
+      state: Object.freeze({ due: at + BUNDLE_QUIET_MS, events: s.events + 1, files }),
+      effects: Object.freeze(Object.assign({}, NO_BUNDLE_EFFECTS, { armMs: BUNDLE_QUIET_MS, announce: s.due === null })),
+    };
+  }
+  if (input.type === "timer") {
+    if (s.due === null) return same;
+    if (at < s.due) return { state: s, effects: Object.freeze(Object.assign({}, NO_BUNDLE_EFFECTS, { armMs: s.due - at })) };
+    return {
+      state: initialBundleWatch(),
+      effects: Object.freeze(Object.assign({}, NO_BUNDLE_EFFECTS, { reload: true, events: s.events, files: s.files })),
+    };
+  }
+  return same;
+}
+
+/** The one output-channel line a reload writes: what the page was, what it is
+ *  now.  `before` is the check the page was last built from (or null), `after`
+ *  the fresh one. */
+function bundleReloadLine(before, after, events) {
+  const n = typeof events === "number" && events > 0 ? events : 0;
+  const why = "the client bundle changed (" + n + " file event" + (n === 1 ? "" : "s") + ")";
+  const a = after && typeof after === "object" ? after : { ok: false, title: "no bundle check" };
+  if (a.ok) {
+    return before && before.ok
+      ? "preview: " + why + "; reloading the panel"
+      : "preview: " + why + " and the bundle is whole again; loading the panel page";
+  }
+  return "preview: " + why + " and the bundle is not whole (" + (a.state || "problem") + "); showing the notice page";
+}
+
 module.exports = {
   absoluteRoots,
   makePick,
@@ -5804,4 +5919,13 @@ module.exports = {
   previewBundleCheck,
   buildPanelNoticeHtml,
   PANEL_NOTICE_CSP,
+  // WP-10 S3: the bundle watcher's coalescer.
+  BUNDLE_WATCH_GLOB,
+  BUNDLE_QUIET_MS,
+  BUNDLE_WATCH_KINDS,
+  bundleWatchEvent,
+  initialBundleWatch,
+  bundleReloading,
+  bundleWatchStep,
+  bundleReloadLine,
 };
