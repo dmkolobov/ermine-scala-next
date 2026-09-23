@@ -34,6 +34,7 @@ const recorded = {
   commands: [],
   outputChannels: [],
   statusBarItems: [],
+  webviewPanels: [],
   progressTitles: [],
   errors: [],
   warnings: [],
@@ -93,6 +94,12 @@ const vscode = {
     showWarningMessage(msg) { recorded.warnings.push(msg); return Promise.resolve(undefined); },
     showInformationMessage() { return Promise.resolve(undefined); },
     setStatusBarMessage() { return disposable(); },
+    // WP-10 S2: recorded, so activation can be shown to create NO panel --
+    // only an explicit command's answer does.
+    createWebviewPanel(viewType, title) {
+      recorded.webviewPanels.push({ viewType, title });
+      throw new Error("load-test: activation must not create a webview panel");
+    },
   },
   commands: {
     registerCommand(id, fn) { recorded.commands.push({ id, fn }); return disposable(); },
@@ -244,6 +251,19 @@ async function main() {
   check("a status bar item was created and shown",
         recorded.statusBarItems.length === 1 && recorded.statusBarItems[0].shown);
   check("a configuration listener was installed", recorded.configListeners.length === 1);
+  // WP-10 S2 / U1: the target setting is contributed with exactly the values
+  // and default the pure core decides with, and activation opens no panel.
+  const core = require(path.join(EXT_ROOT, "src", "preview-core.js"));
+  const target = manifest.contributes.configuration.properties["ermine.preview.target"];
+  check("ermine.preview.target is contributed", !!target);
+  if (target) {
+    check("ermine.preview.target's values are core.PANEL_TARGETS",
+          JSON.stringify(target.enum) === JSON.stringify(core.PANEL_TARGETS), JSON.stringify(target.enum));
+    check("ermine.preview.target's default is core.PANEL_TARGET_DEFAULT",
+          target.default === core.PANEL_TARGET_DEFAULT, JSON.stringify(target.default));
+  }
+  check("activation created no webview panel", recorded.webviewPanels.length === 0,
+        JSON.stringify(recorded.webviewPanels));
   check("subscriptions were registered for disposal", ctx.subscriptions.length >= 4,
         ctx.subscriptions.length + " subscriptions");
 

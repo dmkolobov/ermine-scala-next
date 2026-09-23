@@ -10714,3 +10714,976 @@ test("panel (explorer): over generated views, the stream's shape never breaks", 
     assert.deepStrictEqual(JSON.parse(JSON.stringify(msgs)), msgs, "nothing is lost to a JSON round trip");
   }
 });
+
+// ===========================================================================
+// WP-10 S2: THE PANEL GLUE.  `extension.js` now creates the panel (`openPanel`),
+// posts ONE envelope shape (`postSnapshot` -> `core.panelSnapshot`), reads the
+// panel's messages (`onPanelMessage` -> `core.panelInbound`), and routes every
+// answer through `present` (`core.presentRoute`).  Three layers, per the rule
+// at the head of this file:
+//
+//   * the pure decisions, table-tested;
+//   * `panelGlueModel`, the glue statement for statement, calling THE SAME
+//     builders, driven through the design review's hazards H1, H2, H3, H9 and
+//     an interleaving explorer;
+//   * "glue pins (WP-10 S2)", which reads `extension.js` and fails if the glue
+//     stops having the shape the model has.
+// ===========================================================================
+
+const BUNDLE_OK = ["ermine-client.js", "ermine-client.js.map", "ermine-host.js", "ermine-host.js.map"];
+
+test("panel S2 (envelope): ONE shape -- {kind: snapshot, seq, messages} -- and the messages are panelMessagesFor's", () => {
+  const view = panelAfter([answerOutcome("ok-wpint")], { pending: true });
+  const env = core.panelSnapshot(view, 7);
+  assert.deepStrictEqual(Object.keys(env).sort(), ["kind", "messages", "seq"]);
+  assert.strictEqual(env.kind, "snapshot");
+  assert.strictEqual(env.seq, 7);
+  assert.deepStrictEqual(env.messages, core.panelMessagesFor(view));
+  assert.ok(core.PANEL_MESSAGE_KINDS.indexOf("snapshot") < 0, "the envelope is not a reducer kind");
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(env)), env, "postMessage-clonable, nothing lost");
+  for (const bad of [0, -1, 1.5, "1", null, undefined, NaN]) {
+    assert.throws(() => core.panelSnapshot(view, bad), /seq is a positive integer/, String(bad));
+  }
+});
+
+test("panel S2 (inbound): ready, the ONE intent, log -- and everything else is ignored by name", () => {
+  assert.deepStrictEqual(core.panelInbound({ type: "ready" }), { act: "ready" });
+  assert.deepStrictEqual(core.panelInbound({ type: "ready", v: 1 }), { act: "ready" });
+  assert.deepStrictEqual(core.panelInbound({ type: "intent", kind: "restartServer" }), { act: "restartServer" });
+  assert.deepStrictEqual(core.panelInbound({ type: "log", message: "widget x failed" }), { act: "log", text: "widget x failed" });
+  const long = core.panelInbound({ type: "log", message: "x".repeat(5000) });
+  assert.strictEqual(long.act, "log");
+  assert.ok(long.text.length <= 2003, "a page cannot flood the channel with one line");
+  // U4: Restart ONLY -- a Render anyway intent is NOT offered
+  for (const bad of [
+    { type: "intent", kind: "render" }, { type: "intent", action: "restartServer" }, { type: "intent" },
+    { type: "snapshot" }, { type: "command", command: "ermine.restartServer" }, { kind: "ready" },
+    null, undefined, "ready", 3,
+  ]) {
+    const d = core.panelInbound(bad);
+    assert.strictEqual(d.act, "ignore", JSON.stringify(bad));
+    assert.ok(typeof d.why === "string" && d.why.length > 0, JSON.stringify(bad));
+  }
+});
+
+test("panel S2 (route): U1 -- json is the tab alone, panel the panel alone, both both; junk is the default", () => {
+  assert.deepStrictEqual(core.presentRoute("json"), { tab: true, panel: false });
+  assert.deepStrictEqual(core.presentRoute("panel"), { tab: false, panel: true });
+  assert.deepStrictEqual(core.presentRoute("both"), { tab: true, panel: true });
+  assert.strictEqual(core.PANEL_TARGET_DEFAULT, "panel");
+  for (const junk of [undefined, null, "", "JSON", "tab", 1]) {
+    assert.deepStrictEqual(core.presentRoute(junk), { tab: false, panel: true }, String(junk));
+    assert.deepStrictEqual(core.presentRoute(core.panelTarget(junk).target), { tab: false, panel: true });
+  }
+});
+
+test("panel S2 (bundle): the check is fail-CLOSED over the listing -- ok only when BOTH entries are there", () => {
+  const dir = core.previewBundleDir("/w/ermine-scala");
+  assert.strictEqual(dir, path.join("/w/ermine-scala", "client", "dist", "browser"));
+  assert.strictEqual(core.previewBundleDir(""), null);
+  assert.strictEqual(core.previewBundleDir(undefined), null);
+  assert.deepStrictEqual(core.PREVIEW_BUNDLE_FILES, ["ermine-client.js", "ermine-host.js"]);
+
+  const ok = core.previewBundleCheck(dir, BUNDLE_OK);
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(ok.state, "ok");
+  assert.deepStrictEqual(ok.missing, []);
+
+  const rows = [
+    // listing                                         state      ok
+    [null,                                             "absent",  false],   // no directory at all (W10)
+    [[],                                               "absent",  false],
+    [["ermine-client.js.map", "ermine-host.js.map"],   "absent",  false],   // maps are not scripts
+    [["ermine-client.js"],                             "half",    false],
+    [["ermine-host.js", "ermine-host.js.map"],         "half",    false],
+    [["ERMINE-CLIENT.JS", "ermine-host.js"],           "half",    false],   // exact names
+    [["ermine-client.js", "ermine-host.js"],           "ok",      true],
+    ["ermine-client.js ermine-host.js",                "absent",  false],   // not a listing
+  ];
+  for (const [listing, state, isOk] of rows) {
+    const c = core.previewBundleCheck(dir, listing);
+    assert.strictEqual(c.state, state, JSON.stringify(listing));
+    assert.strictEqual(c.ok, isOk, JSON.stringify(listing));
+    if (!isOk) {
+      assert.ok(c.message.indexOf(dir) >= 0, "the resolved path is printed: " + c.message);
+      assert.match(c.message, /npm run bundle/);
+    }
+  }
+  const half = core.previewBundleCheck(dir, ["ermine-client.js"]);
+  assert.match(half.title, /HALF-BUILT/);
+  assert.match(half.message, /has ermine-client\.js but not ermine-host\.js/);
+  assert.match(half.message, /Delete /, "half-built is LOUDER than absent: it says to delete the leftovers");
+  assert.doesNotMatch(core.previewBundleCheck(dir, []).message, /Delete /);
+  const noRoot = core.previewBundleCheck(null, BUNDLE_OK);
+  assert.strictEqual(noRoot.ok, false, "no root is never ok, whatever the listing says");
+  assert.strictEqual(noRoot.state, "no-root");
+});
+
+test("panel S2 (notice page): static, script-free, its own CSP, every string escaped", () => {
+  const dir = core.previewBundleDir("/w/<b>&\"x\"");
+  for (const listing of [null, ["ermine-client.js"]]) {
+    const html = core.buildPanelNoticeHtml(core.previewBundleCheck(dir, listing));
+    assert.ok(!/<script/i.test(html), "no script: nothing could post ready from it");
+    assert.ok(!/\son[a-z]+=/i.test(html), "no inline handler either");
+    assert.ok(html.indexOf('content="' + core.PANEL_NOTICE_CSP + '"') > 0);
+    assert.strictEqual(core.PANEL_NOTICE_CSP, "default-src 'none'; style-src 'unsafe-inline';");
+    assert.ok(html.indexOf("<b>") < 0, "the path is escaped");
+    assert.ok(html.indexOf("&lt;b&gt;&amp;&quot;x&quot;") > 0, "and it is printed");
+    assert.ok(html.indexOf('id="' + core.PREVIEW_ROOT_ID + '"') > 0);
+  }
+  assert.match(core.buildPanelNoticeHtml(core.previewBundleCheck(dir, [])), /The preview bundle is not built/);
+  assert.match(core.buildPanelNoticeHtml(undefined), /The preview cannot be shown/);
+});
+
+test("panel S2 (roots): localResourceRoots is exactly what the page loads -- the bundle dir, and WP-11's slot", () => {
+  assert.deepStrictEqual(core.previewResourceRoots("/w/client/dist/browser", null), ["/w/client/dist/browser"]);
+  assert.deepStrictEqual(core.previewResourceRoots("/w/client/dist/browser", "/wr/web"), ["/w/client/dist/browser", "/wr/web"]);
+  assert.deepStrictEqual(core.previewResourceRoots(null, null), [], "no root: nothing is loadable, and nothing is needed");
+});
+
+/**
+ * THE PANEL GLUE, STATEMENT FOR STATEMENT: `present`, `postSnapshot`,
+ * `openPanel`, `setPanelHtml`, `checkPreviewBundle`, `onPanelMessage`,
+ * `panelViewNow`, the two `panelAnswers` assignments in `renderNow`, the
+ * `setPreviewStatus` hook, `holdRender`'s post, `pickReport`'s reset and
+ * `disposePreview`'s teardown -- with the SAME core builders.  `renderNow` is
+ * cut down to what the panel reads: the latch consumed once at its top, the
+ * generation, the spinner, one wire the test settles by hand, the generation
+ * check and the stuck reducer.
+ *
+ * The FAKE PANEL is the documented contract (design review F1, READ): a post
+ * to a HIDDEN webview is dropped and still answers `true`; a post to a
+ * DISPOSED one throws; `webview.html = ...` replaces the page, which says
+ * `ready` only if it has a script (the notice page has none).  It records
+ * every post ATTEMPT made before its page said `ready`, which is H3's
+ * invariant.
+ *
+ * WHAT IT OMITS, SAID HERE PER THE HEADER RULE: `openPanel`'s re-check does
+ * not model `webview.options = panelOptions(bundle)` (a fake panel loads from
+ * nowhere), and `panelOptions` is not modelled at all -- both are pinned
+ * instead, by `glue pins (WP-10 S2) one panel` and `... the page and the bundle`.
+ *
+ * THE H-NUMBERS in the test names are the design review's §3: H1 a panel
+ * disposed or replaced under a render, H2 an answer overtaken by a newer
+ * render, H3 `ready` before/after the first answer, H7 a hidden panel drops
+ * posts, H9 the reveal latch and one panel.
+ */
+function panelGlueModel(opts) {
+  const o = opts || {};
+  const m = {
+    target: o.target || "panel",
+    root: o.root === undefined ? "/w" : o.root,
+    listing: o.listing === undefined ? BUNDLE_OK.slice() : o.listing,
+    previewPanel: undefined,
+    panelReady: false,
+    panelSeq: 0,
+    panelAnswers: core.initialPanelAnswers(),
+    panelBundle: null,
+    generation: 0,
+    picked: PANEL_PICK,
+    stuckState: core.initialStuckState(),
+    mark: null,
+    restartState: core.initialRestartState(0),
+    renderInFlight: false,
+    coalescing: false,
+    fastMode: false,
+    revealNextRender: false,
+    lastAnswer: undefined,
+    disposed: false,
+    created: [],
+    tabs: [],
+    commands: [],
+    logs: [],
+    wires: [],
+    throwsOut: 0,
+  };
+
+  m.fakePanel = function () {
+    const p = {
+      visible: true, disposed: false, reveals: 0, htmls: [], delivered: [], dropped: 0,
+      early: 0, afterDispose: 0, pageReady: false, handlers: { dispose: [], view: [], msg: [] },
+    };
+    const sub = (list, fn) => { list.push(fn); return { dispose() { const i = list.indexOf(fn); if (i >= 0) list.splice(i, 1); } }; };
+    p.webview = {
+      cspSource: "vscode-webview-resource:",
+      options: null,
+      asWebviewUri: (u) => ({ toString: () => "https://file+.vscode-resource.x" + u.fsPath }),
+      get html() { return p.htmls[p.htmls.length - 1]; },
+      set html(v) { p.htmls.push(v); p.pageReady = false; },
+      postMessage(env) {
+        if (p.disposed) { p.afterDispose += 1; throw new Error("Webview is disposed"); }
+        if (!p.pageReady) p.early += 1;
+        if (!p.visible || !p.pageReady) { p.dropped += 1; return Promise.resolve(true); }
+        p.delivered.push(JSON.parse(JSON.stringify(env)));
+        return Promise.resolve(true);
+      },
+      onDidReceiveMessage: (fn) => sub(p.handlers.msg, fn),
+    };
+    p.onDidDispose = (fn) => sub(p.handlers.dispose, fn);
+    p.onDidChangeViewState = (fn) => sub(p.handlers.view, fn);
+    p.reveal = () => {
+      if (p.disposed) throw new Error("revealed a disposed panel");
+      p.reveals += 1;
+      if (!p.visible) { p.visible = true; p.handlers.view.slice().forEach((f) => f({ webviewPanel: p })); }
+    };
+    p.dispose = () => {
+      if (p.disposed) return;
+      p.disposed = true;
+      p.handlers.dispose.slice().forEach((f) => f());
+    };
+    // ---- what the TEST does to the panel ----
+    p.loadPage = () => {                       // the page's script ran and said ready
+      if (p.disposed) return;
+      if (/<script /.test(p.webview.html)) {
+        p.pageReady = true;
+        p.handlers.msg.slice().forEach((f) => f({ type: "ready" }));
+      }
+    };
+    p.hide = () => { p.visible = false; p.handlers.view.slice().forEach((f) => f({ webviewPanel: p })); };
+    p.show = () => { p.visible = true; p.handlers.view.slice().forEach((f) => f({ webviewPanel: p })); };
+    p.send = (msg) => p.handlers.msg.slice().forEach((f) => f(msg));
+    p.last = () => p.delivered[p.delivered.length - 1];
+    return p;
+  };
+
+  /** `panelViewNow()`. */
+  m.viewNow = () => core.panelView({
+    answers: m.panelAnswers,
+    stuckState: m.stuckState,
+    mark: m.mark,
+    pick: m.picked,
+    restartedByUs: core.restartedByUs(m.restartState),
+    pending: m.renderInFlight || m.coalescing,
+    unsaved: [],
+    fastMode: m.fastMode === true,
+    switching: null,
+    reloading: false,
+  });
+  /** `postSnapshot(why)`. */
+  m.postSnapshot = (why) => {
+    const panel = m.previewPanel;
+    if (!panel || (!m.panelReady && !o.mutantPostBeforeReady)) return false;
+    m.panelSeq += 1;
+    try {
+      if (o.mutantLooseMessages) {
+        for (const msg of core.panelMessagesFor(m.viewNow())) panel.webview.postMessage(msg);
+        return true;
+      }
+      const envelope = core.panelSnapshot(m.viewNow(), m.panelSeq);
+      panel.webview.postMessage(envelope);
+      return true;
+    } catch (err) {
+      m.logs.push("could not post to the panel (" + why + "): " + err.message);
+      return false;
+    }
+  };
+  /** `checkPreviewBundle()`. */
+  m.checkPreviewBundle = () => {
+    const dir = core.previewBundleDir(m.root);
+    const listing = dir ? m.listing : null;
+    return core.previewBundleCheck(dir, listing);
+  };
+  /** `setPanelHtml(panel, bundle)`. */
+  m.setPanelHtml = (panel, bundle) => {
+    m.panelBundle = bundle;
+    m.panelReady = false;
+    if (!bundle.ok) {
+      m.logs.push("preview: " + bundle.title + " -- " + bundle.message);
+      panel.webview.html = core.buildPanelNoticeHtml(bundle);
+      return;
+    }
+    const uri = (file) => panel.webview.asWebviewUri({ fsPath: path.join(bundle.dir, file) }).toString();
+    panel.webview.html = core.buildPreviewHtml(
+      { cspSource: panel.webview.cspSource, client: uri("ermine-client.js"), host: uri("ermine-host.js") },
+      { stamp: 1 });
+  };
+  /** `openPanel()`. */
+  m.openPanel = () => {
+    if (m.previewPanel && !o.mutantSecondPanel) {
+      m.previewPanel.reveal(undefined, true);
+      if (!m.panelBundle || !m.panelBundle.ok) {
+        const bundle = m.checkPreviewBundle();
+        if (bundle.ok) m.setPanelHtml(m.previewPanel, bundle);
+      }
+      return;
+    }
+    const bundle = m.checkPreviewBundle();
+    const panel = m.fakePanel();
+    m.created.push(panel);
+    m.previewPanel = panel;
+    m.panelReady = false;
+    const listeners = [];
+    listeners.push(
+      panel.onDidDispose(() => {
+        for (const l of listeners) l.dispose();
+        if (m.previewPanel !== panel) return;
+        m.previewPanel = undefined;
+        m.panelReady = false;
+        m.panelBundle = null;
+      }),
+      panel.onDidChangeViewState(() => {
+        if (o.mutantNoResyncOnVisible) return;
+        if (m.previewPanel === panel && panel.visible) m.postSnapshot("visible");
+      }),
+      panel.webview.onDidReceiveMessage((msg) => m.onPanelMessage(panel, msg))
+    );
+    m.setPanelHtml(panel, bundle);
+  };
+  /** `onPanelMessage(panel, msg)`. */
+  m.onPanelMessage = (panel, msg) => {
+    if (m.previewPanel !== panel) return;
+    const inbound = core.panelInbound(msg);
+    if (inbound.act === "ready") { m.panelReady = true; m.postSnapshot("ready"); return; }
+    if (inbound.act === "restartServer") {
+      if (o.mutantRestartBypass) { m.commands.push("<restart() called directly>"); return; }
+      m.commands.push("ermine.restartServer");
+      return;
+    }
+    if (inbound.act === "log") { m.logs.push("preview panel: " + inbound.text); return; }
+    m.logs.push("preview: ignored a message from the panel (" + inbound.why + ")");
+  };
+  /** `showAnswer(answer, reveal)` -- recorded, since its body is pinned byte-identical. */
+  m.showAnswer = async (answer, reveal) => { m.tabs.push({ content: core.tabContent(answer), reveal }); };
+  /** `present(answer, reveal)`. */
+  m.present = async (answer, reveal) => {
+    const route = core.presentRoute(m.target);
+    if (route.tab) await m.showAnswer(answer, o.mutantTabRevealAlways ? true : reveal);
+    if (route.panel) {
+      if (reveal || (o.mutantLatchTwice && m.revealNextRender)) m.openPanel();
+      if (o.mutantLatchTwice) m.revealNextRender = false;
+      m.postSnapshot("answer");
+    }
+  };
+  /** `setPreviewStatus()`'s hook. */
+  m.setPreviewStatus = () => { if (m.disposed) return; m.postSnapshot("status"); };
+  /** `holdRender(trigger)`'s post. */
+  m.holdRender = () => { m.postSnapshot("held"); };
+  /** `renderNow`, cut down to what the panel reads. */
+  m.renderNow = async (reveal) => {
+    if (!m.picked) return;
+    m.generation += 1;
+    const mine = m.generation;
+    m.renderInFlight = true;
+    const revealThis = reveal === true || m.revealNextRender;
+    m.revealNextRender = false;
+    m.setPreviewStatus();
+    const wire = deferred();
+    m.wires.push({ generation: mine, settle: wire.settle });
+    const outcome = await wire.promise;
+    let answer;
+    if (outcome && outcome.rejection) {
+      if (core.isDisplaced(outcome.rejection)) {
+        if (mine === m.generation) m.renderInFlight = false;
+        m.setPreviewStatus();
+        return;
+      }
+      answer = core.errorAnswer(outcome.rejection, mine);
+    } else {
+      answer = Object.assign({}, outcome, { generation: mine });
+    }
+    if (mine === m.generation) m.renderInFlight = false;
+    if (o.mutantStepBeforeDiscard) m.panelAnswers = core.panelAnswerStep(m.panelAnswers, { answer }, mine);
+    if (!core.isCurrentGeneration(m.generation, answer)) { m.setPreviewStatus(); return; }
+    m.lastAnswer = answer;
+    m.panelAnswers = core.panelAnswerStep(m.panelAnswers, { answer }, m.generation);
+    const stuckEvent = { type: "answer", stuck: answer.stuck === true, message: answer.message, seqAtSend: 0 };
+    m.stuckState = core.stuckReduce(m.stuckState, stuckEvent).state;
+    m.setPreviewStatus();                                   // applyStuck's
+    await m.present(answer, revealThis);
+    m.setPreviewStatus();
+  };
+  /** `pickReport`'s part: another report, and it reveals. */
+  m.pickReport = (pick) => {
+    m.picked = pick;
+    m.lastAnswer = undefined;
+    m.panelAnswers = core.initialPanelAnswers();
+    m.revealNextRender = false;
+    m.setPreviewStatus();
+    return m.renderNow(true);
+  };
+  /** `disposePreview()`'s part. */
+  m.disposePreview = () => {
+    m.disposed = true;
+    m.picked = undefined;
+    m.revealNextRender = false;
+    if (m.previewPanel) {
+      const panel = m.previewPanel;
+      m.previewPanel = undefined;
+      m.panelReady = false;
+      panel.dispose();
+    }
+    m.panelBundle = null;
+    m.panelAnswers = core.initialPanelAnswers();
+  };
+  m.answer = (i, value) => m.wires[i].settle(value);
+  /** The truth the panel should show now, as the messages. */
+  m.truth = () => core.panelMessagesFor(m.viewNow());
+  return m;
+}
+
+const OK_DOC = (tag) => ({ ok: true, document: { version: 1, settings: {}, root: { tag: "VFlow", children: [], note: tag } } });
+const ERR_500 = { ok: false, status: 500, message: "Sales.report produced a document that cannot be encoded", path: null };
+const STUCK_ANSWER = { ok: false, status: 503, message: "evaluation did not finish after 4s", stuck: true };
+
+test("panel S2 H3 (ready AFTER the first answer): nothing is posted before ready; ready brings the whole truth", async () => {
+  const m = panelGlueModel();
+  const r = m.renderNow(true);
+  await flush();
+  assert.strictEqual(m.created.length, 0, "no panel before there is an answer to show");
+  m.answer(0, OK_DOC("a"));
+  await r;
+  assert.strictEqual(m.created.length, 1, "the explicit render created it");
+  const p = m.created[0];
+  assert.strictEqual(p.early, 0, "not one post before the page said ready");
+  assert.strictEqual(p.delivered.length, 0);
+  assert.match(p.webview.html, /<script src=/);
+  p.loadPage();
+  assert.strictEqual(p.delivered.length, 1, "exactly one snapshot, on ready");
+  assert.deepStrictEqual(p.last().messages, m.truth());
+  assert.strictEqual(p.last().messages[0].kind, "render");
+  assert.strictEqual(p.last().messages[0].document.root.note, "a");
+});
+
+test("panel S2 H3 (ready BEFORE the next answer): every later post is a whole snapshot, seq rising", async () => {
+  const m = panelGlueModel();
+  const r1 = m.renderNow(true);
+  await flush();
+  m.answer(0, OK_DOC("a"));
+  await r1;
+  const p = m.created[0];
+  p.loadPage();
+  const r2 = m.renderNow(false);                          // an automatic re-render
+  await flush();
+  assert.strictEqual(p.last().messages.find((x) => x.kind === "stale").stale, true, "the pending render is said");
+  m.answer(1, ERR_500);
+  await r2;
+  assert.deepStrictEqual(p.last().messages, m.truth());
+  assert.deepStrictEqual(core.panelMessagesFor(m.viewNow()).map((x) => x.kind).slice(0, 2), ["render", "error"],
+    "the error keeps the last good document below it");
+  for (const env of p.delivered) assert.strictEqual(env.kind, "snapshot", "ONE shape, ever");
+  const seqs = p.delivered.map((e) => e.seq);
+  for (let i = 1; i < seqs.length; i++) assert.ok(seqs[i] > seqs[i - 1], "seq rises: " + seqs);
+  assert.strictEqual(p.early, 0);
+});
+
+test("panel S2 H3 MUTANT: a post before ready is an attempt the page cannot receive", async () => {
+  const m = panelGlueModel({ mutantPostBeforeReady: true });
+  const r = m.renderNow(true);
+  await flush();
+  m.answer(0, OK_DOC("a"));
+  await r;
+  assert.ok(m.created[0].early > 0, "the mutant posts into a page that has not loaded");
+});
+
+test("panel S2 H7 (hidden drops): a stuck answer while hidden is dropped, and becoming visible resyncs it", async () => {
+  const m = panelGlueModel();
+  const r1 = m.renderNow(true);
+  await flush();
+  m.answer(0, OK_DOC("a"));
+  await r1;
+  const p = m.created[0];
+  p.loadPage();
+  p.hide();
+  const r2 = m.renderNow(false);
+  await flush();
+  m.answer(1, STUCK_ANSWER);
+  await r2;
+  assert.ok(p.dropped > 0, "the posts while hidden were dropped");
+  assert.notDeepStrictEqual(p.last().messages, m.truth(), "so the page is behind");
+  p.show();
+  assert.deepStrictEqual(p.last().messages, m.truth(), "visible -> one snapshot, the whole truth");
+  assert.strictEqual(p.last().messages.find((x) => x.kind === "stuck").stuck, true, "including the stuck banner (H7/H10)");
+});
+
+test("panel S2 H7 MUTANT: without the resync on visible the stuck state never arrives", async () => {
+  const m = panelGlueModel({ mutantNoResyncOnVisible: true });
+  const r1 = m.renderNow(true);
+  await flush();
+  m.answer(0, OK_DOC("a"));
+  await r1;
+  const p = m.created[0];
+  p.loadPage();
+  p.hide();
+  const r2 = m.renderNow(false);
+  await flush();
+  m.answer(1, STUCK_ANSWER);
+  await r2;
+  p.show();
+  assert.strictEqual(p.last().messages.find((x) => x.kind === "stuck").stuck, false, "the page still shows no wedge");
+});
+
+test("panel S2 H1 (dispose mid-render): an answer after the user closed the panel posts nothing, throws nothing, re-creates nothing", async () => {
+  const m = panelGlueModel();
+  const r1 = m.renderNow(true);
+  await flush();
+  m.answer(0, OK_DOC("a"));
+  await r1;
+  const p = m.created[0];
+  p.loadPage();
+  const r2 = m.renderNow(false);
+  await flush();
+  p.dispose();                                            // the user closes the tab
+  assert.strictEqual(m.previewPanel, undefined);
+  assert.strictEqual(m.panelReady, false);
+  m.answer(1, OK_DOC("b"));
+  await r2;
+  assert.strictEqual(p.afterDispose, 0, "nothing reached the disposed panel");
+  assert.strictEqual(m.created.length, 1, "an automatic render does not bring it back");
+  // and the NEXT explicit render does, with a fresh page and a fresh latch
+  const r3 = m.renderNow(true);
+  await flush();
+  m.answer(2, OK_DOC("c"));
+  await r3;
+  assert.strictEqual(m.created.length, 2);
+  const q = m.created[1];
+  assert.strictEqual(q.early, 0);
+  q.loadPage();
+  assert.strictEqual(q.last().messages[0].document.root.note, "c");
+});
+
+test("panel S2 H1 (teardown mid-render): disposePreview closes the panel and the late answer is a no-op", async () => {
+  const m = panelGlueModel();
+  const r1 = m.renderNow(true);
+  await flush();
+  m.answer(0, OK_DOC("a"));
+  await r1;
+  const p = m.created[0];
+  p.loadPage();
+  const r2 = m.renderNow(false);
+  await flush();
+  m.disposePreview();
+  assert.strictEqual(p.disposed, true, "disposePreview disposes the panel");
+  m.answer(1, OK_DOC("b"));
+  await r2;
+  assert.strictEqual(p.afterDispose, 0);
+  assert.strictEqual(m.created.length, 1, "nothing re-creates a panel after the window's teardown");
+  assert.strictEqual(m.previewPanel, undefined);
+});
+
+test("panel S2 H9 (two commands, one panel): overlapping explicit renders reveal ONE panel", async () => {
+  const m = panelGlueModel();
+  const r1 = m.renderNow(true);
+  const r2 = m.renderNow(true);                           // the second command before the first answer
+  await flush();
+  m.answer(1, OK_DOC("b"));
+  m.answer(0, OK_DOC("a"));                               // the older answer lands later: discarded
+  await Promise.all([r1, r2]);
+  assert.strictEqual(m.created.length, 1, "one panel per window");
+  // a third command after it exists reveals the SAME panel
+  const r3 = m.renderNow(true);
+  await flush();
+  m.answer(2, OK_DOC("c"));
+  await r3;
+  assert.strictEqual(m.created.length, 1);
+  assert.ok(m.created[0].reveals >= 1, "the existing panel is revealed");
+  m.created[0].loadPage();
+  assert.strictEqual(m.created[0].last().messages[0].document.root.note, "c");
+});
+
+async function overtaken(opts) {
+  const m = panelGlueModel(opts);
+  const r1 = m.renderNow(true);
+  await flush();
+  m.answer(0, OK_DOC("a"));
+  await r1;
+  const p = m.created[0];
+  p.loadPage();
+  const r2 = m.renderNow(false);          // overtaken ...
+  await flush();
+  const r3 = m.renderNow(false);          // ... by this one, before r2 settles
+  await flush();
+  m.answer(1, OK_DOC("stale"));           // r2's answer lands late: generation 2 < 3
+  await r2;
+  const staleShown = p.delivered.some((e) => e.messages.some((x) => x.kind === "render" && x.document.root.note === "stale"));
+  m.answer(2, OK_DOC("c"));
+  await r3;
+  return { m, p, staleShown };
+}
+
+test("panel S2 H2 (overtaken answer): an answer behind a newer render posts NOTHING of its document, whatever order they settle in", async () => {
+  const { p, staleShown } = await overtaken();
+  assert.strictEqual(staleShown, false, "the overtaken answer's document never reached the page");
+  assert.strictEqual(p.last().messages[0].document.root.note, "c");
+  // and the other order: the newer answer first, then the older one
+  const m = panelGlueModel();
+  const r1 = m.renderNow(true);
+  await flush();
+  const r2 = m.renderNow(true);                           // a second command overtakes the first
+  await flush();
+  m.answer(1, OK_DOC("new"));
+  await r2;
+  m.created[0].loadPage();
+  m.answer(0, OK_DOC("old"));
+  await r1;
+  assert.ok(!m.created[0].delivered.some((e) => e.messages.some((x) => x.kind === "render" && x.document.root.note === "old")));
+  assert.strictEqual(m.created[0].last().messages[0].document.root.note, "new");
+});
+
+test("panel S2 H2 MUTANT: stepping the answers BEFORE the generation discard shows the overtaken document", async () => {
+  const { staleShown } = await overtaken({ mutantStepBeforeDiscard: true });
+  assert.strictEqual(staleShown, true);
+});
+
+test("panel S2 H9 MUTANT: create-without-reveal makes a second panel", async () => {
+  const m = panelGlueModel({ mutantSecondPanel: true });
+  for (let i = 0; i < 2; i++) {
+    const r = m.renderNow(true);
+    await flush();
+    m.answer(i, OK_DOC(String(i)));
+    await r;
+  }
+  assert.strictEqual(m.created.length, 2);
+});
+
+test("panel S2 (latch): an automatic render never creates or reveals; the first-pick carry reveals ONCE", async () => {
+  const m = panelGlueModel();
+  const auto = m.renderNow(false);
+  await flush();
+  m.answer(0, OK_DOC("a"));
+  await auto;
+  assert.strictEqual(m.created.length, 0, "never created by an automatic re-render");
+  // WP-8 S3's carry: the yield-to-schema path sets the latch and the SCHEDULED
+  // render (reveal=false) consumes it
+  m.revealNextRender = true;
+  const carried = m.renderNow(false);
+  assert.strictEqual(m.revealNextRender, false, "consumed at the top, before any await");
+  await flush();
+  m.answer(1, OK_DOC("b"));
+  await carried;
+  assert.strictEqual(m.created.length, 1, "the carried reveal creates the panel");
+  const p = m.created[0];
+  p.loadPage();
+  const later = m.renderNow(false);
+  await flush();
+  m.answer(2, OK_DOC("c"));
+  await later;
+  assert.strictEqual(p.reveals, 0, "and a later automatic render does not reveal it");
+});
+
+test("panel S2 (latch) MUTANT: consuming the latch a second time in present spends a reveal the render did not have", async () => {
+  const m = panelGlueModel({ mutantLatchTwice: true });
+  const r = m.renderNow(false);
+  await flush();
+  m.revealNextRender = true;               // armed while the automatic render is in flight
+  m.answer(0, OK_DOC("a"));
+  await r;
+  assert.strictEqual(m.created.length, 1, "the automatic render created the panel");
+  assert.strictEqual(m.revealNextRender, false, "and ate the reveal meant for the next render");
+});
+
+test("panel S2 (target): json keeps the 0.1.11 tab path and touches no panel; both does both; panel no tab", async () => {
+  for (const [target, tabs, panels] of [["json", 2, 0], ["panel", 0, 1], ["both", 2, 1]]) {
+    const m = panelGlueModel({ target });
+    const r1 = m.renderNow(true);
+    await flush();
+    m.answer(0, OK_DOC("a"));
+    await r1;
+    const r2 = m.renderNow(false);
+    await flush();
+    m.answer(1, ERR_500);
+    await r2;
+    assert.strictEqual(m.tabs.length, tabs, target + ": tab updates");
+    assert.strictEqual(m.created.length, panels, target + ": panels");
+    if (tabs) {
+      assert.deepStrictEqual(m.tabs.map((t) => t.reveal), [true, false], target + ": the tab reveals exactly as before");
+      assert.strictEqual(m.tabs[1].content, core.tabContent(Object.assign({}, ERR_500, { generation: 2 })));
+    }
+  }
+  const mut = panelGlueModel({ target: "json", mutantTabRevealAlways: true });
+  const r = mut.renderNow(false);
+  await flush();
+  mut.answer(0, OK_DOC("a"));
+  await r;
+  assert.strictEqual(mut.tabs[0].reveal, true, "MUTANT: the tab path changed -- an automatic render reveals");
+});
+
+test("panel S2 (loose) MUTANT: loose messages are not the envelope the page takes", async () => {
+  const m = panelGlueModel({ mutantLooseMessages: true });
+  const r = m.renderNow(true);
+  await flush();
+  m.answer(0, OK_DOC("a"));
+  await r;
+  m.created[0].loadPage();
+  assert.ok(m.created[0].delivered.length > 1);
+  assert.ok(m.created[0].delivered.every((e) => e.kind !== "snapshot"), "not one snapshot envelope reached the page");
+});
+
+test("panel S2 (intent): Restart goes through the ermine.restartServer COMMAND; nothing else is obeyed", async () => {
+  for (const bypass of [false, true]) {
+    const m = panelGlueModel({ mutantRestartBypass: bypass });
+    const r = m.renderNow(true);
+    await flush();
+    m.answer(0, STUCK_ANSWER);
+    await r;
+    const p = m.created[0];
+    p.loadPage();
+    p.send({ type: "intent", kind: "restartServer" });
+    p.send({ type: "intent", kind: "render" });
+    p.send({ type: "log", message: "widget scorecard at $.root: boom" });
+    if (!bypass) {
+      assert.deepStrictEqual(m.commands, ["ermine.restartServer"]);
+      assert.ok(m.logs.some((l) => /ignored a message from the panel \(an intent this extension does not offer/.test(l)));
+      assert.ok(m.logs.indexOf("preview panel: widget scorecard at $.root: boom") >= 0);
+    } else {
+      assert.notDeepStrictEqual(m.commands, ["ermine.restartServer"], "MUTANT: the wedge guard's door is bypassed");
+    }
+  }
+});
+
+test("panel S2 (bundle absent): the notice page, a channel line, never a post -- and a re-run after building loads the page", async () => {
+  for (const listing of [null, ["ermine-client.js"]]) {
+    const m = panelGlueModel({ listing });
+    const r = m.renderNow(true);
+    await flush();
+    m.answer(0, OK_DOC("a"));
+    await r;
+    const p = m.created[0];
+    assert.ok(!/<script/.test(p.webview.html), "the notice page has no script");
+    assert.ok(m.logs.some((l) => /preview: The preview bundle is (not built|HALF-BUILT)/.test(l)), m.logs.join("\n"));
+    p.loadPage();                                          // nothing in it can say ready
+    assert.strictEqual(m.panelReady, false);
+    assert.strictEqual(p.delivered.length + p.dropped + p.early, 0, "not one post attempted");
+    // the developer runs `npm run bundle` and the command again
+    m.listing = BUNDLE_OK.slice();
+    const r2 = m.renderNow(true);
+    await flush();
+    m.answer(1, OK_DOC("b"));
+    await r2;
+    assert.strictEqual(m.created.length, 1, "the same panel");
+    assert.match(p.webview.html, /<script src=/, "now the real page");
+    p.loadPage();
+    assert.strictEqual(p.last().messages[0].document.root.note, "b");
+  }
+});
+
+test("panel S2 (pick change): the panel never shows a document for a pick the user has left (H2 of the review)", async () => {
+  const m = panelGlueModel();
+  const r1 = m.renderNow(true);
+  await flush();
+  m.answer(0, OK_DOC("a"));
+  await r1;
+  const p = m.created[0];
+  p.loadPage();
+  const other = core.makePick("file:///w/doc/Other.e", "/w/doc/Other.e", "report", "Other", []);
+  const r2 = m.pickReport(other);
+  await flush();
+  assert.ok(!p.last().messages.some((x) => x.kind === "render"), "the old document is withdrawn at once");
+  m.answer(1, OK_DOC("other"));
+  await r2;
+  assert.strictEqual(p.last().messages[0].document.root.note, "other");
+});
+
+test("panel S2 (explorer): over random interleavings, never a post before ready or after dispose, and a visible ready panel ends on the truth", async () => {
+  const rnd = wp8Rnd(20260924);
+  for (let run = 0; run < 250; run++) {
+    const m = panelGlueModel({ target: ["panel", "both"][rnd(2)] });
+    const pending = [];
+    let wire = 0;
+    for (let step = 0; step < 14; step++) {
+      const p = m.previewPanel;
+      switch (rnd(8)) {
+        case 0: pending.push(m.renderNow(true)); break;
+        case 1: pending.push(m.renderNow(false)); break;
+        case 2: if (wire < m.wires.length) m.answer(wire++, [OK_DOC("x" + step), ERR_500, STUCK_ANSWER][rnd(3)]); break;
+        case 3: if (p) p.loadPage(); break;
+        case 4: if (p) p.hide(); break;
+        case 5: if (p) p.show(); break;
+        case 6: if (p && rnd(3) === 0) p.dispose(); break;
+        default: m.holdRender(); break;
+      }
+      await flush();
+    }
+    while (wire < m.wires.length) m.answer(wire++, OK_DOC("end"));
+    await Promise.all(pending);
+    for (const p of m.created) {
+      assert.strictEqual(p.early, 0, "run " + run + ": a post before ready");
+      assert.strictEqual(p.afterDispose, 0, "run " + run + ": a post after dispose");
+      for (const e of p.delivered) assert.strictEqual(e.kind, "snapshot");
+    }
+    assert.ok(m.created.filter((p) => !p.disposed).length <= 1, "run " + run + ": two live panels");
+    const live = m.previewPanel;
+    if (live) {
+      live.show();
+      live.loadPage();
+      assert.deepStrictEqual(live.last().messages, m.truth(), "run " + run + ": the page ends on the truth");
+    }
+  }
+});
+
+/** The source and helpers every WP-10 S2 glue pin reads (split into named
+ *  tests so a mutant dies by the name of the rule it broke). */
+function s2Glue() {
+  const fsMod = require("node:fs");
+  const raw = fsMod.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  const src = codeOf(raw);
+  const pin = (what, fix) =>
+    "source pin (test/preview-core.test.js): extension.js changed shape — " + what +
+    ". If you meant it, update this pin; the behaviour it protects is " + fix;
+  const body = (start, end) => {
+    const i = src.indexOf(start);
+    const j = src.indexOf(end, i + start.length);
+    assert.ok(i >= 0 && j > i, pin("cannot find " + start + " .. " + end, "every pin below"));
+    return src.slice(i, j);
+  };
+  const count = (re, text) => (text.match(re) || []).length;
+  return { raw, src, pin, body, count };
+}
+
+test("glue pins (WP-10 S2) one panel -- one createWebviewPanel, create-or-reveal, opened only by present on the reveal latch", () => {
+  const { raw, src, pin, body, count } = s2Glue();
+  void raw; void count;
+  // ---- ONE panel, created in ONE place, reached ONLY on the reveal latch --
+  assert.strictEqual(count(/createWebviewPanel\(/g, src), 1,
+    pin("createWebviewPanel is called other than once", "H5/H9: ONE panel per window"));
+  const open = body("function openPanel(", "function onPanelMessage(");
+  assert.ok(open.indexOf("createWebviewPanel(") > 0, pin("the one createWebviewPanel is not in openPanel", "the same"));
+  const reuse = open.indexOf("if (previewPanel) {");
+  assert.ok(reuse >= 0 && reuse < open.indexOf("createWebviewPanel(") &&
+            /if \(previewPanel\) \{[\s\S]*?previewPanel\.reveal\(undefined, true\);[\s\S]*?return;\s*\}/.test(open),
+    pin("openPanel no longer reveals-and-returns when a panel exists", "H9: two commands, one panel"));
+  assert.ok(/previewPanel = panel;\s*panelReady = false;/.test(open),
+    pin("the new panel is not stored, or the ready latch is not lowered", "that nothing posts to a page that has not loaded"));
+  assert.ok(/viewColumn: vscode\.ViewColumn\.Beside, preserveFocus: true/.test(open) &&
+            /retainContextWhenHidden: true/.test(open),
+    pin("the panel does not open beside without focus, or retain is gone", "§2(a): the reveal never steals focus (U2's optimisation)"));
+  assert.ok(/if \(!panelBundle \|\| !panelBundle\.ok\) \{\s*const bundle = checkPreviewBundle\(\);\s*if \(bundle\.ok\) \{\s*previewPanel\.webview\.options = panelOptions\(bundle\);\s*setPanelHtml\(previewPanel, bundle\);/.test(open),
+    pin("the re-check of an existing panel changed (its condition, or the options reset before the html)",
+        "that ONLY a panel showing the notice page is re-checked (a working page is never reloaded by a command), " +
+        "and that a panel first opened with no root gets its localResourceRoots when the bundle appears (review M1: R15, R16)"));
+  assert.strictEqual(count(/openPanel\(\);/g, src), 1, pin("openPanel is called from more than one place", "that ONLY present opens it"));
+  const present = body("async function present(", "function previewTarget(");
+  assert.ok(/if \(route\.panel\) \{\s*if \(reveal\) openPanel\(\);\s*postSnapshot\("answer"\);\s*\}/.test(present),
+    pin("present opens the panel other than on `reveal`", "that an automatic re-render never creates or reveals the panel"));
+  assert.strictEqual(present.indexOf("revealNextRender"), -1,
+    pin("present reads or writes the reveal latch", "that the latch is consumed ONCE, at the top of renderNow"));
+  assert.ok(/const route = core\.presentRoute\(previewTarget\(\)\);/.test(present),
+    pin("present does not route through core.presentRoute", "U1"));
+});
+
+test("glue pins (WP-10 S2) the tab -- target=json is byte-identical to 0.1.11, and every answer goes through present", () => {
+  const { raw, src, pin, body, count } = s2Glue();
+  void raw; void count;
+  const present = body("async function present(", "function previewTarget(");
+  // ---- the tab path is byte-identical under json ---------------------------
+  assert.ok(/if \(route\.tab\) await showAnswer\(answer, reveal\);/.test(present),
+    pin("present calls showAnswer other than with the render's own reveal", "that the tab behaves as 0.1.11 (playtest A/B)"));
+  const i = raw.indexOf("async function showAnswer(");
+  const showAnswerText = raw.slice(i, raw.indexOf("\n}\n", i) + 3);
+  assert.strictEqual(require("node:crypto").createHash("sha256").update(showAnswerText).digest("hex"),
+    "1def850a87e8d3b378cfe1dbe03b936c7e3617ab29499644841ab0ed792f140d",
+    pin("showAnswer's text changed", "that target=json is BYTE-IDENTICAL to 0.1.11's tab (playtest groups A and B)"));
+  assert.strictEqual(count(/showAnswer\(/g, src), 2,
+    pin("showAnswer is called from somewhere other than present", "that every answer goes through present"));
+});
+
+test("glue pins (WP-10 S2) renderNow -- present where showAnswer was, the latch consumed once, the answers stepped beside lastAnswer", () => {
+  const { raw, src, pin, body, count } = s2Glue();
+  void raw; void count;
+  // ---- renderNow: present where showAnswer was; the latch consumed once ----
+  const renderBody = body("async function renderNow(", "async function showAnswer(");
+  assert.strictEqual(count(/await present\(refusal, revealThis\);/g, renderBody), 1,
+    pin("the refusal arm does not present with revealThis", "H9"));
+  assert.strictEqual(count(/await present\(answer, revealThis\);/g, renderBody), 1,
+    pin("the answer arm does not present with revealThis", "H9"));
+  assert.strictEqual(count(/revealNextRender = false;/g, renderBody), 1,
+    pin("renderNow consumes the latch other than once", "that the reveal cannot leak into a later render"));
+  assert.ok(renderBody.indexOf("revealNextRender = false;") < renderBody.indexOf("await "),
+    pin("the latch is consumed after an await", "the same"));
+  // the panel's answers are stepped beside every lastAnswer, by the shared step
+  assert.ok(/lastAnswer = refusal;[\s\S]{0,900}?panelAnswers = core\.panelAnswerStep\(panelAnswers, \{ answer: refusal \}, generation\);/.test(renderBody),
+    pin("the refusal is not stepped into panelAnswers", "that the panel shows a params refusal like the tab"));
+  assert.ok(/lastAnswer = answer;\s*panelAnswers = core\.panelAnswerStep\(panelAnswers, \{ answer \}, generation\);/.test(renderBody),
+    pin("the answer is not stepped into panelAnswers", "that the panel shows what the tab shows"));
+  // THE S1 REVIEW'S NOTE, CLOSED BY ARGUMENT: nothing awaits between the
+  // verdict that compared the generation and the refusal's present.
+  const gap = body("const verdict = core.mayStillSend(", "await present(refusal, revealThis);");
+  assert.strictEqual(gap.indexOf("await "), -1,
+    pin("an await now sits between mayStillSend and the refusal's present",
+        "that the panel's generation check cannot refuse a refusal the tab shows (target=both)"));
+});
+
+test("glue pins (WP-10 S2) the post -- one postMessage, guarded by the ready latch, and only core.panelSnapshot's envelope", () => {
+  const { raw, src, pin, body, count } = s2Glue();
+  void raw; void count;
+  // ---- ONE post, guarded, and only ever an envelope ------------------------
+  assert.strictEqual(count(/\.postMessage\(/g, src), 1, pin("postMessage is called other than once", "ONE message shape"));
+  const post = body("function postSnapshot(", "function checkPreviewBundle(");
+  assert.ok(/const panel = previewPanel;\s*if \(!panel \|\| !panelReady\) return false;/.test(post),
+    pin("postSnapshot is not guarded by the panel AND the ready latch", "H1/H3: never before ready, never to a disposed panel"));
+  assert.ok(/const envelope = core\.panelSnapshot\(panelViewNow\(\), panelSeq\);/.test(post) &&
+            /panel\.webview\.postMessage\(envelope\)/.test(post),
+    pin("the post is not core.panelSnapshot's envelope", "the S1 finding: loose messages leave `reloading` raised"));
+  assert.ok(/try \{[\s\S]*postMessage\(envelope\)[\s\S]*\} catch \(err\) \{/.test(post),
+    pin("a throwing post is not caught", "H3: a panel disposed under us is a log line, not an exception"));
+  const viewNow = body("function panelViewNow(", "function postSnapshot(");
+  assert.ok(/return core\.panelView\(\{/.test(viewNow) && /answers: panelAnswers,/.test(viewNow) &&
+            /stuckState,/.test(viewNow) && /mark: wedgeMark,/.test(viewNow) && /pick: picked,/.test(viewNow) &&
+            /pending: renderInFlight \|\| coalesceTimer !== undefined,/.test(viewNow),
+    pin("the view is not the shared builder over the module globals", "that the model reads what the glue reads"));
+  // ALL TEN FIELDS, one by one (the review's M1: five were unpinned, and
+  // `restartedByUs: false` / `fastMode: false` left every test green).
+  const fields = [
+    "answers: panelAnswers,", "stuckState,", "mark: wedgeMark,", "pick: picked,",
+    "restartedByUs: core.restartedByUs(restartState),", "pending: renderInFlight || coalesceTimer !== undefined,",
+    "unsaved: [],", 'fastMode: config().get("fastMode", false) === true,', "switching: null,", "reloading: false,",
+  ];
+  const got = (viewNow.match(/^\s*[a-zA-Z]+[:,][^\n]*$/gm) || []).map((l) => l.trim());
+  assert.deepStrictEqual(got, fields,
+    pin("panelViewNow's fields are not exactly the ten the model passes", "that the model reads what the glue reads (review M1: R17, R18)"));
+});
+
+test("glue pins (WP-10 S2) the page talks back -- ready and visible resync, Restart is the command, dispose clears", () => {
+  const { raw, src, pin, body, count } = s2Glue();
+  void raw; void count;
+  const open = body("function openPanel(", "function onPanelMessage(");
+  // ---- where it posts ------------------------------------------------------
+  assert.ok(/if \(previewDisposed\) return;\s*[\s\S]{0,400}?postSnapshot\("status"\);/.test(body("function setPreviewStatus(", "function rootsFor(")),
+    pin("setPreviewStatus no longer tells the panel", "stale, stuck, offline and held reach the panel"));
+  assert.ok(/function holdRender\(trigger\) \{\s*postSnapshot\("held"\);/.test(src),
+    pin("holdRender does not post first", "that the panel learns it is held where the hold is decided"));
+  const msgBody = body("function onPanelMessage(", "async function refreshModule(");
+  assert.ok(/if \(previewPanel !== panel\) return;\s*const inbound = core\.panelInbound\(msg\);/.test(msgBody),
+    pin("a message from a panel that is not the current one is obeyed, or is not decided by core.panelInbound", "H3"));
+  assert.ok(/if \(inbound\.act === "ready"\) \{\s*panelReady = true;\s*postSnapshot\("ready"\);/.test(msgBody),
+    pin("ready does not raise the latch and resync", "H1"));
+  assert.ok(/if \(inbound\.act === "log"\) \{\s*log\("preview panel: " \+ inbound\.text\);\s*return;/.test(msgBody),
+    pin("the page's log intent no longer reaches the Ermine output channel",
+        "the only way a human sees a CSP violation or a page-side render failure (review M1: R14)"));
+  assert.ok(/if \(inbound\.act === "restartServer"\) \{[\s\S]*?vscode\.commands\.executeCommand\("ermine\.restartServer"\);/.test(msgBody) &&
+            !/\brestart\(/.test(msgBody),
+    pin("the Restart intent does not go through the ermine.restartServer command", "U4 and the wedge guard: a panel button uses the palette's door"));
+  assert.ok(/panel\.onDidChangeViewState\(\(\) => \{\s*if \(previewPanel === panel && panel\.visible\) postSnapshot\("visible"\);/.test(open),
+    pin("becoming visible does not resync", "H2/U2: a hidden webview drops posts (F1)"));
+  assert.ok(/panel\.onDidDispose\(\(\) => \{[\s\S]*?if \(previewPanel !== panel\) return;\s*previewPanel = undefined;\s*panelReady = false;/.test(open),
+    pin("onDidDispose does not clear the globals", "H3"));
+});
+
+test("glue pins (WP-10 S2) the page and the bundle -- the notice page on a failed check, the exact CSP, the options", () => {
+  const { raw, src, pin, body, count } = s2Glue();
+  void raw; void count;
+  // ---- the page, and the bundle check --------------------------------------
+  const html = body("function setPanelHtml(", "function openPanel(");
+  assert.ok(/panelBundle = bundle;\s*panelReady = false;\s*if \(!bundle\.ok\) \{[\s\S]*?log\([\s\S]*?core\.buildPanelNoticeHtml\(bundle\);\s*return;/.test(html),
+    pin("a missing bundle is not the notice page plus a channel line, or the latch is not lowered first", "W10"));
+  assert.ok(/core\.buildPreviewHtml\(/.test(html) && /cspSource: panel\.webview\.cspSource/.test(html),
+    pin("the page is not core.buildPreviewHtml with the webview's cspSource", "the exact CSP"));
+  const check = body("function checkPreviewBundle(", "function panelOptions(");
+  assert.ok(/core\.previewBundleDir\(server && server\.root\)/.test(check) && /fs\.readdirSync\(dir\)/.test(check) &&
+            /return core\.previewBundleCheck\(dir, listing\);/.test(check),
+    pin("the bundle check is not the pure check over a listing of resolveServer's root", "U3, fail-closed"));
+  assert.ok(/enableScripts: true,/.test(body("function panelOptions(", "function setPanelHtml(")) &&
+            /enableForms: false,/.test(src) && !/enableCommandUris: true/.test(src),
+    pin("the webview options changed", "§2(b): scripts on, forms off, command URIs off"));
+});
+
+test("glue pins (WP-10 S2) teardown and a pick change -- the panel goes with the window, the old document with the old pick", () => {
+  const { raw, src, pin, body, count } = s2Glue();
+  void raw; void count;
+  // ---- teardown, and a pick change -----------------------------------------
+  const teardown = body("function disposePreview(", "function restorePick(");
+  assert.ok(/if \(previewPanel\) \{[\s\S]*?previewPanel = undefined;\s*panelReady = false;[\s\S]*?panel\.dispose\(\);/.test(teardown) &&
+            /panelAnswers = core\.initialPanelAnswers\(\);/.test(teardown),
+    pin("disposePreview does not dispose the panel and clear its state", "teardown is a state"));
+  assert.ok(/lastAnswer = undefined;[\s\S]{0,300}?panelAnswers = core\.initialPanelAnswers\(\);/.test(body("async function pickReport(", "async function renderCommand(")),
+    pin("a pick change keeps the old report's document for the panel", "H2: never a document for a pick the user has left"));
+});

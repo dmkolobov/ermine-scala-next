@@ -2,7 +2,7 @@
   "name": "ermine-lang",
   "displayName": "Ermine",
   "description": "Ermine language support: syntax highlighting, diagnostics, navigation, hover types, references, rename, symbols, completion and quick fixes, backed by bin/ermine-lsp.",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "publisher": "clarifi",
   "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {
@@ -90,6 +90,22 @@
           "maximum": 3600,
           "scope": "window",
           "markdownDescription": "How long the preview may stay stuck before **the extension restarts the language server itself**, in seconds. **`0` = never, and that is the default.**\n\nThe grace starts when the preview goes stuck and is cancelled if the render comes back (a slow report is not a wedged one), if the server stops or is restarted for any other reason, or if you set this back to 0. Setting it to a number while the preview is *already* stuck arms it there and then. When it expires the extension stops and restarts its own client; the report that wedged is remembered, so the fresh server does **not** re-render it \u2014 it asks first.\n\nTwo restarts are never closer together than 30 seconds, whatever this is set to; a value above 3600 is clamped to it, and a value that is not a whole number of seconds is refused and leaves the feature off."
+        },
+        "ermine.preview.target": {
+          "type": "string",
+          "enum": [
+            "panel",
+            "json",
+            "both"
+          ],
+          "enumDescriptions": [
+            "The preview panel: the rendered report, beside the editor.",
+            "The JSON tab, exactly as before 0.1.12: the answer, verbatim.",
+            "Both the panel and the JSON tab."
+          ],
+          "default": "panel",
+          "scope": "window",
+          "markdownDescription": "Where **Ermine: Preview Report...** and **Ermine: Render Report to JSON** show the answer. `panel` (the default) draws the report in a webview panel beside the editor; `json` keeps the untitled JSON tab exactly as it was before 0.1.12; `both` does both. The panel needs the client bundle built once: `npm install && npm run bundle` in `client/` of the checkout that holds `bin/ermine-lsp` — until then it says so. Only an explicit command opens or reveals the panel; a re-render after a save updates it in place."
         },
         "ermine.preview.maxDocumentBytes": {
           "type": "number",

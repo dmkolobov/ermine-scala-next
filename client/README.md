@@ -52,7 +52,7 @@ is long-standing, not new.
 With that checkout present, the command above is green. Eight of the tests skip, each
 naming what would make it run: three need FIXTURES the Scala side writes — property (b)'s
 200-document corpus, its negative half, and the end-to-end document — and five need the
-browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (now 100 tests: 97 passed, 3 skipped with the bundle built, MEASURED 2026-09-23)
+browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (100 tests: 97 passed, 3 skipped after S1; **112 tests: 109 passed, 3 skipped after WP-10 S2**, with the bundle built, MEASURED 2026-09-23)
 (MEASURED 2026-09-21 on node v24.20.0; the count this paragraph carried before WP-9 was
 33/3 and was stale by 29 passing tests). `npm run test:bundle` builds the bundle first and
 gives 87 passed, 3 skipped; writing the fixtures as well runs all 90:
@@ -131,7 +131,7 @@ Two entries, no loaders (WP-9):
 | Output | Global it defines | What it is |
 |---|---|---|
 | `dist/browser/ermine-client.js` (+ `.map`) | `window.ErmineClient` | this package's whole public surface — `parseDocument`, `render`, `defaultRegistry`, everything `src/index.ts` exports |
-| `dist/browser/ermine-host.js` (+ `.map`) | `window.ErmineHost` | the preview panel's presentation reducer (`src/host/`): `applyMessage`, `presentation`, `initialHostState`. A SECOND entry because a webview page under `script-src ${cspSource}` with no nonce may carry no inline `<script>` at all |
+| `dist/browser/ermine-host.js` (+ `.map`) | `window.ErmineHost` | since WP-10 S2 the panel PAGE (`src/host/page.ts`): it calls `acquireVsCodeApi()` once, posts `ready`, folds each snapshot envelope and draws through `window.ErmineClient`; it re-exports the presentation reducer (`applyMessage`, `presentation`, `initialHostState`, ...). A SECOND entry because a webview page under `script-src ${cspSource}` with no nonce may carry no inline `<script>` at all |
 
 **`devtool` is `'source-map'`, and that is load-bearing.** `mode: 'development'`
 defaults to `devtool: 'eval'`, which wraps every module in an `eval("…")` call; a VS Code
@@ -173,7 +173,7 @@ should be committed instead is open, and belongs to WP-17 (closed-environment pa
 | `src/widgets/headline.ts` | the `headline` widget, plain DOM: a title, a scope and three figures. Its props carry NO relation -- the Ermine constructor `headlineOf` scanned one server-side (J3g). |
 | `src/widgets/crosstab.ts` | the `crosstab` widget, plain DOM: a `<table>` of row labels x column labels with totals. Its props carry a MATRIX, not a relation -- `crosstabOf` scanned one server-side and the column set IS the data (J3i) -- so it does not go through the table adapter. A `null` cell is a pair no row had and shows as an em dash. |
 | `src/index.ts` | the public surface and `defaultRegistry()`. |
-| `src/host/` | the preview panel's PRESENTATION reducer — `applyMessage`, `presentation`, `initialHostState` — bundled as `ermine-host.js`. It decides what the panel SHOWS and nothing else: every decision (is this answer current, should we re-render, did the wedge clear) stays in the extension's `preview-core.js`, so the two reducers cannot disagree. Skeleton only; WP-10 owns the panel. |
+| `src/host/` | the preview panel's PRESENTATION reducer — `applyMessage`, `presentation`, `initialHostState` — bundled as `ermine-host.js`. It decides what the panel SHOWS and nothing else: every decision (is this answer current, should we re-render, did the wedge clear) stays in the extension's `preview-core.js`, so the two reducers cannot disagree. `page.ts` (WP-10) is the webview page built on it: the snapshot fold, `pageStep` (delivery only: snapshot envelopes, a rising `seq`, re-render only when the document changed) and `boot`, the DOM. |
 
 ## Formatting a cell
 

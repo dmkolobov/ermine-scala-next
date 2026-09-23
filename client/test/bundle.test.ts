@@ -33,6 +33,7 @@ import { JSDOM } from "jsdom";
 
 import * as client from "../src/index";
 import * as host from "../src/host/index";
+import * as page from "../src/host/page";
 
 // dist/test -> dist -> dist/browser, where webpack writes
 const BROWSER = path.resolve(__dirname, "../browser");
@@ -155,12 +156,14 @@ test("(b-surface) window.ErmineClient exposes exactly what src/index.ts exports"
   dom.window.close();
 });
 
-test("(b-host-surface) window.ErmineHost exposes exactly what src/host/index.ts exports, and agrees with it", (t) => {
+test("(b-host-surface) window.ErmineHost exposes exactly what src/host/page.ts exports -- the reducer's whole surface included -- and agrees with it", (t) => {
   if (skipWhenAbsent(t)) return;
   const dom = domWith(HOST_JS);
   const exposed = (dom.window as unknown as { ErmineHost?: Record<string, unknown> }).ErmineHost;
   assert.ok(exposed, "window.ErmineHost");
-  assert.deepStrictEqual(Object.keys(exposed!).sort(), Object.keys(host).sort());
+  // WP-10 S2: the entry is `host/page` (the bootstrap), which re-exports the reducer
+  assert.deepStrictEqual(Object.keys(exposed!).sort(), Object.keys(page).sort());
+  for (const k of Object.keys(host)) assert.ok(k in exposed!, `the reducer's ${k} is still exposed`);
 
   // the host entry carries NO zod, and that is a property of the panel, not an
   // accident: `src/host/` imports nothing, so the reducer bundle is ~10 KB while
@@ -215,5 +218,43 @@ test("(b-same-dom) a document rendered through the bundle matches the CommonJS b
                document.getElementById("cjs")!.innerHTML);
   // and it is a real render, not two empty divs
   assert.ok(document.querySelectorAll("#bundle section.ermine-scorecard .ermine-scorecard-card").length === 3);
+  dom.window.close();
+});
+
+// ------------------------------------------------------ (iv) the panel page
+
+test("(b-host-boot) the host bundle boots itself where acquireVsCodeApi exists: ready once, a snapshot renders, a toggle does not", async (t) => {
+  if (skipWhenAbsent(t)) return;
+  const dom = new JSDOM(
+    `<!doctype html><html><head></head><body><div id="${page.PREVIEW_ROOT_ID}"></div></body></html>`,
+    { runScripts: "dangerously" });
+  const w = dom.window as unknown as Record<string, unknown>;
+  const posted: unknown[] = [];
+  let acquired = 0;
+  w["acquireVsCodeApi"] = () => { acquired += 1; return { postMessage: (m: unknown) => posted.push(JSON.parse(JSON.stringify(m))) }; };
+  for (const b of [CLIENT_JS, HOST_JS]) {
+    const el = dom.window.document.createElement("script");
+    el.textContent = fs.readFileSync(b, "utf8");
+    dom.window.document.body.appendChild(el);
+  }
+  assert.equal(acquired, 1, "acquireVsCodeApi is called ONCE");
+  assert.deepStrictEqual(posted, [], "nothing before DOMContentLoaded");
+  if (dom.window.document.readyState === "loading") {
+    await new Promise((r) => dom.window.document.addEventListener("DOMContentLoaded", r));
+  }
+  assert.deepStrictEqual(posted, [{ type: "ready" }]);
+  const send = async (env: unknown): Promise<void> => {
+    dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: env }));
+    await new Promise((r) => setTimeout(r, 20));
+  };
+  const render = { kind: "render", document: JSON.parse(FIXTURE), generation: 1 };
+  await send({ kind: "snapshot", seq: 1, messages: [render, { kind: "stale", stale: false }] });
+  const area = dom.window.document.querySelector(".ermine-document")!;
+  assert.ok(area.querySelector(".ermine-scorecard"), "the scorecard rendered through window.ErmineClient: " + area.innerHTML.slice(0, 200));
+  const node = area.firstElementChild;
+  await send({ kind: "snapshot", seq: 2, messages: [render, { kind: "stale", stale: true }] });
+  assert.equal(area.firstElementChild, node, "a stale toggle does not re-render");
+  assert.equal(dom.window.document.querySelector(".ermine-banner")!.getAttribute("data-kind"), "stale");
+  assert.equal(posted.length, 1, "and nothing was logged: no widget failed");
   dom.window.close();
 });

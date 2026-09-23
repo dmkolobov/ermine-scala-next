@@ -50,9 +50,11 @@ module.exports = {
     // the host page's own script.  It exists as a SEPARATE entry because under
     // `script-src ${cspSource}` with no nonce the host page may carry no inline
     // <script> at all -- not even `const vscode = acquireVsCodeApi()` (D4).
-    // WP-10 fills it in; today it is the presentation reducer only.
+    // Since WP-10 S2 the entry is `host/page`: the page bootstrap (the one
+    // `acquireVsCodeApi()`, the snapshot fold, the DOM), which re-exports the
+    // presentation reducer's whole surface.
     "ermine-host": {
-      import: `${ENTRY_ROOT}/host/index${ENTRY_EXT}`,
+      import: `${ENTRY_ROOT}/host/page${ENTRY_EXT}`,
       library: { name: "ErmineHost", type: "window" },
     },
   },

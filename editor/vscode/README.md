@@ -57,8 +57,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.11.vsix
-code --install-extension ermine-lang-0.1.11.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.12.vsix
+code --install-extension ermine-lang-0.1.12.vsix
 ```
 
 `npm run package` does the same. Upgrading is the same command with the new
@@ -112,16 +112,33 @@ Names Scala installs rather than source declares (`Just`, `True`, `Int`,
 go-to-definition answers nothing on them and they are not listed in the
 workspace symbol picker.
 
-## Preview (no panel yet)
+## Preview
 
 A **report** is any top-level binding whose type is `Node`, `Params -> Node`,
 `Fetch Node` or `Params -> Fetch Node`. The preview renders one, on the
 server, in a second session of its own, and re-renders it when a file it
 depends on is saved — with no JVM restart and no build.
 
-At 0.1.11 there is still **no webview panel** (WP-10; 0.1.11 adds only its pure
-half, see below): the answer is
-shown as JSON in an ordinary editor tab. Parameters come from a file you write
+**Since 0.1.12 the answer is drawn in a webview panel** beside the editor
+(`ermine.preview.target`, default `panel`; see **0.1.12** below). The JSON tab
+described in the rest of this section is still there, unchanged, with
+`ermine.preview.target` set to `json` (or `both`, for the two at once) — it is
+the verbatim view of every `status`, `message`, `path` and `reason`.
+
+**The panel needs the client bundle, which is not built by default** (it is
+git-ignored). The first time you open it you will most likely see *"The
+preview bundle is not built"* and the path it looked in. Build it once in the
+checkout that holds `bin/ermine-lsp`:
+
+```sh
+cd client && npm install && npm run bundle
+```
+
+then run **Ermine: Preview Report...** again; the same panel loads the page. A
+directory with only one of `ermine-client.js` / `ermine-host.js` in it is
+reported as **HALF-BUILT** — delete `client/dist/browser` and bundle again.
+
+Parameters come from a file you write
 yourself — see **Params files** below; with no such file the render still sends
 empty parameters, so a report with required ones shows the refusal that names
 the first missing key rather than a document.
@@ -129,9 +146,10 @@ the first missing key rather than a document.
 | Command | |
 |---|---|
 | **Ermine: Preview Report...** | picks a `.e` file (the active editor's first), then a binding from the list the server computes **by type** — `binding : type`, with a free-text fallback for a binding it did not list. The pick is remembered per workspace and renders immediately |
-| **Ermine: Render Report to JSON** | renders the remembered pick again into the same tab (and runs the picker if nothing is picked yet) |
+| **Ermine: Render Report to JSON** | renders the remembered pick again into the same panel or tab (and runs the picker if nothing is picked yet) |
 
-One untitled JSON tab is reused and updated in place. A successful render
+With `ermine.preview.target` at `json` or `both`, one untitled JSON tab is
+reused and updated in place. A successful render
 shows the document; a refusal shows the whole `{ok:false, status, message,
 path}` answer, because `message` and `path` together are the diagnostic. A
 report with required parameters and no parameters yet reads
@@ -160,8 +178,10 @@ away and back — is watched at its own path and re-renders when it reappears.
 An automatic re-render **updates the tab where it is and never pulls it in
 front of what you are editing**; only the two commands reveal it. The tab is
 untitled and the updates leave it dirty, so closing it offers to save a
-throwaway render: choose **Don't Save**. (A real panel is a later ticket; this
-is one of the reasons for it.)
+throwaway render: choose **Don't Save**. (This is one of the reasons for the
+panel, which has no such prompt.) The panel follows the same rule: **only the
+two commands open or reveal it**, and an automatic re-render updates it in
+place — including when it is hidden behind another tab.
 
 A status bar item on the right says which report is picked, and turns into a
 warning when the preview is **stuck** (a render that never finished — the
@@ -408,6 +428,44 @@ a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
 
+### 0.1.12
+
+**The preview panel** (WP-10 stage 2). The two preview commands now show the
+report in a webview panel beside the editor, created on the first explicit
+render and revealed (without taking focus) by every later one. There is ONE
+panel per window; closing it is fine — the next command makes a new one.
+
+| | |
+|---|---|
+| **`ermine.preview.target`** | `panel` (default), `json` or `both`. `json` is the 0.1.11 tab, **byte for byte** — the tab code did not change. An unknown value is refused once in the output channel and the default used |
+| **what the panel shows** | the last good document, with a banner above it: *stuck* (with the one button, **Restart Language Server**, which runs the same command as the palette), *held*, *offline* (the document kept, dimmed), an *error* (`status: message (path)`, the last good document dimmed below it; in fast mode it adds that type errors are not shown in Problems), *re-rendering*, or *Pick a report* when nothing has rendered yet. Picking another report withdraws the old document at once |
+| **the bundle** | loaded from `<checkout>/client/dist/browser/` — `<checkout>` is the folder `bin/ermine-lsp` lives in (`ermine.serverPath`'s, or the first workspace folder). **Not built** and **HALF-BUILT** are a static page that says so, with the path, plus one line in the Ermine output channel. There is no watcher yet (stage 3): after building, run the command again |
+| **the page's own log** | anything the page wants to say — a widget that failed, a document it could not read — arrives in the Ermine output channel as `preview panel: ...` |
+| **deferred relations** | the preview never produces one (every relation is inline), so the page's `fetchData` refuses by name; a widget that asked would show its own error box |
+| **not yet** | the `unsaved` hint (no producer), the bundle watcher, the writers' legacy renderers (`table`, charts: WP-11), a Render anyway button in the panel (the held question stays a notification) |
+
+**The protocol, extension -> panel, is ONE message:**
+
+```js
+{ kind: "snapshot", seq: 12, messages: [ /* panelMessagesFor(view): render?, error?, stale, stuck, held, offline, switching, unsaved, reloadBundle? */ ] }
+```
+
+— the whole state every time, never a loose message, because a hidden webview
+may drop any post and one flag (`reloading`) has no falling edge of its own.
+The page folds `messages` from a fresh state, ignores an envelope whose `seq`
+is not above the last one it applied, and re-draws the document only when its
+generation or payload changed (so a *re-rendering* toggle keeps scroll and
+drilldown). Nothing is posted until the page says `ready`; the extension
+re-sends the snapshot on `ready` and whenever the panel becomes visible again.
+**Panel -> extension** is `{type: "ready"}`, `{type: "intent", kind:
+"restartServer"}` and `{type: "log", message}`; anything else is logged and
+ignored. The new exports behind this are `panelSnapshot`, `panelInbound`,
+`presentRoute`, `previewBundleDir` / `previewBundleCheck` /
+`previewResourceRoots` and `buildPanelNoticeHtml`.
+
+**None of this has run in VS Code yet.** It is tested in node (models of the
+glue, a JSDOM page) and nothing else; the playtest's panel group is stage 5.
+
 ### 0.1.11
 
 **Nothing you can see changed.** 0.1.11 is the pure half of the webview panel
@@ -607,7 +665,7 @@ else is suppressed — a save still re-renders at once.
 ### 0.1.5
 
 **The preview loop, with no panel.** Two commands, one untitled JSON tab, a
-status bar item and four new settings — see "Preview (no panel yet)" above.
+status bar item and four new settings — see "Preview" above.
 The webview panel and parameter files are separate tickets; nothing here
 renders a document into a view.
 
@@ -698,6 +756,7 @@ Three costs, in the order you meet them:
 | `ermine.preview.timeoutSeconds` | `60` | The preview's evaluation watchdog; `0` turns it off (no restart needed) |
 | `ermine.preview.restartAfterStuckSeconds` | `0` *(never)* | How long the preview may stay stuck before the extension restarts the language server itself; client-side only, never sent to the server |
 | `ermine.preview.maxDocumentBytes` | `16777216` | Largest rendered document the server will send |
+| `ermine.preview.target` | `panel` | Where a render is shown: the webview `panel`, the `json` tab (0.1.11's, unchanged), or `both` |
 | `ermine.trace.server` | `off` | Trace LSP traffic to the output channel |
 
 | Command | |
@@ -707,7 +766,7 @@ Three costs, in the order you meet them:
 | **Ermine: Show Language Server Output** | Opens the Ermine output channel |
 | **Ermine: Reload Modules** | Declared by the *server* and registered by the language client; the extension only adds the status-bar line |
 | **Ermine: Preview Report...** | Picks a file and a binding, and renders it |
-| **Ermine: Render Report to JSON** | Re-renders the picked report into the same tab |
+| **Ermine: Render Report to JSON** | Re-renders the picked report into the same panel or tab |
 | **Ermine: Write Params Skeleton** | Replaces the picked report's params file with a fresh skeleton, **after a modal you answer** — see **Params files**. The only thing in this extension that overwrites a params file |
 
 There is no setting for the completion trigger character, the code-action
@@ -778,13 +837,23 @@ really is an atomic create. **Since 0.1.11** it covers the panel's pure half:
 the CSP character for character, the script order and the absence of any
 inline script, each of the nine message kinds, and `panelMessagesFor` over
 real answers captured from `bin/ermine-lsp` (`test/fixtures/panel-answers.json`,
-whose `_note` says how). It runs under `node --test` with no
+whose `_note` says how). **Since 0.1.12** it covers the panel's glue: the
+envelope, the inbound messages, the target routes, the fail-closed bundle
+check and its static page; a fourth async model — the panel glue statement for
+statement over a fake panel that drops posts while hidden and throws after
+dispose — driven through `ready` before and after the first answer, a hidden
+panel, a close and a teardown mid-render, two overlapping commands and a
+random interleaving explorer; and source pins that `extension.js` keeps that
+shape (one `createWebviewPanel`, one guarded `postMessage`, the latch consumed
+once, `showAnswer` byte-identical). It runs under `node --test` with no
 `node_modules` at all, and it is the `extension` gate of `scripts/gate.sh`
 (commit tier).
 
 **`test/load-test.js`** stubs the `vscode` module in the loader and calls
 `activate()` exactly as the editor would, then checks that every command
-package.json contributes is registered, that activation returns without
+package.json contributes is registered, that `ermine.preview.target` is
+contributed with the values and default `preview-core.js` decides with, that
+activation creates no webview panel, that activation returns without
 waiting on the server, and that `deactivate()` is safe after a failed start.
 
 Its last step is live: it waits for the status bar to carry the server's own

@@ -20,8 +20,10 @@ import fc from "fast-check";
 
 import {
   foldSnapshot, receive, applyMessage, initialHostState, presentation, MESSAGE_KINDS,
-  type HostMessage, type HostState, type PanelEnvelope,
+  pageStep, initialPage, documentKey, boot, refuseDeferred, PREVIEW_ROOT_ID,
+  type HostMessage, type HostState, type PanelEnvelope, type PageModel, type BootWindow,
 } from "../src/host/page";
+import { JSDOM } from "jsdom";
 import * as hostIndex from "../src/host/index";
 import * as pageModule from "../src/host/page";
 
@@ -110,7 +112,9 @@ test("(pg-surface) page re-exports the reducer's whole surface, so S2 can point 
   const want = Object.keys(hostIndex).sort();
   const have = Object.keys(pageModule);
   for (const k of want) assert.ok(have.includes(k), `page.ts is missing ${k}`);
-  assert.deepStrictEqual(have.filter((k) => !want.includes(k)).sort(), ["foldSnapshot", "receive"]);
+  // S1's fold, and S2's step + DOM bootstrap: nothing else may grow here
+  assert.deepStrictEqual(have.filter((k) => !want.includes(k)).sort(),
+    ["PREVIEW_ROOT_ID", "boot", "documentKey", "foldSnapshot", "initialPage", "pageStep", "receive", "refuseDeferred"]);
 });
 
 // ------------------------------------------------ H7, against the extension
@@ -273,4 +277,215 @@ test("(pg-h7-real) every captured real answer, folded through the real reducer, 
     assert.equal(p.showDocument, want.doc, name);
     if (name === "stuck-wpspin") assert.equal(p.banner?.action, "restartServer", "the stuck banner's one action");
   }
+});
+
+// ============================================ S2: the page's step and its DOM
+//
+// `pageStep` is the rule the bootstrap runs on every post, so these are the
+// page's model: DELIVERY only (snapshot envelopes only, `seq` monotone) and
+// the S1 review's "render only when the document changed".  The `(pg-boot-*)`
+// tests then drive the REAL `boot` in a JSDOM with a stub VS Code API and a
+// stub `window.ErmineClient` that counts renders.
+
+/** The extension's envelopes, built by ITS builders (`panelView` ->
+ *  `panelSnapshot`), so the page is tested against what the glue posts. */
+function envelopeOf(parts: Record<string, unknown>, seq: number): unknown {
+  return core.panelSnapshot(core.panelView(parts), seq);
+}
+const okAnswers = (gen: number, note: string): unknown =>
+  core.panelAnswerStep(core.initialPanelAnswers(), { answer: { ok: true, document: { ...doc, note }, generation: gen } }, gen);
+
+test("(pg-step-render-on-change) a re-render happens exactly when the document's generation or payload changes", () => {
+  fc.assert(fc.property(fc.array(fc.record({
+    gen: fc.integer({ min: 1, max: 4 }), note: fc.constantFrom("a", "b"), hasDoc: fc.boolean(),
+    pending: fc.boolean(), fast: fc.boolean(), stuck: fc.boolean(),
+  }), { maxLength: 25 }), (posts) => {
+    let page: PageModel = initialPage();
+    let lastKey: string | null = null;
+    let seq = 0;
+    for (const p of posts) {
+      const env = envelopeOf({
+        answers: p.hasDoc ? okAnswers(p.gen, p.note) : core.initialPanelAnswers(),
+        pending: p.pending, fastMode: p.fast,
+        stuckState: p.stuck ? core.stuckReduce(core.initialStuckState(), { type: "notification", stuck: true, message: "m", seq: 1 }).state : undefined,
+      }, ++seq);
+      const step = pageStep(page, env);
+      assert.equal(step.accepted, true);
+      const key = p.hasDoc ? `${p.gen}:${JSON.stringify({ ...doc, note: p.note })}` : null;
+      assert.equal(step.rerender, key !== lastKey, JSON.stringify(p));
+      assert.equal(step.page.shownKey, key);
+      lastKey = key;
+      page = step.page;
+      // and the state is the snapshot's, whatever came before
+      assert.deepStrictEqual(page.host, foldSnapshot((env as { messages: HostMessage[] }).messages));
+    }
+  }), { numRuns: 500 });
+});
+
+test("(pg-step-no-rerender-on-toggles) stale, stuck, held, offline and unsaved toggles over the SAME document never re-render", () => {
+  let page = pageStep(initialPage(), envelopeOf({ answers: okAnswers(3, "a") }, 1)).page;
+  const toggles: Record<string, unknown>[] = [
+    { pending: true }, { pending: false }, { fastMode: true }, { unsaved: ["A.e"] },
+    { stuckState: core.stuckReduce(core.initialStuckState(), { type: "clientState", from: "Running", to: "Stopped" }).state },
+  ];
+  let seq = 1;
+  for (const t of toggles) {
+    const step = pageStep(page, envelopeOf({ answers: okAnswers(3, "a"), ...t }, ++seq));
+    assert.equal(step.accepted, true);
+    assert.equal(step.rerender, false, JSON.stringify(t));
+    page = step.page;
+  }
+  // the same payload at a NEW generation is a new render (a re-render of the same report)
+  assert.equal(pageStep(page, envelopeOf({ answers: okAnswers(4, "a") }, ++seq)).rerender, true);
+});
+
+test("(pg-step-seq) an envelope whose seq is not above the last applied one is IGNORED; no seq is taken", () => {
+  const first = pageStep(initialPage(), envelopeOf({ answers: okAnswers(1, "a") }, 5));
+  assert.equal(first.page.seq, 5);
+  for (const older of [5, 4, 1]) {
+    const s = pageStep(first.page, envelopeOf({ answers: okAnswers(2, "b") }, older));
+    assert.equal(s.accepted, false, String(older));
+    assert.equal(s.page, first.page, "by identity");
+  }
+  const newer = pageStep(first.page, envelopeOf({ answers: okAnswers(2, "b") }, 6));
+  assert.equal(newer.accepted, true);
+  const noSeq = pageStep(newer.page, { kind: "snapshot", messages: [] });
+  assert.equal(noSeq.accepted, true);
+  assert.equal(noSeq.page.seq, 6, "a snapshot with no seq keeps the last one");
+});
+
+test("(pg-step-envelope-only) a loose host message, or anything else, is NOT applied by the page", () => {
+  const page = pageStep(initialPage(), envelopeOf({ answers: okAnswers(1, "a") }, 1)).page;
+  const loose: unknown[] = [
+    { kind: "render", document: doc, generation: 9 }, { kind: "reloadBundle" }, { kind: "error", status: 500, message: "x" },
+    { kind: "snapshot" }, { kind: "snapshot", messages: "x" }, null, 3, "snapshot", { type: "snapshot", messages: [] },
+  ];
+  for (const m of loose) {
+    const s = pageStep(page, m);
+    assert.equal(s.accepted, false, JSON.stringify(m));
+    assert.equal(s.rerender, false);
+    assert.equal(s.page, page);
+  }
+});
+
+test("(pg-key) documentKey: null without a document, generation AND payload with one", () => {
+  assert.equal(documentKey(null), null);
+  assert.equal(documentKey({ payload: { a: 1 }, generation: 2 }), '2:{"a":1}');
+  assert.equal(documentKey({ payload: { a: 1 }, generation: null }), '-:{"a":1}');
+  assert.notEqual(documentKey({ payload: { a: 1 }, generation: 2 }), documentKey({ payload: { a: 2 }, generation: 2 }));
+});
+
+test("(pg-root-id) the page draws into the element the extension's html builder makes", () => {
+  assert.equal(PREVIEW_ROOT_ID, core.PREVIEW_ROOT_ID);
+});
+
+test("(pg-fetch-refuses) U6: fetchData REJECTS, naming the token", async () => {
+  await assert.rejects(refuseDeferred("tok-123"), /deferred relation "tok-123"/);
+});
+
+// ------------------------------------------------------------- the real boot
+
+interface Harness {
+  dom: JSDOM; posted: unknown[]; renders: { note: unknown }[]; win: BootWindow;
+  send(env: unknown): Promise<void>; area(): Element; banner(): HTMLElement; button(): HTMLButtonElement;
+}
+
+async function harness(withClient = true, early?: (posted: unknown[], state: string) => void): Promise<Harness> {
+  const dom = new JSDOM(`<!doctype html><html><head></head><body><div id="${PREVIEW_ROOT_ID}"></div></body></html>`);
+  const w = dom.window as unknown as BootWindow & { Event: typeof Event };
+  const posted: unknown[] = [];
+  const renders: { note: unknown }[] = [];
+  if (withClient) {
+    w.ErmineClient = {
+      parseDocument: (v: unknown) => v,
+      defaultRegistry: () => ({}),
+      render: async (target, d, _reg, env) => {
+        assert.equal(env.fetchData, refuseDeferred, "the rejecting stub is what reaches render");
+        renders.push({ note: (d as { note?: unknown }).note });
+        target.textContent = `doc ${(d as { note?: unknown }).note}`;
+        return { errors: [] };
+      },
+    };
+  }
+  boot(w, { postMessage: (m: unknown) => { posted.push(m); } });
+  const doc = dom.window.document;
+  if (early) early(posted.slice(), doc.readyState);
+  // a real webview runs the host script while the document is still loading,
+  // exactly as JSDOM does here; `ready` waits for DOMContentLoaded
+  if (doc.readyState === "loading") await new Promise((r) => doc.addEventListener("DOMContentLoaded", r));
+  return {
+    dom, posted, renders, win: w,
+    async send(env) {
+      dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: env }));
+      await new Promise((r) => setImmediate(r));
+    },
+    area: () => doc.querySelector(".ermine-document")!,
+    banner: () => doc.querySelector(".ermine-banner") as HTMLElement,
+    button: () => doc.querySelector(".ermine-banner button") as HTMLButtonElement,
+  };
+}
+
+test("(pg-boot-ready) the page posts ready ONCE, after DOMContentLoaded, and nothing else on its own", async () => {
+  let before: unknown[] = ["unset"];
+  let state = "";
+  const h = await harness(true, (p, s) => { before = p; state = s; });
+  assert.equal(state, "loading", "sanity: boot ran while the document was loading, as in a webview");
+  assert.deepStrictEqual(before, [], "nothing before DOMContentLoaded (the writers' listener must run first)");
+  assert.deepStrictEqual(h.posted, [{ type: "ready" }]);
+  assert.ok(h.dom.window.document.getElementById(PREVIEW_ROOT_ID)!.querySelector(".ermine-document"), "drawn into the root");
+  h.dom.window.close();
+});
+
+test("(pg-boot-render-once) the DOM re-renders only when the document changes, never on a toggle", async () => {
+  const h = await harness();
+  let seq = 0;
+  await h.send(envelopeOf({ answers: okAnswers(1, "a") }, ++seq));
+  assert.deepStrictEqual(h.renders, [{ note: "a" }]);
+  const shown = h.area().firstElementChild;
+  for (const t of [{ pending: true }, { pending: false }, { fastMode: true }, { unsaved: ["X.e"] }]) {
+    await h.send(envelopeOf({ answers: okAnswers(1, "a"), ...t }, ++seq));
+  }
+  assert.equal(h.renders.length, 1, "four toggles, no re-render");
+  assert.equal(h.area().firstElementChild, shown, "the same DOM node: scroll and drilldown survive");
+  await h.send(envelopeOf({ answers: okAnswers(2, "b") }, ++seq));
+  assert.deepStrictEqual(h.renders.map((r) => r.note), ["a", "b"]);
+  // a loose message changes nothing
+  await h.send({ kind: "render", document: { ...doc, note: "loose" }, generation: 9 });
+  assert.equal(h.renders.length, 2);
+  // the pick changes: no document, the area is emptied and hidden, the initial banner is up
+  await h.send(envelopeOf({}, ++seq));
+  assert.equal(h.area().textContent, "");
+  assert.equal((h.area() as HTMLElement).hidden, true);
+  assert.equal(h.banner().getAttribute("data-kind"), "initial");
+  h.dom.window.close();
+});
+
+test("(pg-boot-banner) banner, dimming and the ONE button come from presentation(); Restart posts the intent", async () => {
+  const h = await harness();
+  let seq = 0;
+  const failed = core.panelAnswerStep(okAnswers(1, "a"), { answer: { ok: false, status: 500, message: "boom", generation: 2 } }, 2);
+  await h.send(envelopeOf({ answers: failed }, ++seq));
+  assert.equal(h.banner().getAttribute("data-kind"), "error");
+  assert.match(h.banner().textContent!, /500: boom/);
+  assert.ok(h.area().classList.contains("ermine-dimmed"), "an error dims the document below it");
+  assert.equal(h.button().hidden, true, "no button on an error");
+  const stuck = core.stuckReduce(core.initialStuckState(), { type: "notification", stuck: true, message: "did not finish", seq: 1 }).state;
+  await h.send(envelopeOf({ answers: okAnswers(1, "a"), stuckState: stuck }, ++seq));
+  assert.equal(h.banner().getAttribute("data-kind"), "stuck");
+  assert.equal(h.button().hidden, false, "the stuck banner carries the one action");
+  assert.ok(!h.area().classList.contains("ermine-dimmed"), "stuck does not dim");
+  h.button().click();
+  assert.deepStrictEqual(h.posted.slice(1), [{ type: "intent", kind: "restartServer" }]);
+  await h.send(envelopeOf({ answers: okAnswers(1, "a"), unsaved: ["Sales.e"] }, ++seq));
+  assert.equal(h.banner().hidden, true, "nothing to say");
+  assert.equal((h.dom.window.document.querySelector(".ermine-hint") as HTMLElement).textContent, "unsaved: Sales.e");
+  h.dom.window.close();
+});
+
+test("(pg-boot-no-client) without window.ErmineClient the page says so and logs it; it never throws", async () => {
+  const h = await harness(false);
+  await h.send(envelopeOf({ answers: okAnswers(1, "a") }, 1));
+  assert.match(h.area().textContent!, /window\.ErmineClient\) is not loaded/);
+  assert.ok(h.posted.some((m) => (m as { type?: string }).type === "log"));
+  h.dom.window.close();
 });

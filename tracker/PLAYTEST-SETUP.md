@@ -80,6 +80,20 @@ The package does **not** contain the repository's `client/` webview bundle, and
 it should not: the extension is not self-contained and needs this checkout for
 `bin/ermine-lsp`.
 
+**Since 0.1.12 (WP-10 S2) the preview draws into a webview panel that LOADS that
+bundle from the checkout**, `client/dist/browser/`, which is git-ignored and so
+absent on a fresh checkout. Build it once before using the panel:
+
+```sh
+cd /home/dmitry/research/ermine/ermine-scala-wt-widget-preview/client && npm install && npm run bundle
+```
+
+Without it the panel shows *"The preview bundle is not built"* with the path
+(that is the designed first experience, not a failure). **The checklist's
+groups A and B are written against the JSON tab**: set `ermine.preview.target`
+to `json` (the 0.1.11 tab, unchanged) or `both` before running them as written.
+There is no panel group in the checklist yet (WP-10 S5).
+
 ## 4. Install it
 
 **One line, and it is yours to run — this was not run for you:**

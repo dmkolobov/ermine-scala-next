@@ -1,9 +1,17 @@
-// The preview panel's PAGE module (WP-10).  STAGE 1 IS THE FOLD ONLY: no DOM,
-// no `window`, no `acquireVsCodeApi()` -- S2 adds those here, and S2 also moves
-// the `ermine-host` webpack entry from `host/index` to this file, which is why
-// it re-exports the reducer's whole surface (so `window.ErmineHost` keeps
-// every name `(b-host-surface)` expects).  Until S2 this module is NOT in the
-// bundle; it is compiled and tested by `npm test` only.
+// The preview panel's PAGE module (WP-10), and since S2 the `ermine-host`
+// webpack ENTRY: `window.ErmineHost` is this module's exports, which re-export
+// the reducer's whole surface (`(b-host-surface)` checks both).
+//
+// Two halves:
+//   * PURE (S1 + S2): the snapshot fold (`foldSnapshot`, `receive`) and the
+//     page's step (`pageStep`), which decides only DELIVERY -- is this
+//     envelope newer than the last one, and did the document change so the
+//     DOM must be re-rendered.  Tested in node.
+//   * DOM (S2): `boot(win, api)`, which draws the banner/hint/dimming from
+//     `presentation()` and renders through `window.ErmineClient`.  It runs by
+//     itself only where `acquireVsCodeApi` exists (a VS Code webview), at the
+//     bottom of this file; node never runs it, and the bundle test drives it
+//     in a JSDOM with a stub API.
 //
 // THE RESYNC (design review §2(c), H7).  `Webview.postMessage` is DOCUMENTED to
 // drop messages to a webview that is not live, so the extension cannot rely on
@@ -24,14 +32,16 @@
 // wholesale, with what the extension says is true.
 
 import {
-  applyMessage, initialHostState,
-  type HostMessage, type HostState,
+  applyMessage, initialHostState, presentation,
+  type HostMessage, type HostState, type HostDocument,
 } from "./index";
 
 export * from "./index";
 
-/** The resync envelope: the whole truth, as the nine kinds. */
-export interface SnapshotEnvelope { kind: "snapshot"; messages: readonly HostMessage[] }
+/** The resync envelope: the whole truth, as the nine kinds.  Since S2 it is
+ *  the ONLY thing the extension posts, with a `seq` that rises by one per post
+ *  (`editor/vscode/src/preview-core.js` `panelSnapshot`). */
+export interface SnapshotEnvelope { kind: "snapshot"; messages: readonly HostMessage[]; seq?: number }
 
 /** Everything the extension posts to the page. */
 export type PanelEnvelope = HostMessage | SnapshotEnvelope;
@@ -54,3 +64,260 @@ export function receive(state: HostState, envelope: PanelEnvelope): HostState {
   }
   return applyMessage(state, envelope as HostMessage);
 }
+
+// ------------------------------------------------------ the page's step (S2)
+
+/** What the page keeps between posts: the folded state, the last applied
+ *  `seq`, and the key of the document the DOM currently shows. */
+export interface PageModel {
+  readonly host: HostState;
+  readonly seq: number | null;
+  readonly shownKey: string | null;
+}
+
+export function initialPage(): PageModel {
+  return { host: initialHostState(), seq: null, shownKey: null };
+}
+
+/** The identity of a document for the DOM: its generation AND its payload.
+ *  Null when there is no document.  A payload that will not stringify is keyed
+ *  by generation alone (it cannot have come through `postMessage` anyway). */
+export function documentKey(doc: HostDocument | null): string | null {
+  if (doc === null) return null;
+  let text: string;
+  try {
+    text = JSON.stringify(doc.payload) ?? "undefined";
+  } catch {
+    text = "<unserialisable>";
+  }
+  return `${doc.generation === null ? "-" : String(doc.generation)}:${text}`;
+}
+
+export interface PageStep {
+  readonly page: PageModel;
+  /** false: the envelope was not a snapshot, or was older than the last one. */
+  readonly accepted: boolean;
+  /** true: the DOM must be (re)rendered, or emptied, for `page.host.document`. */
+  readonly rerender: boolean;
+}
+
+/**
+ * One post into the page.  DELIVERY ONLY -- no domain decision is made here
+ * (D10):
+ *
+ *   * only a `snapshot` envelope is taken.  The extension posts nothing else
+ *     (one shape, ever), so a loose host message is IGNORED rather than
+ *     applied: applying it would reintroduce the incremental path S1 measured
+ *     diverging (`(pg-h7-abandoned-reload)`);
+ *   * a numeric `seq` not above the last applied one is IGNORED: ordering of
+ *     `postMessage` is documented neither way, and an older whole-state
+ *     envelope arriving late would roll the panel back;
+ *   * the snapshot REPLACES the state (`receive`);
+ *   * `rerender` is true ONLY when the document's key changed -- the S1
+ *     review's note: every post carries the document, so re-rendering on each
+ *     one would lose scroll and drilldown on every `stale` toggle.
+ */
+export function pageStep(page: PageModel, envelope: unknown): PageStep {
+  if (envelope === null || typeof envelope !== "object" ||
+      (envelope as { kind?: unknown }).kind !== "snapshot" ||
+      !Array.isArray((envelope as SnapshotEnvelope).messages)) {
+    return { page, accepted: false, rerender: false };
+  }
+  const env = envelope as SnapshotEnvelope;
+  const seq = typeof env.seq === "number" && Number.isFinite(env.seq) ? env.seq : null;
+  if (seq !== null && page.seq !== null && seq <= page.seq) return { page, accepted: false, rerender: false };
+  const host = receive(page.host, env);
+  const key = documentKey(host.document);
+  return {
+    page: { host, seq: seq ?? page.seq, shownKey: key },
+    accepted: true,
+    rerender: key !== page.shownKey,
+  };
+}
+
+// ----------------------------------------------------------- the DOM (S2)
+
+/** What `acquireVsCodeApi()` returns, as far as this page uses it. */
+export interface VsCodeApi { postMessage(message: unknown): unknown }
+
+/** `window.ErmineClient`, as far as this page uses it.  Typed HERE, not
+ *  imported: importing `../index` would pull zod into this bundle
+ *  (`(b-host-surface)` forbids it). */
+interface ClientGlobal {
+  parseDocument(value: unknown): unknown;
+  defaultRegistry(): unknown;
+  render(target: Element, doc: unknown, registry: unknown, env: {
+    document: Document; fetchData: (token: string) => Promise<never>; htmlwriter?: unknown;
+  }): Promise<{ errors: readonly { path: string; widget: string; message: string }[] }>;
+}
+
+export interface BootWindow {
+  document: Document;
+  addEventListener(type: "message", listener: (ev: { data: unknown }) => void): void;
+  ErmineClient?: ClientGlobal;
+  ermine_htmlwriter?: unknown;
+}
+
+/**
+ * U6, TAKEN: the preview never mints a deferred token (design review F2 --
+ * `Preview.scala` sends `params` only, so every relation is inline), and the
+ * CSP's `default-src 'none'` keeps `connect-src` shut.  So `fetchData` is a
+ * stub that REJECTS, naming the token; the dispatcher turns that into the
+ * widget's own error box.  S3 settles the final wording and its tests.
+ */
+export function refuseDeferred(token: string): Promise<never> {
+  return Promise.reject(new Error(
+    `the preview delivers every relation inline, but this document asked to fetch the deferred relation ` +
+    `"${token}"; the preview panel has no way to fetch it`));
+}
+
+/** The one element the extension's html builder puts in the body
+ *  (`preview-core.js` `PREVIEW_ROOT_ID`). */
+export const PREVIEW_ROOT_ID = "ermine-preview-root";
+
+const PAGE_CSS = `
+#${PREVIEW_ROOT_ID}{font-family:var(--vscode-font-family);color:var(--vscode-foreground)}
+.ermine-banner{display:flex;gap:1em;align-items:center;padding:.4em .8em;margin-bottom:.6em;border-left:4px solid var(--vscode-focusBorder,#888)}
+.ermine-banner[hidden]{display:none}
+.ermine-banner[data-kind=error],.ermine-banner[data-kind=stuck],.ermine-banner[data-kind=offline]{border-left-color:var(--vscode-editorError-foreground,#c33)}
+.ermine-banner[data-kind=held]{border-left-color:var(--vscode-editorWarning-foreground,#c93)}
+.ermine-hint{opacity:.8;font-style:italic;margin-bottom:.6em}
+.ermine-document.ermine-dimmed{opacity:.45}
+.ermine-page-error{color:var(--vscode-editorError-foreground,#c33)}
+`;
+
+export interface PageHandle {
+  /** The page's current model (for tests and for debugging from devtools). */
+  readonly model: () => PageModel;
+  /** How many times the document area was (re)rendered or emptied. */
+  readonly renders: () => number;
+}
+
+/**
+ * Wire the page.  Posts `ready` once the DOM is there (after
+ * DOMContentLoaded, so the writers' own listener, registered by an earlier
+ * script, has already run and `window.ermine_htmlwriter` exists), then folds
+ * every snapshot through `pageStep`, redraws the banner, hint and dimming
+ * from `presentation()`, and re-renders the document ONLY when `pageStep`
+ * says it changed.  Returns a handle for tests.
+ */
+export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
+  const doc = win.document;
+  let page = initialPage();
+  let renders = 0;
+  let token = 0;
+  const post = (m: unknown): void => {
+    try { api.postMessage(m); } catch { /* nothing to tell: the channel IS the log */ }
+  };
+  const log = (message: string): void => post({ type: "log", message });
+
+  let banner: HTMLElement, bannerText: HTMLElement, restart: HTMLButtonElement;
+  let hint: HTMLElement, area: HTMLElement;
+
+  const layout = (): void => {
+    const root = doc.getElementById(PREVIEW_ROOT_ID) ?? doc.body;
+    const style = doc.createElement("style");
+    style.textContent = PAGE_CSS;
+    doc.head.appendChild(style);
+    banner = doc.createElement("div");
+    banner.className = "ermine-banner";
+    banner.setAttribute("role", "status");
+    bannerText = doc.createElement("span");
+    restart = doc.createElement("button");
+    restart.type = "button";
+    restart.textContent = "Restart Language Server";
+    // U4: the one action.  An INTENT: the extension runs its own command.
+    restart.addEventListener("click", () => post({ type: "intent", kind: "restartServer" }));
+    banner.append(bannerText, restart);
+    hint = doc.createElement("div");
+    hint.className = "ermine-hint";
+    area = doc.createElement("div");
+    area.className = "ermine-document";
+    root.append(banner, hint, area);
+  };
+
+  const draw = (): void => {
+    const p = presentation(page.host);
+    banner.hidden = p.banner === null;
+    banner.setAttribute("data-kind", p.banner?.kind ?? "");
+    bannerText.textContent = p.banner?.text ?? "";
+    restart.hidden = p.banner?.action !== "restartServer";
+    hint.hidden = p.hint === null;
+    hint.textContent = p.hint ?? "";
+    area.hidden = !p.showDocument;
+    area.classList.toggle("ermine-dimmed", p.dimmed);
+  };
+
+  const renderDocument = async (): Promise<void> => {
+    const mine = ++token;
+    renders += 1;
+    // A FRESH slot per render, attached now: a slower, older render that
+    // finishes later writes into a slot that is no longer in the page.
+    const slot = doc.createElement("div");
+    area.replaceChildren(slot);
+    const d = page.host.document;
+    if (d === null) return;
+    const client = win.ErmineClient;
+    const fail = (what: string): void => {
+      const box = doc.createElement("div");
+      box.className = "ermine-page-error";
+      box.setAttribute("role", "alert");
+      box.textContent = what;
+      slot.replaceChildren(box);
+      log(what);
+    };
+    if (!client || typeof client.render !== "function") {
+      fail("the client bundle (window.ErmineClient) is not loaded, so the document cannot be drawn");
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = client.parseDocument(d.payload);
+    } catch (e) {
+      fail(`the document could not be read: ${(e as Error)?.message ?? String(e)}`);
+      return;
+    }
+    try {
+      const result = await client.render(slot, parsed, client.defaultRegistry(), {
+        document: doc,
+        fetchData: refuseDeferred,
+        // read at RENDER time, never at script-evaluation time (§2(e))
+        htmlwriter: win.ermine_htmlwriter,
+      });
+      if (mine !== token) return;
+      for (const e of result.errors) log(`widget "${e.widget}" at ${e.path}: ${e.message}`);
+    } catch (e) {
+      if (mine === token) fail(`the document could not be rendered: ${(e as Error)?.message ?? String(e)}`);
+    }
+  };
+
+  const onMessage = (ev: { data: unknown }): void => {
+    const step = pageStep(page, ev.data);
+    if (!step.accepted) return;
+    page = step.page;
+    draw();
+    if (step.rerender) void renderDocument();
+  };
+
+  const start = (): void => {
+    layout();
+    draw();
+    win.addEventListener("message", onMessage);
+    post({ type: "ready" });
+  };
+  if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", start);
+  else start();
+  return { model: () => page, renders: () => renders };
+}
+
+// ------------------------------------------------------------- autostart
+
+declare const acquireVsCodeApi: undefined | (() => VsCodeApi);
+
+/** Runs `boot` in a VS Code webview -- and ONLY there: `acquireVsCodeApi` is
+ *  called ONCE (a second call throws), here and nowhere else. */
+function autostart(): void {
+  if (typeof acquireVsCodeApi !== "function" || typeof window === "undefined") return;
+  boot(window as unknown as BootWindow, acquireVsCodeApi());
+}
+autostart();

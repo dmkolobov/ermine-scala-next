@@ -5205,7 +5205,7 @@ function panelAnswerStep(answers, outcome, current) {
  * §5's Unsaved row: the dirty Ermine documents, by base name, sorted and
  * de-duplicated.  `documents` is what the glue maps `workspace.textDocuments`
  * to -- `{fileName, isDirty, languageId}` each -- so nothing here knows the
- * editor.  W6: S2 wires the producer; nothing produces it today.
+ * editor.  W6: NOT WIRED IN S2 either -- nothing produces it yet; open.
  */
 function unsavedNames(documents) {
   const out = new Set();
@@ -5419,6 +5419,192 @@ function buildPreviewHtml(uris, opts) {
     .join("\n");
 }
 
+// ------------------------------------------ the panel glue's pure half (WP-10, S2)
+//
+// S2 WIRES THE PANEL (`extension.js`: `openPanel`, `postSnapshot`,
+// `onPanelMessage`, `present`), and every decision that glue makes is one of
+// the functions below, so the models in test/preview-core.test.js call exactly
+// what the glue calls (the rule at the head of that file):
+//
+//   * what is posted          `panelSnapshot(view, seq)` -- ONE shape, ever;
+//   * what a panel message is `panelInbound(msg)`;
+//   * where an answer goes    `presentRoute(target)` (U1);
+//   * is the bundle there     `previewBundleDir(root)` + `previewBundleCheck`,
+//                             over an fs LISTING the glue reads, fail-closed;
+//   * what a missing bundle   `buildPanelNoticeHtml(check)`, static and
+//     looks like              script-free.
+
+/** `createWebviewPanel`'s viewType and title.  ONE panel per window. */
+const PANEL_VIEW_TYPE = "ermine.preview";
+const PANEL_TITLE = "Ermine preview";
+
+/**
+ * THE ONE MESSAGE THE EXTENSION POSTS TO THE PANEL: a whole-state envelope
+ *
+ *     { kind: "snapshot", seq, messages: panelMessagesFor(view) }
+ *
+ * never a loose host message.  The S1 finding that makes this binding: the
+ * reducer's `reloading` is lowered ONLY by an answer, so loose posting diverges
+ * from the truth when a reload is announced and abandoned before the first
+ * answer; a snapshot folded from a fresh state cannot (`client/src/host/
+ * page.ts` `receive`).  The discriminant is `kind`, NOT `type`: the envelope
+ * travels in the same channel as, and is told apart from, the nine host
+ * reducer kinds, which is `page.ts`'s committed S1 contract.  `seq` rises by one
+ * per post; the page ignores an envelope whose `seq` is not above the last one
+ * it applied, because `postMessage` ordering is documented neither way.
+ */
+function panelSnapshot(view, seq) {
+  if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 1) {
+    throw new Error("panelSnapshot: seq is a positive integer, not " + JSON.stringify(seq));
+  }
+  return { kind: "snapshot", seq, messages: panelMessagesFor(view) };
+}
+
+/** Panel -> extension.  The panel DECIDES NOTHING: it announces itself, asks
+ *  for the one action U4 allows, or hands the output channel a line. */
+const PANEL_LOG_MAX = 2000;
+
+function panelInbound(msg) {
+  const ignore = (why) => ({ act: "ignore", why });
+  if (!msg || typeof msg !== "object") return ignore("not an object");
+  switch (msg.type) {
+    case "ready":
+      return { act: "ready" };
+    case "intent":
+      // U4, TAKEN: Restart ONLY.  The glue runs the `ermine.restartServer`
+      // COMMAND -- the same door the stuck notification's button and the
+      // palette use -- never `restart()` directly.
+      if (msg.kind === "restartServer") return { act: "restartServer" };
+      return ignore("an intent this extension does not offer: " + printable(msg.kind));
+    case "log": {
+      const text = typeof msg.message === "string" ? msg.message : printable(msg.message);
+      return { act: "log", text: text.length > PANEL_LOG_MAX ? text.slice(0, PANEL_LOG_MAX) + "..." : text };
+    }
+    default:
+      return ignore("an unknown message type " + printable(msg.type));
+  }
+}
+
+/**
+ * U1: where an answer is shown.  `json` is the WP-7/WP-8 tab alone and the tab
+ * path is BYTE-IDENTICAL to 0.1.11's (playtest groups A and B are written
+ * against it); `panel` is the panel alone; `both` is both.  An unknown target
+ * is `panelTarget`'s to refuse; this takes what it answered.
+ */
+function presentRoute(target) {
+  const t = PANEL_TARGETS.indexOf(target) >= 0 ? target : PANEL_TARGET_DEFAULT;
+  return Object.freeze({ tab: t === "json" || t === "both", panel: t === "panel" || t === "both" });
+}
+
+/** The two entries webpack writes (`client/webpack.config.js`). */
+const PREVIEW_BUNDLE_FILES = Object.freeze(["ermine-client.js", "ermine-host.js"]);
+
+/**
+ * U3, TAKEN: the bundle directory is DERIVED from `resolveServer().root` --
+ * the checkout that already holds `bin/ermine-lsp` -- as
+ * `<root>/client/dist/browser`.  `null` when there is no root at all.
+ */
+function previewBundleDir(root) {
+  if (typeof root !== "string" || !root.trim()) return null;
+  return path.join(root, "client", "dist", "browser");
+}
+
+/** `localResourceRoots`, as paths: exactly what the page loads.  The writers'
+ *  `web/` directory is WP-11's slot (`ermine.preview.writersPath`, S4). */
+function previewResourceRoots(bundleDir, writersDir) {
+  const out = [];
+  if (typeof bundleDir === "string" && bundleDir.trim()) out.push(bundleDir);
+  if (typeof writersDir === "string" && writersDir.trim()) out.push(writersDir);
+  return out;
+}
+
+/**
+ * Is the bundle there, from a LISTING of `dir` (`fs.readdirSync`'s names, or
+ * null when the directory could not be read).  FAIL-CLOSED: `ok` only when BOTH
+ * entries are listed.  Four states:
+ *
+ *   ok       both present;
+ *   no-root  no checkout to look in (no workspace folder, no serverPath);
+ *   absent   neither present, or the directory is not there -- W10: THE
+ *            DEFAULT FIRST EXPERIENCE, since `client/dist/` is git-ignored;
+ *   half     one present and not the other -- LOUDER, the same rule as
+ *            `client/test/bundle.test.ts`'s `skipWhenAbsent`: a half-written
+ *            directory is a failure, not an absence.
+ */
+function previewBundleCheck(dir, listing) {
+  const files = PREVIEW_BUNDLE_FILES.slice();
+  if (typeof dir !== "string" || !dir.trim()) {
+    return Object.freeze({
+      ok: false, state: "no-root", dir: null, present: [], missing: files,
+      title: "The preview cannot find its client bundle",
+      message: "there is no workspace folder and ermine.serverPath is not set, so there is no checkout to find " +
+        "client/dist/browser in",
+    });
+  }
+  const names = Array.isArray(listing) ? listing.filter((n) => typeof n === "string") : [];
+  const present = files.filter((f) => names.indexOf(f) >= 0);
+  const missing = files.filter((f) => names.indexOf(f) < 0);
+  if (missing.length === 0) {
+    return Object.freeze({ ok: true, state: "ok", dir, present, missing, title: null, message: null });
+  }
+  const client = path.dirname(path.dirname(dir));
+  if (present.length === 0) {
+    return Object.freeze({
+      ok: false, state: "absent", dir, present, missing,
+      title: "The preview bundle is not built",
+      message: "no " + files.join(" or ") + " in " + dir + ". Run `npm install` once and then `npm run bundle` in " +
+        client + ", then run Ermine: Preview Report... again",
+    });
+  }
+  return Object.freeze({
+    ok: false, state: "half", dir, present, missing,
+    title: "The preview bundle is HALF-BUILT",
+    message: dir + " has " + present.join(", ") + " but not " + missing.join(", ") +
+      ". Delete " + dir + " and run `npm run bundle` in " + client + ", then run Ermine: Preview Report... again",
+  });
+}
+
+/**
+ * The panel's page when there is no page to load: STATIC, SCRIPT-FREE, and
+ * needing no resource root.  This IS the banner -- not a snapshot `error` --
+ * because without `ermine-host.js` nothing in the page could fold a snapshot:
+ * no script runs, so no `ready` is ever posted and the extension never posts
+ * (the ready latch).  The CSP allows the inline `<style>` and nothing else.
+ * `notice` is `previewBundleCheck`'s answer, or any `{title, message}`.
+ */
+function buildPanelNoticeHtml(notice) {
+  const n = notice || {};
+  const title = typeof n.title === "string" && n.title ? n.title : "The preview cannot be shown";
+  const message = typeof n.message === "string" && n.message ? n.message : "";
+  const kind = typeof n.state === "string" && n.state ? n.state : "problem";
+  return [
+    "<!DOCTYPE html>",
+    '<html lang="en">',
+    "<head>",
+    '<meta charset="utf-8">',
+    '<meta http-equiv="Content-Security-Policy" content="' + PANEL_NOTICE_CSP + '">',
+    "<title>Ermine preview</title>",
+    "<style>body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);" +
+      "background:var(--vscode-editor-background);padding:1em}" +
+      ".ermine-banner{border-left:4px solid var(--vscode-editorError-foreground,#c33);padding:.5em 1em}" +
+      "code{font-family:var(--vscode-editor-font-family)}</style>",
+    "</head>",
+    "<body>",
+    '<div id="' + PREVIEW_ROOT_ID + '">',
+    '<div class="ermine-banner" data-state="' + htmlEscape(kind) + '" role="alert">',
+    "<strong>" + htmlEscape(title) + "</strong>",
+    "<p>" + htmlEscape(message) + "</p>",
+    "</div>",
+    "</div>",
+    "</body>",
+    "</html>",
+    "",
+  ].join("\n");
+}
+
+/** The notice page's CSP: the inline style block, nothing else at all. */
+const PANEL_NOTICE_CSP = "default-src 'none'; style-src 'unsafe-inline';";
+
 module.exports = {
   absoluteRoots,
   makePick,
@@ -5606,4 +5792,16 @@ module.exports = {
   PREVIEW_ROOT_ID,
   previewCsp,
   buildPreviewHtml,
+  // WP-10 S2: the glue's decisions, shared with the models.
+  PANEL_VIEW_TYPE,
+  PANEL_TITLE,
+  panelSnapshot,
+  panelInbound,
+  presentRoute,
+  PREVIEW_BUNDLE_FILES,
+  previewBundleDir,
+  previewResourceRoots,
+  previewBundleCheck,
+  buildPanelNoticeHtml,
+  PANEL_NOTICE_CSP,
 };

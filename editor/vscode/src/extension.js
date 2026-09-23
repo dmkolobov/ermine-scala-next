@@ -602,6 +602,35 @@ let coalesceTimer;
 let previewStatus;
 /** @type {vscode.TextDocument | undefined} */
 let previewTab;
+/**
+ * WP-10 S2: THE PANEL, ONE PER WINDOW, exactly as `previewTab` is one tab.
+ * Created ONLY by `openPanel`, reached ONLY from `present` on the reveal
+ * latch -- an explicit command -- never by an automatic re-render.
+ * @type {vscode.WebviewPanel | undefined}
+ */
+let previewPanel;
+/**
+ * THE READY LATCH. `postMessage` to a webview that is not live is DOCUMENTED
+ * to drop (design review F1), and a page that has not loaded has no listener,
+ * so NOTHING is posted until the page's own `ready` -- and nothing is queued
+ * either: the snapshot on `ready` carries the current truth. Lowered whenever
+ * `webview.html` is (re)set and when the panel is disposed.
+ */
+let panelReady = false;
+/** The envelope counter: `core.panelSnapshot`'s `seq`, one per post. */
+let panelSeq = 0;
+/**
+ * `core.panelAnswerStep`'s state -- the last CURRENT answer and the last GOOD
+ * one -- assigned beside every `lastAnswer = ...` (the S1 review's S2 note).
+ * NOT cleared when the server restarts: the tab keeps its last content across
+ * a restart and so does the panel (dimmed while offline); cleared on a pick
+ * change (H2) and at teardown.
+ */
+let panelAnswers = core.initialPanelAnswers();
+/** The bundle check the panel's html was last built from, or null. */
+let panelBundle = null;
+/** `ermine.preview.target` values already refused, so it is said once. */
+const warnedTargets = new Set();
 /** @type {vscode.Disposable[]} */
 let pickWatchers = [];
 let extContext;
@@ -658,6 +687,10 @@ function previewItem() {
 function setPreviewStatus() {
   // Nothing is shown after a teardown, and the item may already be disposed.
   if (previewDisposed) return;
+  // WP-10 S2: every state change the status bar is told about, the panel is
+  // told about too, as a WHOLE snapshot -- stale, stuck, offline, held (both
+  // edges), the answer pair. Guarded by the ready latch inside.
+  postSnapshot("status");
   const view = core.statusBarState({
     stuck: stuckState.stuck,
     message: stuckState.message,
@@ -1690,6 +1723,9 @@ function applyStuck(result, trigger) {
  * "Render anyway" string clears the mark. Escape is never consent.
  */
 function holdRender(trigger) {
+  // WP-10 S2: the panel learns it is held HERE, where the hold is decided,
+  // before any question is (or is not) asked.
+  postSnapshot("held");
   const message = core.heldMessage(wedgeMark, picked, core.restartedByUs(restartState));
   if (!message) return;              // a mark that is not this pick's is never consulted
   log("preview: HELD — " + message);
@@ -2075,8 +2111,15 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
     // refusal overwriting it would disarm the Q11 watcher and lose the
     // render that brings a deleted report back.
     lastAnswer = refusal;
+    // WP-10 S2: the SAME step `panelAnswerStep` makes for every answer. It
+    // has a generation check this arm does not, but the check cannot refuse
+    // here: `mayStillSend` has just compared this render's generation with
+    // the live one and nothing between there and here awaits, so the tab and
+    // the panel agree under `both` (the S1 review's note, closed by argument
+    // and pinned by the glue-pin test).
+    panelAnswers = core.panelAnswerStep(panelAnswers, { answer: refusal }, generation);
     if (mine === generation) renderInFlight = false;
-    await showAnswer(refusal, revealThis);
+    await present(refusal, revealThis);
     setPreviewStatus();
     return;
   }
@@ -2240,6 +2283,7 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
   }
 
   lastAnswer = answer;
+  panelAnswers = core.panelAnswerStep(panelAnswers, { answer }, generation);
   // Review nit 5: the Q11 watcher asks whether the last SERVER answer was a
   // placement 404, and a params refusal is not an answer from any server.
   lastServerAnswer = answer;
@@ -2275,7 +2319,7 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
   // re-arms nothing, because only the rising edge arms.
   applyRestart(core.restartReduce(restartState, core.restartEvents.answer(stuckEvent.stuck, answerApplies, Date.now())));
   applyStuck(core.stuckReduce(stuckState, stuckEvent), core.TRIGGER_ANSWER);
-  await showAnswer(answer, revealThis);
+  await present(answer, revealThis);
   if (core.isOk(answer) && !picked.module) refreshModule();
   // WP-8 S3, D8: keep the GENERATED `<binding>.schema.json` fresh -- and
   // only when the answer says the report compiled (`ok`, or a 400 at
@@ -2331,6 +2375,211 @@ async function showAnswer(answer, reveal) {
   } catch (err) {
     log(`preview: could not show the answer: ${err && err.message ? err.message : err}`);
   }
+}
+
+/**
+ * WP-10 S2: WHERE AN ANSWER GOES, and the one place the reveal latch reaches
+ * the panel. `renderNow` calls this where it called `showAnswer`, with the
+ * same `revealThis` it consumed ONCE at its top; nothing here consumes or
+ * re-arms the latch.
+ *
+ *   json   `showAnswer`, exactly as 0.1.11 called it -- the tab path is
+ *          byte-identical (playtest groups A and B are written against it);
+ *   panel  the panel: CREATED OR REVEALED only when `reveal` is true (an
+ *          explicit command), and then the snapshot -- which goes nowhere
+ *          until the page is ready;
+ *   both   both, the tab first.
+ */
+async function present(answer, reveal) {
+  const route = core.presentRoute(previewTarget());
+  if (route.tab) await showAnswer(answer, reveal);
+  if (route.panel) {
+    if (reveal) openPanel();
+    postSnapshot("answer");
+  }
+}
+
+/** U1: `ermine.preview.target`, refused and named once when it is not one of
+ *  the three values. */
+function previewTarget() {
+  const t = core.panelTarget(config().get("preview.target"));
+  if (t.problem && !warnedTargets.has(t.problem)) {
+    warnedTargets.add(t.problem);
+    log("preview: " + t.problem);
+  }
+  return t.target;
+}
+
+/** The panel's view, built by THE shared builder from the module globals. */
+function panelViewNow() {
+  return core.panelView({
+    answers: panelAnswers,
+    stuckState,
+    mark: wedgeMark,
+    pick: picked,
+    restartedByUs: core.restartedByUs(restartState),
+    pending: renderInFlight || coalesceTimer !== undefined,
+    // W6: NOT WIRED in S2 -- no dirty-document producer yet, and none for a
+    // profile switch until WP-13/14.
+    unsaved: [],
+    fastMode: config().get("fastMode", false) === true,
+    switching: null,
+    // S3's bundle watcher raises it; nothing does yet.
+    reloading: false,
+  });
+}
+
+/**
+ * THE ONLY `postMessage` IN THIS FILE. One envelope, the whole truth, built by
+ * `core.panelSnapshot`; never a loose host message. Nothing is posted to a
+ * panel that is gone or whose page has not said `ready` (H1, H3), and a post
+ * that throws -- a panel disposed under us -- is logged, never thrown.
+ */
+function postSnapshot(why) {
+  const panel = previewPanel;
+  if (!panel || !panelReady) return false;
+  panelSeq += 1;
+  const envelope = core.panelSnapshot(panelViewNow(), panelSeq);
+  try {
+    const sent = panel.webview.postMessage(envelope);
+    if (sent && typeof sent.then === "function") {
+      sent.then(undefined, (err) => log(`preview: the panel did not take a snapshot (${why}): ${err && err.message ? err.message : err}`));
+    }
+    return true;
+  } catch (err) {
+    log(`preview: could not post to the panel (${why}): ${err && err.message ? err.message : err}`);
+    return false;
+  }
+}
+
+/** The bundle, checked from an fs listing by the pure `core.previewBundleCheck`. */
+function checkPreviewBundle() {
+  const server = resolveServer();
+  const dir = core.previewBundleDir(server && server.root);
+  let listing = null;
+  if (dir) {
+    try {
+      listing = fs.readdirSync(dir);
+    } catch (_) {
+      listing = null;
+    }
+  }
+  return core.previewBundleCheck(dir, listing);
+}
+
+function panelOptions(bundle) {
+  return {
+    enableScripts: true,
+    // Scripts on makes forms default ON (`@types/vscode`); none is wanted.
+    enableForms: false,
+    // `enableCommandUris` stays at its default `false`: the panel never runs
+    // a command itself, it posts an intent.
+    localResourceRoots: core.previewResourceRoots(bundle.dir, null).map((p) => vscode.Uri.file(p)),
+  };
+}
+
+/**
+ * (Re)sets the page. The ready latch goes DOWN first: the new page announces
+ * itself and its `ready` brings the snapshot. A missing or half-built bundle
+ * gets the static notice page (`core.buildPanelNoticeHtml`) and one line in
+ * the channel -- no script, so no `ready`, so nothing is ever posted to it.
+ */
+function setPanelHtml(panel, bundle) {
+  panelBundle = bundle;
+  panelReady = false;
+  if (!bundle.ok) {
+    log(`preview: ${bundle.title} -- ${bundle.message}`);
+    panel.webview.html = core.buildPanelNoticeHtml(bundle);
+    return;
+  }
+  const uri = (file) => panel.webview.asWebviewUri(vscode.Uri.file(path.join(bundle.dir, file))).toString();
+  try {
+    panel.webview.html = core.buildPreviewHtml(
+      { cspSource: panel.webview.cspSource, client: uri("ermine-client.js"), host: uri("ermine-host.js") },
+      { stamp: Date.now() }
+    );
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    log(`preview: BUG -- the panel page could not be built: ${message}`);
+    panel.webview.html = core.buildPanelNoticeHtml({ title: "The preview page could not be built", message });
+  }
+}
+
+/**
+ * CREATE OR REVEAL -- the ONE `createWebviewPanel` call site, reached only
+ * from `present` with `reveal` true. A second command reveals the panel that
+ * exists (H9: two commands, one panel). An existing panel showing the
+ * not-built notice re-checks, so building the bundle and re-running the
+ * command is enough.
+ */
+function openPanel() {
+  if (previewPanel) {
+    previewPanel.reveal(undefined, true);
+    if (!panelBundle || !panelBundle.ok) {
+      const bundle = checkPreviewBundle();
+      if (bundle.ok) {
+        previewPanel.webview.options = panelOptions(bundle);
+        setPanelHtml(previewPanel, bundle);
+      }
+    }
+    return;
+  }
+  const bundle = checkPreviewBundle();
+  const panel = vscode.window.createWebviewPanel(
+    core.PANEL_VIEW_TYPE,
+    core.PANEL_TITLE,
+    { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+    Object.assign(panelOptions(bundle), {
+      // U2, TAKEN: an OPTIMISATION for scroll and drilldown only. The
+      // typings contradict themselves on whether a hidden retained webview
+      // receives messages (F1), so the resync on visibility is mandatory
+      // regardless.
+      retainContextWhenHidden: true,
+    })
+  );
+  previewPanel = panel;
+  panelReady = false;
+  const listeners = [];
+  listeners.push(
+    panel.onDidDispose(() => {
+      for (const l of listeners) {
+        try { l.dispose(); } catch (_) { /* the panel is gone either way */ }
+      }
+      if (previewPanel !== panel) return;
+      previewPanel = undefined;
+      panelReady = false;
+      panelBundle = null;
+    }),
+    // U2 / H2: a hidden webview may have dropped every post; becoming
+    // visible resyncs. The event carries only the panel, so read the panel.
+    panel.onDidChangeViewState(() => {
+      if (previewPanel === panel && panel.visible) postSnapshot("visible");
+    }),
+    panel.webview.onDidReceiveMessage((msg) => onPanelMessage(panel, msg))
+  );
+  setPanelHtml(panel, bundle);
+}
+
+/** Panel -> extension, decided by `core.panelInbound`. The panel decides
+ *  nothing; an intent goes through the SAME command the palette runs. */
+function onPanelMessage(panel, msg) {
+  if (previewPanel !== panel) return;
+  const inbound = core.panelInbound(msg);
+  if (inbound.act === "ready") {
+    panelReady = true;
+    postSnapshot("ready");
+    return;
+  }
+  if (inbound.act === "restartServer") {
+    log("preview: the panel asked for a restart");
+    vscode.commands.executeCommand("ermine.restartServer");
+    return;
+  }
+  if (inbound.act === "log") {
+    log("preview panel: " + inbound.text);
+    return;
+  }
+  log("preview: ignored a message from the panel (" + inbound.why + ")");
 }
 
 /**
@@ -2514,6 +2763,20 @@ function disposePreview() {
   orphanNotices = new Set();
   revealNextRender = false;
   inFlightRender = null;
+  // WP-10 S2: the panel goes with the window; its onDidDispose would clear
+  // these too, but teardown is a state and does not wait on an event.
+  if (previewPanel) {
+    const panel = previewPanel;
+    previewPanel = undefined;
+    panelReady = false;
+    try {
+      panel.dispose();
+    } catch (err) {
+      log(`preview: could not close the panel: ${err && err.message ? err.message : err}`);
+    }
+  }
+  panelBundle = null;
+  panelAnswers = core.initialPanelAnswers();
   // WP-22 (c): the grace dies with the window. The reducer is asked rather
   // than the timer merely cleared, so nothing that runs after this can see
   // a state that still thinks a restart is coming. `applyRestart` is NOT
@@ -2643,6 +2906,9 @@ async function pickReport(context) {
   heldRefusedToken = undefined;
   lastAnswer = undefined;
   lastServerAnswer = undefined;
+  // WP-10 S2 / H2: the panel never shows a document for a pick the user has
+  // left; the snapshot `setPreviewStatus` posts below says so.
+  panelAnswers = core.initialPanelAnswers();
   // WP-8: another report, another params file. Nothing has been sent for
   // this pick yet, and nothing we said about the last one's file applies.
   forgetParamsNotices();
