@@ -1,0 +1,7 @@
+{
+  "$schema": "./report.schema.json",
+  "fromDay": "2026-01-05",
+  "toDay": "2026-02-20",
+  "onlyRegion": "north",
+  "orderBy": "ByAmount"
+}

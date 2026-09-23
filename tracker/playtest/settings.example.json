@@ -1,0 +1,77 @@
+// The playtest settings for tracker/WP-7-MANUAL-CHECKLIST.md.
+//
+// COPY THIS to .vscode/settings.json in the worktree you open as the
+// workspace (VS Code parses settings.json as JSONC, so these comments
+// survive the copy).  Every value below is what the checklist's FIRST
+// section needs; the comments name the steps that change one.
+//
+//     cd /home/dmitry/research/ermine/ermine-scala-wt-widget-preview
+//     mkdir -p .vscode && cp tracker/playtest/settings.example.json .vscode/settings.json
+//
+// .vscode/ is NOT gitignored in this repository (checked), so the copy shows
+// up in `git status` as `?? .vscode/`.  That is expected -- delete it when
+// the playtest is over.
+//
+// KEEP THE WINDOW SINGLE-ROOT.  Three of the keys below are window-scoped
+// (timeoutSeconds, restartAfterStuckSeconds, maxHeap).  VS Code applies a
+// window-scoped setting from a folder's .vscode/settings.json only while
+// that folder IS the workspace; the moment you File > Add Folder to
+// Workspace the window becomes multi-root and those three are read from the
+// .code-workspace file or from your user settings instead, not from here
+// (documented VS Code behaviour, NOT observed here).  With the wedge
+// fixtures now inside this worktree, no step needs a second folder.
+{
+  // WHICH SERVER.  Absolute, and to THIS worktree -- without it the
+  // extension takes bin/ermine-lsp from the FIRST workspace folder, which
+  // is the wrong checkout the moment you add a second folder (the checklist
+  // does, in section 2.7 and 2.41).  The repo root is derived from it by
+  // going up two directories, and that root is the server's cwd and the
+  // place its target/ermine-classpath cache is read from.
+  "ermine.serverPath": "/home/dmitry/research/ermine/ermine-scala-wt-widget-preview/bin/ermine-lsp",
+
+  // EXTRA MODULE ROOTS for the render session, resolved against the
+  // workspace folder that owns the picked report.  EMPTY IS CORRECT for
+  // every report in this playtest: Sales, WpSpin, WpChain, WpBlow and WpInt
+  // are all single-segment modules, so the report's own directory plus the
+  // stdlib is enough, and that is what empty means.
+  // The key is here so that section 2.3, 2.41d and 2.52 -- which all ask you
+  // to EDIT it -- have something to edit.  A change discards the render
+  // session, so the next render pays a ~2 s boot.
+  "ermine.preview.roots": [],
+
+  // THE WATCHDOG.  60 is the shipped default and what sections 1.1-1.13 and
+  // 2.33-2.52 want.  SET IT TO 5 for every wedge step (2.7-2.12, 2.15-2.25,
+  // 2.28-2.32c, 2.41-2.41c, 2.52) and back to 60 afterwards -- section 2.12
+  // says so.  MEASURED here at 5: the render is answered 7.2 s after the
+  // request, the extra ~2 s being the render-session boot, which the clock
+  // deliberately does not cover.  0 turns the watchdog OFF and is not used
+  // by any step.  A change reaches a running server at once; no restart.
+  "ermine.preview.timeoutSeconds": 60,
+
+  // THE AUTOMATIC RESTART, OFF.  0 = never, and it is the shipped default.
+  // Section 2.28 is the step that checks this default changes nothing; 2.29
+  // to 2.32c are the only steps that can observe the feature at all, and
+  // each of them tells you to set it to 20.  LEAVE IT AT 0 until you get
+  // there -- turning it on is a checklist step, not part of the setup.
+  "ermine.preview.restartAfterStuckSeconds": 0,
+
+  // THE SERVER'S HEAP, as ERMINE_LSP_XMX.  Empty means the launcher's own
+  // default of 2g, which is what every step but 2.26 runs at.  Section 2.26
+  // sets "256m" to make WpBlow die of a heap exhaustion before the watchdog
+  // can answer; put it back to "" afterwards.  Section 2.4 sets "16m" to see
+  // the 64m floor refused.  CHANGING THIS RESTARTS THE SERVER -- -Xmx is
+  // fixed when the process starts.
+  "ermine.maxHeap": ""
+
+  // NOT SET, and why:
+  //   ermine.warmClasspathOnStart -- defaults to true and does nothing here,
+  //     because target/ermine-classpath already exists in this worktree.
+  //   ermine.fastMode -- skips the typecheck; it changes what the diagnostics
+  //     steps see and no preview step wants it.
+  //   ermine.logFile -- a server-side log.  The Ermine output channel already
+  //     carries every line the checklist quotes; add
+  //     "ermine.logFile": "/tmp/ermine-lsp-playtest.log" only if you want the
+  //     server's own side of a failure as well.
+  //   ermine.trace.server -- "verbose" prints every LSP frame into the same
+  //     channel and buries the lines you are reading.
+}
