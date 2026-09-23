@@ -168,11 +168,15 @@ export interface BootWindow {
  * `fetch` message pair).  The dispatcher turns the rejection into that
  * widget's own error box (`div.ermine-widget-error[data-widget]`, "a deferred
  * relation could not be resolved: ..."), which therefore says why by itself.
- * A document that reaches this was not made by the preview's render request.
+ *
+ * AMENDED BY WP-10 S5 (round 2): F2's premise is FALSE for a report that asks
+ * for `Deferred` itself -- `core/src/test/resources/doc/Sales.e` does, and the
+ * S1 capture of its render holds a token -- so a document made by the
+ * preview's own render request CAN reach this.  The text therefore says what
+ * is true in every case: this preview does not fetch, and the report asked.
  */
 const DEFERRED_REFUSAL =
-  "the preview delivers every relation inline -- inline is the only delivery its render request asks for -- " +
-  "so it cannot fetch the deferred relation";
+  "this preview does not fetch deferred relations, and the report asked for deferred delivery of";
 
 export function refuseDeferred(token: string): Promise<never> {
   return Promise.reject(new Error(

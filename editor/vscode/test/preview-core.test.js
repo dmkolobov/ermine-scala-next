@@ -608,6 +608,35 @@ test("roots: a path the platform refuses is named, not thrown", () => {
   assert.ok(problems[0].indexOf("\u0000") < 0, "no control character reaches the message");
 });
 
+test("roots: all six refusal texts, EXACTLY, with no setting name (WP-11 review N1)", () => {
+  // The WP-11 review's R18b made ONE of these name ermine.preview.writersPath
+  // and every other test stayed green: the older tests above match suffixes.
+  // Each kind is pinned here as the whole string `absoluteRoots` returns when
+  // no setting name is passed, which is how ermine.preview.roots calls it.
+  assert.deepStrictEqual(core.absoluteRoots("reports", "/w").problems,
+    ["ermine.preview.roots is an array of directory paths, not a string"]);
+  assert.deepStrictEqual(core.absoluteRoots(["/a", 7], "/w").problems,
+    ["ermine.preview.roots has an entry that is a number; each root is a directory path"]);
+  assert.deepStrictEqual(core.absoluteRoots(["   "], "/w").problems,
+    ["ermine.preview.roots has an empty entry; each root is a directory path"]);
+  assert.deepStrictEqual(core.absoluteRoots(["bad\u0000name"], "/w").problems,
+    ['ermine.preview.roots entry "bad?name" is not a usable path: it contains a NUL byte']);
+  assert.deepStrictEqual(core.absoluteRoots(["reports"], undefined).problems,
+    ['ermine.preview.roots entry "reports" is relative and there is no workspace folder to resolve it against']);
+  // The sixth, `path` itself throwing, is not reachable on Node 24 with a
+  // string (see the NUL-byte test above), so `path.isAbsolute` is made to
+  // throw for this one call and put back.
+  const real = path.isAbsolute;
+  path.isAbsolute = () => { throw new Error("the platform refused it"); };
+  let thrown;
+  try {
+    thrown = core.absoluteRoots(["/x"], "/w");
+  } finally {
+    path.isAbsolute = real;
+  }
+  assert.deepStrictEqual(thrown, { roots: [], problems: ['ermine.preview.roots entry "/x" is not a usable path: the platform refused it'] });
+});
+
 // --------------------------------------------------- WP-22: the wedge guard
 //
 // The guard's DECISION is tested here; the guard's ARRIVAL is not, and
@@ -10426,6 +10455,9 @@ test("panel (target): U1's contract -- panel | json | both, default panel, anyth
   assert.strictEqual(bad.target, "panel");
   assert.match(bad.problem, /"tab"/);
   assert.match(core.panelTarget(3).problem, /a number/);
+  // WP-10 S5 review nit 4: the article follows the type name.
+  assert.strictEqual(core.panelTarget([]).problem,
+    'ermine.preview.target is one of "panel", "json" or "both", not an array; the preview uses "panel"');
 });
 
 test("panel (kinds): the kind list is the host reducer's nine, in its order", () => {
@@ -12413,7 +12445,9 @@ test("panel S4 (dir): ermine.preview.writersPath goes through THE SAME absoluteR
   assert.strictEqual(rel.dir, null);
   assert.match(rel.problem, /^ermine\.preview\.writersPath entry "web" is relative and there is no workspace folder/);
   assert.match(core.previewWritersDir(7, base, "/r").problem, /ermine\.preview\.writersPath is a directory path, not a number/);
-  assert.match(core.previewWritersDir(["web"], base, "/r").problem, /not a array/);
+  // WP-11 review N3: the article follows the type name ("an array", "an object").
+  assert.strictEqual(core.previewWritersDir(["web"], base, "/r").problem, "ermine.preview.writersPath is a directory path, not an array");
+  assert.strictEqual(core.previewWritersDir({}, base, "/r").problem, "ermine.preview.writersPath is a directory path, not an object");
   // the roots' own wording is unchanged by the new parameter
   assert.match(core.absoluteRoots([" "], "/w").problems[0], /^ermine\.preview\.roots has an empty entry/);
 });

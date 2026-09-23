@@ -3,6 +3,13 @@
 **Prerequisite for `tracker/WP-7-MANUAL-CHECKLIST.md`.** Follow it top to
 bottom once; then open that file and start at step A1.
 
+**AMENDED 2026-09-23 BY WP-10 STAGE 5 (at HEAD `4846cd27`, the stage itself
+uncommitted):** the extension is now **0.1.14** and packaged as
+`editor/vscode/ermine-lang-0.1.14.vsix` (§3); the panel needs the client bundle
+and the writers checkout (§1); two settings are new (§6); §2's check was re-run
+(§2); §13 says what the panel does and does not do yet. The checklist has a
+Group E for the panel.
+
 **What was verified while writing this, and what was not.** Everything with a
 measured number below was run on this machine on 2026-09-23 against a real
 `bin/ermine-lsp` from this worktree, with no editor in the loop. **Nothing in
@@ -16,13 +23,15 @@ does is marked *(unobserved)*.
 
 | | |
 |---|---|
-| The worktree | `/home/dmitry/research/ermine/ermine-scala-wt-widget-preview`, branch `widget-preview`, HEAD `606d99b0` |
+| The worktree | `/home/dmitry/research/ermine/ermine-scala-wt-widget-preview`, branch `widget-preview`, HEAD `4846cd27` (WP-11) plus WP-10 stage 5's uncommitted docs, one test and a one-line wording fix. (Written first at `606d99b0`.) |
 | VS Code | 1.138.0 at `/snap/bin/code` (the extension needs ≥ 1.75) |
 | A JDK 17+ | present: `~/.local/ermine-toolchain/jdk-21.0.12.1+1`. `bin/ermine-lsp` finds it by itself when `JAVA_HOME` is unset |
 | sbt | **not needed.** `target/ermine-classpath` already exists here and is newer than `build.sbt`, so the launcher does not shell out to sbt |
 | A compiled `core` | **already compiled, and it matches HEAD.** Checked: the newest class under `core/target/scala-3.3.8/classes` is 2026-09-21 03:10:38 and the last commit touching `core/src/main/scala` is 2026-09-21 02:44:40; `parsers`, `machines`, `scalaz-compat` and `f0` are all likewise newer than their last source commit; `core/src/main/resources` is byte-identical to the copied resources. **No `sbt core/compile` is needed and none was run** |
 | Node and npm | node v24.20.0, npm 11.19.0. Needed only to package the `.vsix` |
 | `editor/vscode/node_modules` | already there (3.4 MB, gitignored). If it goes missing, copy it from `/home/dmitry/research/ermine/ermine-scala/editor/vscode/node_modules` |
+| **The client bundle** (for the panel, Group E) | `cd client && npm ci && npm run bundle` — **already done in this worktree**: MEASURED 2026-09-23 by `ls -l client/dist/browser`, `ermine-client.js` **327,103 B** and `ermine-host.js` **25,390 B** (plus their two `.map` files), both newer than the last change under `client/src`. **Rebuilt by S5's round 2 (13:49)** after one string in `client/src/host/page.ts` changed (the deferred-relation refusal, Q24): `ermine-host.js` is now **25,639 B**, `ermine-client.js` unchanged at 327,103 B (MEASURED, `ls -l`). **A `client/` change needs only this rebuild, not a new `.vsix`**: the `.vsix` carries `editor/vscode` and nothing of `client/`, and the panel loads the bundle from the checkout (an open panel reloads by itself, E7). It is gitignored and NOT in the `.vsix`: the panel loads it from the checkout that holds `bin/ermine-lsp`. **Without it the panel shows the static page *"The preview bundle is not built"*** with the folder it looked in and the two commands to run — the designed first experience, not a failure (checklist E8). `npm ci` needs the network once, or an npm cache |
+| **The writers checkout** (for the panel's `table`, charts and `styleBox`) | `/home/dmitry/research/ermine/ermine-writers`, a sibling of this worktree. The panel's default for `ermine.preview.writersPath` (empty) is `<checkout>/../ermine-writers/writers/html/src/main/resources/web`, which from here resolves to `/home/dmitry/research/ermine/ermine-writers/writers/html/src/main/resources/web` and holds `htmlwriter.js` (MEASURED by the WP-11 review). **Without it** the panel still loads, the scorecard, headline and crosstab still draw, every legacy widget is an error box, and a banner (plus one channel line) says *"the legacy writers are not loaded: no htmlwriter.js in …"* — with the document dimmed under it (checklist E14). The folder is not watched: fix the path and run **Ermine: Preview Report...** again |
 
 ## 2. Verify the server, before any editor is involved
 
@@ -52,17 +61,39 @@ OK: Ermine session ready: 129 modules in 12.0s
 all, means the classpath cache points somewhere stale — delete
 `target/ermine-classpath` and run it again, which will shell out to sbt once.
 
+**Re-run by WP-10 stage 5 on 2026-09-23 at 13:36 (-0600), HEAD `4846cd27`
+plus the stage's uncommitted edits (none of them touches the server): exit code
+0**, last lines:
+
+```
+initialize answered in 0.27s
+  [  0.28s] Ermine: loading the session (129 modules, ~13s)…
+  [ 13.76s] Ermine session ready: 129 modules in 13.5s
+shutdown clean, exit code 0
+OK: Ermine session ready: 129 modules in 13.5s
+```
+
+(`scripts/liveness.sh` read `sbt=0 … lsp=0 … ermine-jvm=0` before and after.)
+
 If this fails, nothing in the checklist can work and there is no point opening
 VS Code.
 
 ## 3. Package the extension
 
-**Already done: `editor/vscode/ermine-lang-0.1.9.vsix`, 739,081 bytes, 328
-files** (built 2026-09-23 from this HEAD). Use it as it is. To rebuild:
+**Already done: `editor/vscode/ermine-lang-0.1.14.vsix`, 852,896 bytes, 334
+files** (`ls -l`; `unzip -l` lists 334 entries, 3,077,281 bytes unpacked; repackaged
+by S5's round 2 at 13:49 after a one-line `preview-core.js` wording fix),
+built 2026-09-23 by WP-10 stage 5 from HEAD `4846cd27` plus that stage's
+edits. `unzip -p … extension/package.json` says `"version": "0.1.14"`, and its
+`src/extension.js`, `src/preview-core.js`, `test/preview-core.test.js` and
+readme are byte-identical to the working tree's (MEASURED with `sha256sum`).
+**Use it as it is.** The old `ermine-lang-0.1.9.vsix` (739,081 bytes, 328
+files, the first playtest prep) is still beside it; do not install that one.
+To rebuild:
 
 ```sh
 cd /home/dmitry/research/ermine/ermine-scala-wt-widget-preview/editor/vscode
-npx @vscode/vsce package          # -> ermine-lang-0.1.9.vsix
+npx @vscode/vsce package          # -> ermine-lang-<version in package.json>.vsix
 ```
 
 It needed **no changes** to `package.json`, `.vscodeignore` or the README. It
@@ -72,9 +103,14 @@ prints three warnings, all harmless and all expected:
 - `../../LICENSE not found` — `package.json` says `SEE LICENSE IN
   ../../LICENSE`; the repository's licence files are `LICENSE.md` and
   `COPYING`. The `.vsix` therefore ships with no licence file in it.
-- a bundling suggestion — the package ships `src/`, `syntaxes/`, the
-  hand-listed `node_modules` subset from `.vscodeignore`, and `test/` (447 KB
-  of unit tests, which `.vscodeignore` does not exclude).
+- a bundling suggestion (at 0.1.14: *"This extension consists of 334 files,
+  out of which 169 are JavaScript files"*) — the package ships `src/`,
+  `syntaxes/`, the hand-listed `node_modules` subset from `.vscodeignore`, and
+  `test/` (about 740 KB at 0.1.14, 447 KB at 0.1.9, which `.vscodeignore` does
+  not exclude).
+
+The 0.1.14 run printed exactly these three warnings again and exited 0
+(WP-10 stage 5, 2026-09-23).
 
 The package does **not** contain the repository's `client/` webview bundle, and
 it should not: the extension is not self-contained and needs this checkout for
@@ -90,9 +126,10 @@ cd /home/dmitry/research/ermine/ermine-scala-wt-widget-preview/client && npm ins
 
 Without it the panel shows *"The preview bundle is not built"* with the path
 (that is the designed first experience, not a failure). **The checklist's
-groups A and B are written against the JSON tab**: set `ermine.preview.target`
-to `json` (the 0.1.11 tab, unchanged) or `both` before running them as written.
-There is no panel group in the checklist yet (WP-10 S5).
+groups A, B and C are written against the JSON tab**, so
+`tracker/playtest/settings.example.json` (§6) sets `ermine.preview.target` to
+`json` (the 0.1.11 tab, unchanged). **Group E is the panel** and begins by
+setting it back to `panel`.
 
 **Since 0.1.13 (WP-10 S3) an open panel follows the bundle by itself**: building
 it while the *not built* page is up should turn the panel into the page with no
@@ -126,7 +163,7 @@ actually draw is what E9/E10 record: **nobody has run this yet.**
 **One line, and it is yours to run — this was not run for you:**
 
 ```sh
-code --install-extension /home/dmitry/research/ermine/ermine-scala-wt-widget-preview/editor/vscode/ermine-lang-0.1.9.vsix
+code --install-extension /home/dmitry/research/ermine/ermine-scala-wt-widget-preview/editor/vscode/ermine-lang-0.1.14.vsix
 ```
 
 Then **reload the window**. Upgrading later is the same command with the new
@@ -196,6 +233,8 @@ short:
 | `ermine.preview.timeoutSeconds` | `60` | the shipped default; the wedge steps tell you to set `5` and step C6 tells you to set it back |
 | `ermine.preview.restartAfterStuckSeconds` | `0` | `0` = never, and it is the default. **Turning it on is a checklist step**, not part of the setup — the steps that observe the feature each tell you to set `20` |
 | `ermine.maxHeap` | `""` | empty means the launcher's own `2g`. One step sets `256m` (to make `WpBlow` die of the heap) and one sets `16m` (to see the 64 MB floor refused). Changing it **restarts the server**, because `-Xmx` is fixed at process start |
+| `ermine.preview.target` | **`json`** | the shipped default is `panel` (since 0.1.12), but Groups A–C are written against the JSON tab, which `json` keeps byte-for-byte as 0.1.11 had it. **Group E sets it to `panel`**; E13 tries `both` and a bad value. Window scope |
+| `ermine.preview.writersPath` | not set (= `""`) | empty means the sibling writers checkout (§1), which exists here. Only E14 sets it, to an empty folder, and puts it back. Window scope |
 
 `.vscode/` is **not** gitignored in this repository, so `.vscode/settings.json`
 shows up in `git status` as untracked. Delete it when you are done.
@@ -214,7 +253,7 @@ picked.
 
 ## 8. Confirm you are testing what you think you are
 
-**The extension is 0.1.9**: Extensions view > Ermine > the version under the
+**The extension is 0.1.14**: Extensions view > Ermine > the version under the
 name, or
 
 ```sh
@@ -280,13 +319,12 @@ the same.) The other three fixtures offer exactly one binding each.
 The two hand-written params files the checklist asks for are in
 `tracker/playtest/params/`, with a README saying where to copy each.
 
-**What `git status` will show, and what is fine.** This setup adds
-`tracker/PLAYTEST-SETUP.md` and `tracker/playtest/` as untracked, and nothing
-here has been committed. `editor/vscode/ermine-lang-0.1.9.vsix` is gitignored
-(`editor/vscode/.gitignore`) and does not appear. So the checklist's
-end-of-session rule reads: `git status --short` should show `.ermine/`,
-`.vscode/`, `tracker/PLAYTEST-SETUP.md` and `tracker/playtest/` — and nothing
-else.
+**What `git status` will show, and what is fine.** This setup's own files
+(`tracker/PLAYTEST-SETUP.md`, `tracker/playtest/`) were committed in
+`c99a8b58`. Both `.vsix` files are gitignored (`editor/vscode/.gitignore`,
+`*.vsix`) and do not appear, and neither does `client/dist/`. So the
+checklist's end-of-session rule reads: `git status --short` should show
+`.ermine/` and `.vscode/` — and nothing else.
 
 ## 11. Resetting between scenarios
 
@@ -333,8 +371,31 @@ At the end of a session `liveness.sh` should read `sbt=0 … lsp=0 … ermine-jv
 
 ## 13. What is NOT expected to work yet
 
-- **There is no webview panel.** One untitled JSON tab and one status bar item
-  is the whole preview. The panel is WP-10.
+- **The webview panel exists (0.1.12-0.1.14) and has never been seen by
+  anyone.** Built: one panel per window, beside the editor, opened only by the
+  two commands; the whole state re-sent on `ready` and when it becomes visible;
+  the static *not built* / *HALF-BUILT* page; the bundle watcher (one reload
+  per build); the stuck / held / offline / error / re-rendering banners; the
+  Restart button; the legacy writers and their missing-writers banner; the
+  refused deferred relation. Group E is where each of those is first looked at.
+- **Not built, so not a failure when you do not see it:** the **`unsaved`**
+  hint (the kind exists in the page; nothing in the extension produces it);
+  **`switching`** (no producer until profiles exist, WP-13/14); a **Render
+  anyway** button in the panel (the held question stays a notification, by
+  decision U4); **`treeMap`** (always an error box, by design).
+- **Built, but with a known gap:** a **server restart does NOT re-check the
+  writers** (only an explicit command on a page built without them, a bundle
+  rebuild, or a new panel does); the **writers folder is not watched** at all;
+  **deleting the bundle FOLDER** (as opposed to its files) is predicted by the
+  typings NOT to be noticed until it is re-created, and nobody has observed
+  either way (checklist E8); a **style-box click** does nothing, by design
+  (the page may not open a connection), and **no report in this repository
+  draws a style box**, so E11 has no fixture.
+- **`Sales.report` in the panel is mostly error boxes** (its `heading` and
+  `text` widgets have no renderer, and one of its relations is `Deferred` by
+  construction, which the panel refuses by name). It is a test of names and
+  parameters, not a widget document; checklist E2 uses
+  `core/src/test/resources/modules/Doc/SalesReport.e` instead.
 - **The render tab is untitled and always dirty.** Closing it offers to save a
   throwaway render: **Don't Save**. There is no way round it for an untitled
   document.

@@ -1,18 +1,17 @@
-# Playtest results: the Ermine preview in VS Code (0.1.10)
+# Playtest results: the Ermine preview in VS Code (0.1.14)
 
 **Who fills this in:** you, while you run `tracker/WP-7-MANUAL-CHECKLIST.md`.
 **Who reads it:** the orchestrator. I read this file and act on it — every
 FAIL becomes a ticket or a fix, every SKIP becomes a decision about whether
-we still need that step, and the three open questions at the top of the guide
-(Q21, the restart default, the U7 `.gitignore` reading) get asked again with
-your answers in hand.
+we still need that step, and the five open questions at the top of the guide
+(Q21, the restart default, the U7 `.gitignore` reading, the command's title,
+the panel's U1-U7) get asked again with your answers in hand.
 
-**Date run:** ______  **Extension:** 0.1.10 — **THE `.vsix` IS NOT BUILT YET.**
-`editor/vscode/ermine-lang-0.1.9.vsix` is the packaged 0.1.9 and does NOT
-contain WP-8 S4 (B22-B27). Build 0.1.10 first — `cd editor/vscode && npx
-@vscode/vsce package` — or run the extension from source
-(`code --extensionDevelopmentPath=editor/vscode`). The S4 implementer could
-not package it: that stage was run with no `npm install`.
+**Date run:** ______  **Extension:** 0.1.14 —
+`editor/vscode/ermine-lang-0.1.14.vsix`, packaged 2026-09-23 by WP-10 stage 5
+(size and file count in `tracker/PLAYTEST-SETUP.md` §3). **Not the
+`ermine-lang-0.1.9.vsix` beside it**, which has no params command, no panel and
+no writers. Or run from source (`code --extensionDevelopmentPath=editor/vscode`).
 **VS Code:** ______  **OS:** ______  **Window:** single-root (if you ever added a
 second folder, say so — three settings stop working and several Group C rows
 become meaningless)
@@ -42,7 +41,7 @@ become meaningless)
 | **A5** | [1.5] | Edit the report's file and save -> generation 2, in place |  |  |  |
 | **A6** | [new] | Invalidation of an IMPORTING module (stdlib `Json.e`) |  |  |  |
 | **A7** | [1.8] | Render Report to JSON re-renders into the same tab |  |  |  |
-| **A8** | [1.7] | There is no panel |  |  |  |
+| **A8** | [1.7] | Under `target: json`: the JSON tab and NO panel |  |  |  |
 | **A9** | [2.1] | Closing the tab does not resurrect it |  |  |  |
 | **A10** | [2.2] | The pick is remembered per workspace |  |  |  |
 | **A11** | [new] | The status bar's states and tooltips |  |  |  |
@@ -123,6 +122,25 @@ become meaningless)
 | **C31** | [2.32c] | OPTIONAL restart during the first-run classpath warm-up |  |  |  |
 | **C32** | [2.12, 2.25] | Put the settings back |  |  |  |
 
+## Group E — the panel (set `ermine.preview.target` to `panel` first)
+
+| Step | Was | What it checks | Result | What you saw | Notes |
+|---|---|---|---|---|---|
+| **E1** | [new] | The panel opens BESIDE; the cursor stays in your editor; no JSON tab |  |  |  |
+| **E2** | [new] | `Doc.SalesReport` draws (the scorecard); no banner, no `preview panel: widget` line |  |  |  |
+| **E3** | [new] | Console: no CSP refusal except at most `tmbllsprite.png`; list any other URL verbatim |  |  |  |
+| **E4** | [new] | `400: the key "fromDy" is not allowed here ($.params.fromDy)`; document dimmed |  |  |  |
+| **E5** | [new] | Hidden panel + wedge -> shown: the stuck banner. **F1: (a) posts reach a hidden webview / (b) they do not / (c) not determined** |  |  |  |
+| **E6** | [new] | The panel's Restart button: restart, then HELD, no re-render; `WpInt.e` put back |  |  |  |
+| **E7** | [new] | `bundle:watch` + a `scorecard.ts` edit: ONE reload line, the title changes, no restart |  |  |  |
+| **E8** | [new] | Files deleted -> *not built* page; rebuilt -> back. **Folder deleted: (i) page flipped? (ii) rebuild noticed?** |  |  |  |
+| **E9** | [new] | `table` draws through the writers' `runTabular`, three rows, no error box |  |  |  |
+| **E10** | [new] | The `pieChart` (`Share of sales`) and the bar chart draw |  |  |  |
+| **E11** | [new] | OPTIONAL, NO FIXTURE: a style-box click is inert (SKIP unless you wrote a report) |  |  |  |
+| **E12** | [new] | Two commands, one panel; close it and re-run: a new one, never two |  |  |  |
+| **E13** | [new] | `target: json` = tab only; `both` = tab then panel; `"tab"` refused once by name |  |  |  |
+| **E14** | [new] | `writersPath` -> an empty folder: the writers banner, dimmed, legacy error boxes; `""` and a command put it right |  |  |  |
+
 ## Group D — not observable by any step (record as SKIP)
 
 These are here so that nobody later mistakes silence for evidence. `SKIP` is
@@ -165,13 +183,16 @@ Ermine session ready: 129 modules in 11.8s
 
 ---
 
-## The three open questions, with room for your answer
+## The five open questions, with room for your answer
 
 | | Question | Your answer |
 |---|---|---|
 | **Q21** | The first pick of `Sales.report` answers a 500 with today's dates (A4, B1, B4). Options recorded neutrally in §13 of `tracker/JSON-WIDGET-PLAYGROUND.md`: **(a)** keep today's dates and accept the 500 until you edit them; **(b)** give `Sales.e`'s relations a header hint so an empty result encodes — which raises the wider question of whether ANY report returning no rows hitting this 500 is an engine limitation deserving its own ticket; **(c)** change the date rule itself |  |
 | **Restart default** | `ermine.preview.restartAfterStuckSeconds` ships at `0` = never, only because this file had never been run. After C21–C28, should the default move, and to what? |  |
 | **U7 `.gitignore`** | S3 writes only the self-contained `.ermine/preview/.gitignore` and this repository carries `**/.ermine/preview/**/*.schema.json` in its own root `.gitignore` (B16). The alternative — the extension OFFERING to add the line to YOUR root `.gitignore` — is named and not built. Which do you want? |  |
+| **Q22 the command's title** | **Ermine: Render Report to JSON** renders into the PANEL under the default target (E12, E13). Keep the title, or rename it (e.g. **Ermine: Render Report**)? A rename changes the palette entry every checklist step names, so it was not done (the WP-10 S2 review's N4) |  |
+| **Q23 the panel's U1-U7** | Seven design choices for the panel were TAKEN BY THE ORCHESTRATOR on the WP-10 design review's recommendations; **you were not asked any of them**: U1 a `target` setting, default `panel`, tab kept; U2 `retainContextWhenHidden` on plus a resync; U3 the bundle from the checkout, the writers from a setting with a sibling default; U4 Restart as the panel's only button; U5 no `blob:`; U6 deferred relations refused, not fetched (**taken on a premise that proved FALSE: see Q24**); U7 the extension's tests gate every commit. Which, if any, do you want changed? (E5 and E8 are the steps whose results bear most on U2 and U3) |  |
+| **Q24 deferred relations and WP-10's done-when fixture** | U6 (refuse deferred relations, no fetch) was taken on the design review's F2, "the preview never mints a deferred token". **That is false**: `core/src/test/resources/doc/Sales.e:115` asks for `Deferred` itself, and the S1 capture of its render holds a token, so in the panel that table is an error box (E2). WP-10's done-when says "`Sales` renders inline", which Sales as written cannot meet. Options: **(a)** keep the refusal and make an inline fixture the done-when (`Doc/SalesReport.e`, E2/E9/E10); **(b)** a preview-side override that forces inline delivery, so Sales's deferred table arrives inline; **(c)** build the fetch message pair U6 deferred (the panel asks the extension, the extension asks the server); **(d)**, with any of these, register `heading`/`text` renderers so Sales's other two boxes draw. Which? |  |
 
 ## Anything else
 

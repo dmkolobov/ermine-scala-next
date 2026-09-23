@@ -451,9 +451,9 @@ plus three of the writers' style sheets.
 
 | | |
 |---|---|
-| **where** | `ermine.preview.writersPath` (new, window scope): the writers' `web/` folder. A relative path is resolved against the first workspace folder, exactly as `ermine.preview.roots` is. **Empty = `<checkout>/../ermine-writers/writers/html/src/main/resources/web`**, `<checkout>` being the folder `bin/ermine-lsp` lives in — the sibling layout of the machine this was built on, **not a guarantee** |
+| **where** | `ermine.preview.writersPath` (new, window scope): the writers' `web/` folder. A relative path is resolved against the first workspace folder, exactly as `ermine.preview.roots` is. **Empty = `<checkout>/../ermine-writers/writers/html/src/main/resources/web`**, `<checkout>` being the checkout that holds `bin/ermine-lsp` (the parent of its `bin/`) — the sibling layout of the machine this was built on, **not a guarantee** |
 | **what loads** | `htmlwriter.js` (5.2 MB; jQuery and Highcharts are bundled inside it, so there is no other script), then `ermine-client.js`, then `ermine-host.js` — plain `<script src>`, in that order, because the writers assign `window.ermine_htmlwriter` in a `DOMContentLoaded` listener that must be registered before the page's own. Style sheets: `common.css`, `htmlwriter.css`, `htmlwriter_classic.css`. **Not** `htmlwriter_dark.css` (it re-adds DataTables' sort arrows through a sprite image the webview cannot load, so every arrow would be an empty box) and **not** `javafxwriter.css` (JavaFX). The writers folder becomes the page's second `localResourceRoots` entry; the CSP is unchanged from 0.1.11 (`'unsafe-eval'` is there for this bundle, a webpack-4 `eval` build) |
-| **writers missing** | no `htmlwriter.js` in that folder (or no folder): the page loads **without** the writers, `scorecard` / `headline` / `crosstab` draw, each legacy widget draws its own error box naming `window.ermine_htmlwriter`, and the panel's banner says *"the legacy writers are not loaded: no htmlwriter.js in …"* with the path and the setting to fix — plus **one** line in the Ermine output channel per page built. The banner is the panel's ordinary error banner, so **the document below it is dimmed** while the writers are missing. A failed render keeps its own error banner and the writers sentence is appended to it |
+| **writers missing** | no `htmlwriter.js` in that folder (or no folder): the page loads **without** the writers, `scorecard` / `headline` / `crosstab` draw, each legacy widget draws its own error box naming what it needed (the tables `window.ermine_htmlwriter`, the charts the writers' missing `run…` function), and the panel's banner says *"the legacy writers are not loaded: no htmlwriter.js in …"* with the path and the setting to fix — plus **one** line in the Ermine output channel per page built. The banner is the panel's ordinary error banner, so **the document below it is dimmed** while the writers are missing. A failed render keeps its own error banner and the writers sentence is appended to it. **The same banner also hides *re-rendering***: an error outranks it, so while the writers are missing (or half there) a render in flight shows nothing until its answer lands, and in the **half** state below the whole document is dimmed too, although its widgets draw |
 | **half** | `htmlwriter.js` present but a style sheet missing: the script and the sheets that exist load, and the banner names what is missing (the widgets draw unstyled) |
 | **fixing it** | the writers folder is **not watched**. After setting the path (or checking the writers out), run **Ermine: Preview Report...** again: a panel built without the whole writers re-checks on an explicit command and reloads only if the answer changed (a machine without the writers is not reloaded on every command). A bundle rebuild (`bundle:watch`) re-checks too, and so does a new panel. Restarting the language server does not |
 | **expected console noise** | in the webview's developer tools (**Developer: Open Webview Developer Tools**): `common.css` references `url("/CIQDotNet/images/TopMenuBar/tmbllsprite.png?urwvid=1")` (on `.headerlabel`), a root-relative sprite that is neither under the webview's resource root nor allowed by `img-src`, so the webview refuses it — a blocked-image line is **expected, not a broken panel**. The other sprite the design review named, `url("/content/themes/base/images/mainSprite.png")`, is in `htmlwriter_dark.css`, which the panel does not load, so it should not appear |
@@ -465,12 +465,23 @@ loads under the CSP, whether `table` draws through `runTabular`, whether a
 What the tests hold is what the extension decides: the page it builds, the
 roots it grants, the banner it sends and when it re-checks.
 
+**Amended by WP-10 stage 5 (still 0.1.14):** a `writersPath` that is an array
+now reads *"is a directory path, not an array"* (it said *"not a array"*), and
+the six `ermine.preview.roots` refusal texts are pinned word for word by a test;
+`ermine.preview.target` refuses an array as *"not an array"* too; and the panel's
+refusal of a deferred relation no longer claims every relation is inline (see
+**0.1.12**'s *deferred relations* row). That last one is a `client/` change, so
+it takes effect after `npm run bundle` in `client/`; the `.vsix` does not carry
+the bundle.
+The playtest steps for all of the above are Group E of
+`tracker/WP-7-MANUAL-CHECKLIST.md`.
+
 ### 0.1.13
 
 **The panel follows the bundle** (WP-10 stage 3). While a panel is open the
 extension watches the bundle folder — `<checkout>/client/dist/browser`, the
-same folder the page loads from (`<checkout>` is where `bin/ermine-lsp` lives:
-`ermine.serverPath`'s, or the first workspace folder) — for `*.js` files, so
+same folder the page loads from (`<checkout>` is the checkout that holds `bin/ermine-lsp`:
+the parent of `ermine.serverPath`'s `bin/`, or the first workspace folder) — for `*.js` files, so
 the `.js.map` files never fire it.
 
 | | |
@@ -480,7 +491,7 @@ the `.js.map` files never fire it.
 | **the bundle vanishes** | deleting the bundle FILES (`rm client/dist/browser/*.js`) turns the panel into the static *not built* page; one entry without the other is the *HALF-BUILT* page; a build that brings both back turns it into the page again — no command needed. **Deleting the FOLDER (`rm -rf client/dist/browser`) probably does NOT flip it**: the typings say a watched path that is deleted makes the watcher *"suspend and not report any events until the path is created again"*, and that a folder delete may be folded into one event for the folder, which `*.js` does not match. The page then stays up (its scripts are already loaded) until the next build, or the next **Ermine: Preview Report...**, which re-checks. Each change writes one reload line in the Ermine output channel, and a not-whole bundle a second, naming what is missing |
 | **a render in flight** | an answer that arrives while the page is being replaced is not lost: the new page's `ready` carries it |
 | **only with a panel** | no panel, no watcher: it is created with the panel and disposed with it (and when the window closes) |
-| **deferred relations** | still refused by name: the page's `fetchData` rejects with *"the preview delivers every relation inline -- inline is the only delivery its render request asks for -- so it cannot fetch the deferred relation "…""*, which the widget's own error box shows, and nothing is fetched. The page's CSP has no `connect-src`, and a test pins that it never will |
+| **deferred relations** | still refused by name: the page's `fetchData` rejects with *"this preview does not fetch deferred relations, and the report asked for deferred delivery of "…" (the panel has no network access: its CSP has no connect-src)"* (reworded by WP-10 stage 5: the 0.1.13 text claimed every relation is delivered inline, which is false for `Sales.e`), which the widget's own error box shows, and nothing is fetched. The page's CSP has no `connect-src`, and a test pins that it never will |
 
 **`npm run bundle:watch`** in `client/` runs `tsc --watch` and `webpack --watch`
 together; with it running, a save of `client/src/widgets/scorecard.ts` becomes a
@@ -503,9 +514,9 @@ panel per window; closing it is fine — the next command makes a new one.
 |---|---|
 | **`ermine.preview.target`** | `panel` (default), `json` or `both`. `json` is the 0.1.11 tab, **byte for byte** — the tab code did not change. An unknown value is refused once in the output channel and the default used |
 | **what the panel shows** | the last good document, with a banner above it: *stuck* (with the one button, **Restart Language Server**, which runs the same command as the palette), *held*, *offline* (the document kept, dimmed), an *error* (`status: message (path)`, the last good document dimmed below it; in fast mode it adds that type errors are not shown in Problems), *re-rendering*, or *Pick a report* when nothing has rendered yet. Picking another report withdraws the old document at once |
-| **the bundle** | loaded from `<checkout>/client/dist/browser/` — `<checkout>` is the folder `bin/ermine-lsp` lives in (`ermine.serverPath`'s, or the first workspace folder). **Not built** and **HALF-BUILT** are a static page that says so, with the path, plus one line in the Ermine output channel. There is no watcher yet (stage 3, **0.1.13**): after building, run the command again |
+| **the bundle** | loaded from `<checkout>/client/dist/browser/` — `<checkout>` is the checkout that holds `bin/ermine-lsp` (the parent of `ermine.serverPath`'s `bin/`, or the first workspace folder). **Not built** and **HALF-BUILT** are a static page that says so, with the path, plus one line in the Ermine output channel. There is no watcher yet (stage 3, **0.1.13**): after building, run the command again |
 | **the page's own log** | anything the page wants to say — a widget that failed, a document it could not read — arrives in the Ermine output channel as `preview panel: ...` |
-| **deferred relations** | the preview never produces one (every relation is inline), so the page's `fetchData` refuses by name; a widget that asked would show its own error box |
+| **deferred relations** | the preview never produces one (every relation is inline), so the page's `fetchData` refuses by name; a widget that asked would show its own error box. **Amended by WP-10 stage 5: that first clause is FALSE** for a report that asks for `Deferred` itself (`core/src/test/resources/doc/Sales.e` does; its render holds a token), and such a table IS the error box. The refusal now reads *"this preview does not fetch deferred relations, and the report asked for deferred delivery of "…""*; what to do about it is an open question (Q24 in the tracker) |
 | **not yet** | the `unsaved` hint (no producer), the bundle watcher, the writers' legacy renderers (`table`, charts: WP-11), a Render anyway button in the panel (the held question stays a notification) |
 
 **The protocol, extension -> panel, is ONE message:**

@@ -1,14 +1,17 @@
-# Playtest guide: the Ermine preview in VS Code (extension 0.1.10)
+# Playtest guide: the Ermine preview in VS Code (extension 0.1.14)
 
 **NOTHING IN THIS FILE HAS EVER BEEN RUN BY ANYONE.** Not one step. Nothing in
 this repository runs VS Code; every expectation below is READ from
-`editor/vscode/src/extension.js` and `editor/vscode/src/preview-core.js`, from
-the server's own source, or MEASURED over the wire against a real
+`editor/vscode/src/extension.js` and `editor/vscode/src/preview-core.js` (and,
+for Group E, from `client/src/`), from the server's own source, or MEASURED over the wire against a real
 `bin/ermine-lsp` with no editor in the loop. Where a line was measured it says
 so; where it was only read, that is what "NEVER RUN" on the step means. **Every
 step is marked NEVER RUN, and none of the marks is a formality.**
 
-**THIS FILE WAS REWRITTEN IN PLACE, 2026-09-23, as a runnable guide.** The old
+**AMENDED 2026-09-23 BY WP-10 STAGE 5: Group E (the webview panel, E1–E14) is new, and
+Groups A–D are now run with `ermine.preview.target` set to `json`** (the panel is the
+default since 0.1.12; the setup's settings file sets `json` for A–D and Group E sets it
+back). **THIS FILE WAS REWRITTEN IN PLACE, 2026-09-23, as a runnable guide.** The old
 checklist's step numbers are kept as aliases in square brackets after each new
 id — `B12 [2.38]` — so every reference elsewhere in the tracker (`§2.35`,
 `§2.41b`, `§2.45`, `§2.52b`, …) still resolves by searching this file. The old
@@ -19,15 +22,16 @@ cannot tell you" paragraphs as Group D. Nothing was dropped.
 
 | | |
 |---|---|
-| Setup | **`tracker/PLAYTEST-SETUP.md` is the prerequisite and is written separately. Do all of it before step A1.** It produced: the packaged extension `editor/vscode/ermine-lang-0.1.9.vsix` (gitignored) — **which is 0.1.9 and does NOT contain WP-8 S4 (B22-B27): package 0.1.10 yourself (`cd editor/vscode && npx @vscode/vsce package`) or run from source, because the S4 stage was run with no `npm install`**; eight fixtures, `tracker/playtest/fixtures/WpSpin.e`, `WpChain.e`, `WpBlow.e`, `WpInt.e`, and S4's `WpEnum.e`, `WpMaybe.e`, `WpJson.e`, `WpUnit.e`; two ready-made params files, `tracker/playtest/params/Sales.report.params.json` and `WpSpin.report.params.json`, with `tracker/playtest/params/README.md` saying where to copy each; `tracker/playtest/settings.example.json`; and a server verifier, `tracker/playtest/check-server.py` |
+| Setup | **`tracker/PLAYTEST-SETUP.md` is the prerequisite and is written separately. Do all of it before step A1.** It produced: the packaged extension **`editor/vscode/ermine-lang-0.1.14.vsix`** (gitignored; the old `ermine-lang-0.1.9.vsix` is still beside it — do NOT install that one: it has no params command, no panel and no writers); the client bundle in `client/dist/browser/` (the panel loads it from the checkout, it is not in the `.vsix`); the writers checkout beside this worktree (the panel's legacy widgets); eight fixtures, `tracker/playtest/fixtures/WpSpin.e`, `WpChain.e`, `WpBlow.e`, `WpInt.e`, and S4's `WpEnum.e`, `WpMaybe.e`, `WpJson.e`, `WpUnit.e`; two ready-made params files, `tracker/playtest/params/Sales.report.params.json` and `WpSpin.report.params.json`, with `tracker/playtest/params/README.md` saying where to copy each; `tracker/playtest/settings.example.json`; and a server verifier, `tracker/playtest/check-server.py` |
+| THE PANEL IS THE DEFAULT, BUT NOT FOR A–D | since 0.1.12 `ermine.preview.target` defaults to `panel`, and **Groups A, B and C are written against the JSON tab**. `tracker/playtest/settings.example.json` therefore sets `"ermine.preview.target": "json"` (the tab path is byte-for-byte 0.1.11's). **Group E is the panel, and its first line of setup sets `panel` back.** If you skip straight to Group E, set `panel` first |
 | `Sales` is NOT a fixture | **`Sales.report` is the repository's own `core/src/test/resources/doc/Sales.e`** and stays there — other suites read it. Any step that edits it says how to undo it (`git checkout -- core/src/test/resources/doc/Sales.e`) |
 | ONE workspace folder, and keep it that way | **No step needs a second folder.** All four fixtures live inside this worktree. **Do NOT use File > Add Folder to Workspace:** a second folder makes the window MULTI-ROOT, and VS Code then stops reading the three WINDOW-scoped settings — `ermine.preview.timeoutSeconds`, `ermine.preview.restartAfterStuckSeconds` and `ermine.maxHeap` — from `.vscode/settings.json` (documented; unobserved here). Every "add `/tmp/wp7` to the workspace" instruction in the old checklist is obsolete and has been removed. The one step that still wants a report outside every folder (**B18**) copies a fixture to `/tmp/wp7` and deliberately does NOT add it |
 | Where you record | **`tracker/PLAYTEST-RESULTS.md`**, in this directory. One row per step id, pre-filled in the order below. Fill in PASS / FAIL / SKIP, one line of what you saw, and anything else in the notes column. **For any FAIL, paste the Ermine output channel's text into a fenced block under the table.** The orchestrator reads that file and acts on it |
 | The channel | **Ermine: Show Language Server Output** opens the output channel named **Ermine**. Both the extension's own lines (`preview: …`, `restart: …`, `settings: …`, `client N: …`) and the server's log go to that one channel. Every quoted line below appears there |
-| The render tab is UNTITLED and DIRTY | every update is a `WorkspaceEdit`, so the tab always has unsaved changes and closing it offers to save a throwaway render: **Don't Save**. There is no way round it for an untitled document, and it is one of the motivations for WP-10's panel (*external*, not exercised here) |
+| The render tab is UNTITLED and DIRTY | every update is a `WorkspaceEdit`, so the tab always has unsaved changes and closing it offers to save a throwaway render: **Don't Save**. There is no way round it for an untitled document, and it is one of the motivations for WP-10's panel, which Group E exercises (under `target: json`, the setting Groups A–C run with, the tab is what you get) |
 | 0.1.9 WRITES TO YOUR DISK | it is the first version that does. On the first pick of a report with no params file it creates three files under `.ermine/preview/`. Group B is where you look at them |
 | 0.1.10 CAN REPLACE ONE | and **only** through the command **Ermine: Write Params Skeleton**, and **only** after a modal you answer. Nothing automatic overwrites a params file, and nothing in the extension ever deletes one. B22-B26 are those steps |
-| Undo | any step that edits a checked-in file says so and says how to undo it. **At the end (A14) `git status --short` should show `.ermine/`, `.vscode/`, `tracker/PLAYTEST-SETUP.md` and `tracker/playtest/` and nothing else** — `.vscode/` is not gitignored here, and the setup agent's files are untracked until the orchestrator commits them. `core/src/test/resources/doc/Sales.e` must be clean |
+| Undo | any step that edits a checked-in file says so and says how to undo it. **At the end (A14) `git status --short` should show `.ermine/` and `.vscode/` and nothing else** — `.vscode/` is not gitignored here; the setup's own files (`tracker/PLAYTEST-SETUP.md`, `tracker/playtest/`) have been committed since (`c99a8b58`). `core/src/test/resources/doc/Sales.e` must be clean, and so must every file Group E edits (`tracker/playtest/fixtures/WpInt.e`, `client/src/widgets/scorecard.ts`) |
 
 **The fixtures, one line each.** `WpSpin.e` diverges — it is the wedge, and
 **it offers TWO report-typed bindings in the picker, `spin : Int -> Node` AND
@@ -39,22 +43,30 @@ renders a small document from an `Int` parameter and is the control: **if
 `WpInt` does not render, the trouble is the server or the roots, not the
 fixture.** **The other three fixtures offer exactly one binding each.**
 
-The six commands, exactly as `editor/vscode/package.json` spells them:
+The seven commands, exactly as `editor/vscode/package.json` spells them:
 **Ermine: Preview Report...** (`ermine.previewReport`), **Ermine: Render Report
-to JSON** (`ermine.renderReport`), **Ermine: Restart Language Server**
-(`ermine.restartServer`), **Ermine: Show Language Server Output**
-(`ermine.showOutput`), **Ermine: Reload Modules** (`ermine.reloadModules`),
-**Ermine: Toggle Fast Mode** (`ermine.toggleFastMode`).
+to JSON** (`ermine.renderReport` — under the default `panel` target it renders
+into the PANEL, not JSON; the title is open decision 4), **Ermine: Restart
+Language Server** (`ermine.restartServer`), **Ermine: Show Language Server
+Output** (`ermine.showOutput`), **Ermine: Reload Modules**
+(`ermine.reloadModules`), **Ermine: Toggle Fast Mode** (`ermine.toggleFastMode`),
+**Ermine: Write Params Skeleton** (`ermine.writeParamsSkeleton`, B22–B26).
 
 The settings this guide touches, with their defaults:
 `ermine.preview.timeoutSeconds` = `60`,
 `ermine.preview.restartAfterStuckSeconds` = `0`,
 `ermine.preview.roots` = `[]`,
 `ermine.preview.maxDocumentBytes` = `16777216`,
-`ermine.maxHeap` = `""`, `ermine.serverPath` = `""`.
+`ermine.maxHeap` = `""`, `ermine.serverPath` = `""`,
+`ermine.preview.target` = `panel` (**the settings file sets `json` for A–D**),
+`ermine.preview.writersPath` = `""` (the sibling `ermine-writers` checkout).
 `tracker/playtest/settings.example.json` has each of them written out.
 
-### Three open decisions that change what you should see
+### Open decisions that change what you should see
+
+Five, and **none of them has been put to you yet**. The first three are the
+ones this file has always carried; 4 and 5 are new with the panel (WP-10).
+`tracker/PLAYTEST-RESULTS.md` has a row for each, for your answer.
 
 1. **Q21 (§13 of `tracker/JSON-WIDGET-PLAYGROUND.md`) is OPEN and it is YOURS.**
    The first pick of `Sales.report` writes a skeleton with **today's** dates,
@@ -65,8 +77,8 @@ The settings this guide touches, with their defaults:
    step that shows it. Steps **A4**, **B1** and **B4** all point here.
 2. **The automatic restart's DEFAULT is the orchestrator's, and you have not
    been asked.** `ermine.preview.restartAfterStuckSeconds` ships at `0` = never,
-   *because this file had never been run*. **C22 [2.28]** checks that the
-   default changes nothing; **C23–C28** are the only things that can observe the
+   *because this file had never been run*. **C21 [2.28]** checks that the
+   default changes nothing; **C22–C28** are the only things that can observe the
    feature at all. After you have run them you will be asked whether the default
    should move.
 3. **The U7 `.gitignore` reading is flagged for you.** U7 asked for the
@@ -77,17 +89,39 @@ The settings this guide touches, with their defaults:
    alternative (a notification offering to edit YOUR root `.gitignore`) was
    named and not built. **B16 [2.46]** is where you see the consequence and can
    say whether you want the other reading.
+4. **The command title "Ermine: Render Report to JSON" is now misleading, and
+   was deliberately NOT renamed** (the WP-10 S2 review's N4; Q22 in §13 of the
+   tracker). Under the default `panel` target it renders into the panel. A
+   rename (e.g. "Ermine: Render Report") would change the palette entry every
+   step in this file names, so it waits for you. **E12** and **E13** are where
+   you use it both ways.
+5. **The panel's seven design choices (the WP-10 design review's U1–U7) were
+   TAKEN BY THE ORCHESTRATOR on the review's recommendations. You have NOT been
+   asked any of them** (Q23 in §13 of the tracker). In what you will see: U1 the
+   `ermine.preview.target` setting with `panel` as the default and the JSON tab
+   kept (**E13**); U2 `retainContextWhenHidden` on AND a resync on visibility
+   (**E5**); U3 the bundle found from the checkout and the writers from a new
+   setting with a sibling default (**E8**, **E14**); U4 a Restart button and no
+   other button in the panel (**E6**); U5 no `blob:` in the page's policy
+   (**E3**); U6 deferred relations refused rather than fetched (**E2**'s
+   `Sales` note — **U6 was taken on the design review's F2, "the preview never
+   mints a deferred token", which `Sales.e` disproves: Q24**); U7 the extension's unit tests gate every commit (no step).
+   Any of them is yours to overturn.
 
 ---
 
 ## If you only have 30 minutes
 
-Ten steps, in this order. They are the cheapest ten that between them say
-whether the loop works at all, whether the disk-writing half works, and
-whether the wedge guard closes the loop it was built for. Everything else is
-detail on top of these.
+Fourteen steps, in this order. The first ten are the cheapest ten that
+between them say whether the loop works at all, whether the disk-writing half
+works, and whether the wedge guard closes the loop it was built for; the last
+four are the panel steps that settle the most (whether a document draws at
+all, the F1 contradiction in the typings, the folder-delete question, and the
+legacy writers). Everything else is detail on top of these. **Steps 1–10 run
+with `ermine.preview.target` at `json` (the settings file's value); set it to
+`panel` before step 11.**
 
-| | Step | Why it is in the ten |
+| | Step | Why it is in the fourteen |
 |---|---|---|
 | 1 | **A1** | the extension activates and the session boots at all |
 | 2 | **A3** | the server answers `ermine/preview/reports` and the binding pick is populated **by type** |
@@ -99,8 +133,14 @@ detail on top of these.
 | 8 | **B11** | invalid JSON refuses in the tab instead of rendering yesterday's parameters |
 | 9 | **C1** | the watchdog fires, the banner appears, the status bar turns orange |
 | 10 | **C5** + **C6** | after a restart the wedged report is **held** and you are asked — Q17's loop, closed or not |
+| 11 | **E1** + **E2** | E1 opens the panel on `Doc/SalesReport.e` (E2's setup); E2: a document draws in the panel at all — the bundle loads in a real webview (nobody has seen it) |
+| 12 | **E5** + **E6** | the stuck banner survives a hidden panel — and, instrumented, which of the two contradicting `@types/vscode` sentences is true (F1). **E6 is not optional here**: E5 leaves the server wedged, `WpInt.e` edited and the timeout at 5 s, and E6's Undo puts all three back |
+| — | *re-pick* | **Ermine: Preview Report...** → `core/src/test/resources/modules/Doc/SalesReport.e` → `report` again, and check the scorecard is back: E8 and E9 both need E2's document |
+| 13 | **E8** | deleting the bundle files flips the page; deleting the folder is the open question the typings predict |
+| 14 | **E9** | `table` through the writers' `runTabular` — WP-11's done-when, human since WP-9 |
 
-If any of 1–4 fails, stop and report: nothing after it means anything.
+If any of 1–4 fails, stop and report: nothing after it means anything. If
+**E1** or **E2** fails, E5, E6, E8 and E9 mean nothing either.
 
 ---
 
@@ -170,12 +210,13 @@ rest of WP-7's done-when. A15–A18 are an optional settings-validation tail.
 - **Failure:** a new tab each time; or no reveal.
 - **Bears on:** WP-7 done-when.
 
-### A8 [1.7] — There is no panel — **NEVER RUN**
+### A8 [1.7] — Under `target: json`, the JSON tab and NO panel — **NEVER RUN**
 
-- **Do:** look for a webview.
-- **Expect:** one editor tab and one status bar item, nothing else. **That is WP-10, and it is not built.**
-- **Failure:** anything webview-shaped exists.
-- **Bears on:** WP-10 (not built).
+- **Setup:** `"ermine.preview.target": "json"`, as the setup's settings file has it. **Under the DEFAULT (`panel`) there IS a panel since 0.1.12** — that is Group E, not this step.
+- **Do:** look for a webview after A4–A7's renders.
+- **Expect:** one untitled JSON editor tab and one status bar item, and **no `Ermine preview` webview tab**: `json` routes to the tab alone (`editor/vscode/src/preview-core.js:5523`). The tab path is the 0.1.11 code, unchanged.
+- **Failure:** a webview tab titled `Ermine preview` under `json` (then the setting did not take: check `.vscode/settings.json`, and that the window is single-root).
+- **Bears on:** U1; E13 checks the same routing from the panel's side.
 
 ### A9 [2.1] — Closing the tab does not resurrect it — **NEVER RUN**
 
@@ -217,7 +258,7 @@ rest of WP-7's done-when. A15–A18 are an optional settings-validation tail.
 ### A14 [1.6] — Put the files back — **NEVER RUN**
 
 - **Do:** `git checkout -- core/src/test/resources/doc/Sales.e` and, if you ran A6, `git checkout -- core/src/main/resources/modules/Json.e`. Then `git status --short`.
-- **Expect:** **`.ermine/`, `.vscode/`, `tracker/PLAYTEST-SETUP.md` and `tracker/playtest/` and nothing else** — `.vscode/` is NOT gitignored in this worktree, and the setup agent's own files are untracked until the orchestrator commits the prep. **`core/src/test/resources/doc/Sales.e` must be clean:** other suites read it.
+- **Expect:** **`.ermine/` and `.vscode/` and nothing else** — `.vscode/` is NOT gitignored in this worktree; the setup's own files were committed in `c99a8b58`. **`core/src/test/resources/doc/Sales.e` must be clean:** other suites read it.
 - **Bears on:** hygiene.
 
 ### A15 [2.3] — `ermine.preview.roots` validation (OPTIONAL) — **NEVER RUN**
@@ -787,6 +828,190 @@ step:
 
 ---
 
+## Group E — the panel
+
+**What this group is for.** Since 0.1.12 the default `ermine.preview.target`
+is `panel`: the two preview commands draw the report in a webview beside the
+editor instead of the JSON tab, and since 0.1.14 that page also loads the
+legacy writers for `table`, the charts and `styleBox`. **Everything in this
+group is READ from the code and tested in node and JSDOM only. No browser and
+no VS Code webview has shown any of it to anyone.** E3, E5, E8, E9, E10 and
+E11 are the only way anyone will learn the answers they record.
+
+**Standing setup for E1–E14** (it differs from Groups A–D):
+
+- **`"ermine.preview.target": "panel"`** in `.vscode/settings.json` — change
+  the `json` line the setup file wrote for Groups A–D, or delete it (`panel`
+  is the default). E13 is the one step that sets it to something else.
+- **The client bundle is built**: `client/dist/browser/ermine-client.js` and
+  `ermine-host.js` exist (`tracker/PLAYTEST-SETUP.md` §1; MEASURED present in
+  this worktree on 2026-09-23). Without them every step here shows the
+  not-built page instead, which is E8's subject and nothing else's.
+- **The writers are at the default**: `ermine.preview.writersPath` unset or
+  `""`, which from this worktree resolves to
+  `/home/dmitry/research/ermine/ermine-writers/writers/html/src/main/resources/web`
+  (MEASURED by the WP-11 review). E14 is the one step that changes it.
+- `ermine.preview.timeoutSeconds` at `60`, except in E5–E6, which set `5`.
+- **The report for E1–E3 and E9–E10 is `core/src/test/resources/modules/Doc/SalesReport.e`**,
+  binding `report` (`report : Node`, `SalesReport.e:40`). It is the
+  repository's own end-to-end fixture: one three-row relation drawn as a
+  `scorecard`, a `table`, an `axisChart` and a `pieChart`, at
+  `$.children[0]` to `$.children[3]`. It takes no parameters. **Nobody has
+  rendered it through the preview** (INFERRED from its type and imports that
+  it renders; the server-side placement puts its root at
+  `core/src/test/resources/modules`, INFERRED from its header). If it does not
+  render at all, record that in E2 and use `Sales.report` for the banner steps
+  (E4 does anyway).
+- **Open the webview's developer tools once** for E3 and keep them for E5:
+  **Developer: Open Webview Developer Tools** while the panel is focused.
+
+**What the panel is NOT, so you do not mark it down for it:** it has no
+*Render anyway* button (the held question stays the notification C6
+describes), no *unsaved* hint (nothing produces one yet), and never shows
+*switching …* (profiles do not exist). `treeMap` is always an error box.
+
+### E1 [new] — The panel opens BESIDE, and the cursor stays where it was — **NEVER RUN**
+
+- **Setup:** the standing setup; no panel open; an `.e` file open in the only editor group.
+- **Do:** click into that editor and start typing. WITHOUT stopping, run **Ermine: Preview Report...** → `core/src/test/resources/modules/Doc/SalesReport.e` → `report`.
+- **Expect:** a webview tab titled **`Ermine preview`** (`editor/vscode/src/preview-core.js:5466`, `const PANEL_TITLE = "Ermine preview";`) opens in a NEW column beside yours, and **the cursor stays in your editor**: the panel is created with `{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }` (`editor/vscode/src/extension.js:2588`). **No untitled JSON tab opens**: under `panel` the tab path is skipped (`if (route.tab) await showAnswer(answer, reveal);`, `editor/vscode/src/extension.js:2414`). The channel logs the usual `preview: render Doc.SalesReport.report (generation N; the report was picked; …)` and, once per panel, ``preview: watching ${dir} for bundle rebuilds`` (`editor/vscode/src/extension.js:2658`) with `dir` = this worktree's `client/dist/browser`. **No `preview: the legacy writers …` line**: a present writers folder is silent (`writersLine` answers null, `editor/vscode/src/preview-core.js:5778`).
+- **Failure:** the cursor lands in the panel; a JSON tab opens as well; the panel opens in your own column, replacing the file. **Paste into `tracker/PLAYTEST-RESULTS.md`:** the Ermine channel from the command on, and the value of `ermine.preview.target` you had.
+- **Bears on:** WP-10 S2 (the reveal latch, `preserveFocus`); U1.
+
+### E2 [new] — A document renders in the panel — **NEVER RUN**
+
+- **Setup:** E1's panel.
+- **Do:** look at it.
+- **Expect:** a **scorecard titled `Sales by region`** (`core/src/test/resources/modules/Doc/SalesReport.e:43`) with three cards, EMEA, APAC and AMER (`SalesReport.e:35` and the two lines after it); below it the table, the bar chart and the pie, which E9 and E10 judge. **No banner at all**: the banner is hidden whenever there is nothing to say (`banner.hidden = p.banner === null;`, `client/src/host/page.ts:253`), and the document is not dimmed. The scorecard needs no writers, so it is the part of this step that does not depend on WP-11. **The channel carries no `preview panel: widget …` line**: the page logs one per widget that failed (`client/src/host/page.ts:300`).
+- **`Sales.report` in the panel looks broken, and it is not this step's defect** (INFERRED from its MEASURED answer, `scratch-widget-preview/wp10-s1/captures.json` `ok-sales`, and the dispatcher): its document holds two INLINE tables, which go through the writers' `runTabular` like E9's (whether their props are what the table widget accepts is not checked here), and a `heading` and a `text` widget, which no renderer is registered for, so each is a box headed ``widget "${widget}" could not be rendered`` (`client/src/dispatcher.ts:74`) saying `no renderer is registered under that name` (`client/src/dispatcher.ts:219`); and its third relation is `Deferred` by construction (`core/src/test/resources/doc/Sales.e:115`, "always deferred, whatever the request asks for"), so that `table` is a box saying ``a deferred relation could not be resolved: …`` (`client/src/dispatcher.ts:236`) with the page's own refusal, `this preview does not fetch deferred relations, and the report asked for deferred delivery of` (`client/src/host/page.ts:179`), the token, and `(the panel has no network access: its CSP has no connect-src)` (`client/src/host/page.ts:183`). Nothing is fetched. **This contradicts the design review's F2** ("the preview never mints a deferred token"), on which U6 was taken: see Q24 in §13 of the tracker, which is yours.
+- **Failure:** a blank panel; the `Pick a report: Ermine: Preview Report...` banner (`client/src/host/index.ts:299`) after the render line has appeared; or a red box saying `the client bundle (window.ErmineClient) is not loaded, so the document cannot be drawn` (`client/src/host/page.ts:282`). **Paste:** the Ermine channel, and the developer tools' console (E3's window) as text.
+- **Bears on:** WP-10 done-when "`Sales` renders inline" — **NOT met by `Sales` as written**: one of its relations is deferred by the report itself and is refused, and two of its widgets have no renderer (see above and the F2 finding in §5 of the tracker). Which fixture the done-when should name is the user's call (**Q24**); `Doc/SalesReport.e` rendering here is the evidence for option (a). Also WP-9's bundle in a real webview.
+
+### E3 [new] — The console shows no CSP violation but the one named sprite — **NEVER RUN**
+
+- **Setup:** E2's document on screen; the webview developer tools open on the **Console** tab. If the console has a context drop-down, the panel's page is the inner frame, not `top` (*external*, unverified).
+- **Do:** reload nothing. Read the console from the top.
+- **Expect:** **no line that says a resource or script was refused by the Content Security Policy**, with at most ONE exception: a blocked image for `/CIQDotNet/images/TopMenuBar/tmbllsprite.png?urwvid=1`, which is `url("/CIQDotNet/images/TopMenuBar/tmbllsprite.png?urwvid=1")` at `ermine-writers/writers/html/src/main/resources/web/common.css:125` (MEASURED by the WP-11 review: the only `url()` in the three style sheets the page loads). A browser fetches a CSS background image only for an element the rule matches (`.headerlabel`), so **zero lines is also a PASS** (INFERRED). The policy the page carries, from `editor/vscode/src/preview-core.js:5368` and `:5369`: `default-src 'none'; script-src <cspSource> 'unsafe-eval'; style-src <cspSource> 'unsafe-inline'; img-src <cspSource> data:;`. **`mainSprite.png` must NOT appear**: it is in `htmlwriter_dark.css`, which is not in the list the page links (`editor/vscode/src/preview-core.js:5680`).
+- **UNKNOWN, AND SAID SO:** the 5.2 MB `htmlwriter.js` may inject styles or images at run time. Nobody has read it for that (the design review measured `url(` only in the CSS files). **Any OTHER blocked resource: copy its URL verbatim into the notes.** It is a finding, not automatically a FAIL; the orchestrator decides.
+- **Failure:** a refused SCRIPT (then the writers or the client did not load — look for the `eval` wording, which would mean `'unsafe-eval'` is not honoured); a refused style sheet; any `connect-src` refusal before you have clicked anything (E11's click is the one expected source of one). **Paste:** every console line that mentions `Content Security Policy` or `Refused`, verbatim.
+- **Bears on:** WP-11 done-when; W7; Q19 (`'unsafe-eval'`); U5 (`blob:` absent).
+
+### E4 [new] — An error banner: status, message, path, and the document dimmed below — **NEVER RUN**
+
+- **Setup:** `Sales.report` picked in the panel with a params file that renders: `mkdir -p .ermine/preview/Sales && cp tracker/playtest/params/Sales.report.params.json .ermine/preview/Sales/report.params.json`, then **Ermine: Preview Report...** → `core/src/test/resources/doc/Sales.e` → `report`. Its document is E2's broken-looking one; that is fine, this step judges the banner.
+- **Do:** open `.ermine/preview/Sales/report.params.json`, add the line `"fromDy": "2026-01-05",` and **save**.
+- **Expect:** the SAME panel, not revealed (a save never reveals), gains a banner reading exactly **`400: the key "fromDy" is not allowed here ($.params.fromDy)`**. The answer is MEASURED (`scratch-widget-preview/wp10-s1/captures.json` `error-400-sales-key`: `status 400`, that `message`, `path "$.params.fromDy"`) and the banner text is the reducer's ``const head = e.status === 0 ? e.message : `${e.status}: ${e.message}`;`` then ``return e.path === null ? head : `${head} (${e.path})`;`` (`client/src/host/index.ts:305` and `:306`). **The last document stays, DIMMED** — faded to `.ermine-document.ermine-dimmed{opacity:.45}` (`client/src/host/page.ts:197`) because an error is on the list of states that dim (`(state.offline || state.switching !== null || state.error !== null || state.held !== null)`, `client/src/host/index.ts:277`). With **Ermine: Toggle Fast Mode** on, the message also ends ` -- fast mode is on: type errors are not shown in Problems` (`editor/vscode/src/preview-core.js:5168`).
+- **Then:** remove the line and save. The banner goes and the document is no longer dimmed.
+- **Failure:** no banner; a banner without the `($.params.fromDy)` part; the document gone instead of dimmed; or the panel jumping in front of your editor. **Paste:** the Ermine channel and the banner text as you see it.
+- **Bears on:** WP-10 done-when ("a 400 from a bad param shows `path` in the banner"); §5's Errors row; W5.
+
+### E5 [new] — Hide the panel, wedge the server, show it: the stuck banner is there — **NEVER RUN**
+
+**This is the design review's F1 experiment.** The vendored `@types/vscode`
+(1.134.0) says both of these, and they contradict each other:
+`editor/vscode/node_modules/@types/vscode/index.d.ts:10018` and `:10019` —
+*"Messages can only be posted to live webviews (i.e. either visible webviews
+or hidden webviews that set `retainContextWhenHidden`)."* — and
+`editor/vscode/node_modules/@types/vscode/index.d.ts:10076` and `:10077` —
+*"You cannot send messages to a hidden webview, even with
+`retainContextWhenHidden` enabled."* The panel sets `retainContextWhenHidden:
+true` (`editor/vscode/src/extension.js:2594`) AND re-sends the whole state when
+it becomes visible (`if (previewPanel === panel && panel.visible)
+postSnapshot("visible");`, `editor/vscode/src/extension.js:2615`), so **the
+banner should be there whichever sentence is true**. The optional
+instrumentation below is what tells the two apart.
+
+- **Setup:** `"ermine.preview.timeoutSeconds": 5`. Pick **`tracker/playtest/fixtures/WpInt.e`** → `report` (the control) so the panel shows its document — an `int` box, since no renderer is registered under `int`; that is fine. **Drag the panel into the same editor group as `WpInt.e`**, so that clicking the file's tab hides it. *Optional, and the only way to settle F1:* in the webview developer tools' console, in the panel's frame, run `addEventListener("message", e => console.log("ermine snapshot", e.data && e.data.seq, new Date().toISOString()))` (whether a listener added from the console survives while the webview is hidden is itself unverified).
+- **Do:** (1) click `WpInt.e`'s tab so the panel is hidden, and note the time. (2) In `WpInt.e` change `report n = rawWidget "int" n` to `report n = report n` and **save** — a save re-renders WITHOUT revealing, and that report now never finishes. (3) Wait until the stuck ERROR notification appears (5–7 s at a 5 s timeout; MEASURED 7.18 s for `WpSpin` including a session boot, which this re-render does not pay; C1 quotes the text), then ten seconds more. (4) Click the panel's tab.
+- **Expect:** the panel shows **the stuck banner**: the server's own sentence, `evaluation did not finish after 5s; the preview is stuck. It recovers by itself if that evaluation ever finishes; if it does not, restart the language server -- run "Ermine: Restart Language Server" (ermine.restartServer)` (`core/src/main/scala/com/clarifi/reporting/ermine/lsp/Preview.scala:2177` to `:2179`), with a **`Restart Language Server`** button beside it (`client/src/host/page.ts:240`; shown only for this banner, `client/src/host/page.ts:256`). `stuck` outranks the watchdog's own 500 answer (`"offline", "stuck", "held", "reloading", "switching", "error", "stale", "initial",`, `client/src/host/index.ts:225`), and that 500 is why the document below is DIMMED.
+- **Record F1 in the notes, one of three:** (a) the console has an `ermine snapshot` line timestamped BEFORE step 4 → posts DO reach a hidden retained webview, `index.d.ts:10018-10019` is the true sentence; (b) the only new lines arrive at step 4 → `index.d.ts:10076-10077` is; (c) you did not instrument, or saw nothing either way → **not determined** (still a PASS on the banner).
+- **Leave it wedged for E6.** Do not undo the edit yet.
+- **Failure:** the panel still shows the WpInt document with no banner, or with an older banner, after step 4 — then the visible resync did not happen. **Paste:** the Ermine channel from the save on, and every `ermine snapshot` console line.
+- **Bears on:** F1, U2 (`retainContextWhenHidden`), H7 (a hidden panel drops posts), W1.
+
+### E6 [new] — The panel's Restart button restarts and does NOT re-render the held pick — **NEVER RUN**
+
+- **Setup:** E5's end state: the stuck banner with its button, `WpInt.e` still edited to diverge.
+- **Do:** press **Restart Language Server** in the PANEL (not in the notification).
+- **Expect:** the channel logs `preview: the panel asked for a restart` (`editor/vscode/src/extension.js:2729`) and the extension runs the same command the palette runs (`vscode.commands.executeCommand("ermine.restartServer");`, `editor/vscode/src/extension.js:2730`). The banner may flash `server stopped -- last document kept` (`client/src/host/index.ts:285`) while the client is down, and then settles on **the held banner**, the document dimmed: `Ermine: WpInt.report wedged the preview: the watchdog fired and the server did not come back. Nothing has changed since, so it was NOT re-rendered automatically.` (`editor/vscode/src/preview-core.js:1049` for the middle, `:1061` for the end). **No `preview: render …` line follows the restart**; the channel has `preview: not re-rendering — …` (`editor/vscode/src/extension.js:1729`) and `preview: HELD — …` (`editor/vscode/src/extension.js:1750`), and the **Render anyway / Not now** notification appears (`editor/vscode/src/extension.js:1789`, C6). Answer **Not now**.
+- **Undo:** in the EDITOR, put `report n = rawWidget "int" n` back and **save**. An `.e` save clears the hold (C10), so the report renders again and the banner goes. `git diff --stat tracker/playtest/fixtures/WpInt.e` must print nothing. `ermine.preview.timeoutSeconds` back to `60`.
+- **Failure:** a render right after the restart (Q17's loop, through the panel's door); or the button doing nothing (no `the panel asked for a restart` line). **Paste:** the Ermine channel from the button press to the held banner.
+- **Bears on:** U4 (Restart only); WP-22; Q17.
+
+### E7 [new] — `npm run bundle:watch`: edit a widget, the panel updates ONCE, no restart — **NEVER RUN**
+
+- **Setup:** E2's `Doc.SalesReport` document in the panel. In a terminal: `cd client && npm run bundle:watch`, and wait until it has built once and gone quiet. **Its own first build rewrites the bundle, so the panel reloads once here** — that is the watcher working, not this step's event.
+- **Do:** in `client/src/widgets/scorecard.ts` change `title.textContent = props.title;` to `title.textContent = "E7 " + props.title;` and **save**.
+- **Expect:** within a few seconds the banner **`the client bundle changed; reloading`** (`client/src/host/index.ts:291`) appears, then the page is replaced and the scorecard's title reads **`E7 Sales by region`** — with no render line in the channel and no server restart: the new page is sent the last document again. The channel logs **exactly ONE** reload line for the build, `"preview: " + why + "; reloading the panel"` (`editor/vscode/src/preview-core.js:5931`), where `why` is `the client bundle changed (N file events)` (`editor/vscode/src/preview-core.js:5927`). One build writes four files; only the `*.js` two are watched (`editor/vscode/src/preview-core.js:5852`) and every event pushes one shared 250 ms deadline (`editor/vscode/src/preview-core.js:5857`), so one build is one reload. Scroll position is lost; that is accepted.
+- **Undo:** `git checkout -- client/src/widgets/scorecard.ts`. That is a second build, so a second reload line is expected. Then stop `bundle:watch` (Ctrl-C).
+- **Failure:** TWO reload lines for one save (the coalescer lost the race — write down the gap you think there was); the title unchanged after the banner went (the stamp did not bust the cache); or the banner staying up. **Paste:** the Ermine channel from the save on, and the terminal's last twenty lines.
+- **Bears on:** WP-10 done-when ("editing `client/src/widgets/scorecard.ts` updates the panel without a restart"); W4; H4.
+
+### E8 [new] — Delete the bundle FILES, then the FOLDER: which one flips the page? — **NEVER RUN**
+
+**What the typings predict, verbatim** (`editor/vscode/node_modules/@types/vscode/index.d.ts:13977` to `:13979`): *"paths that do not exist in the file system will be monitored with a delay until created and then watched depending on the parameters provided. If a watched path is deleted, the watcher will suspend and not report any events until the path is created again."* And (`editor/vscode/node_modules/@types/vscode/index.d.ts:13996` to `:14001`): *"file events from deleting a folder may not include events for the contained files. […] performance optimizations are in place to fold multiple events that all belong to the same parent operation (e.g. delete folder) into one event for that parent."* The watcher's glob is `*.js` (`editor/vscode/src/preview-core.js:5852`), which a folder event does not match.
+
+- **Setup:** E2's document in the panel; `bundle:watch` NOT running.
+- **Do, part 1 (the files):** `rm client/dist/browser/ermine-client.js client/dist/browser/ermine-host.js` (one command). Wait two seconds.
+- **Expect, part 1:** the panel turns into the static page **`The preview bundle is not built`** (`editor/vscode/src/preview-core.js:5581`), its message starting `no ermine-client.js or ermine-host.js in <that folder>. Run \`npm install\` once and then \`npm run bundle\` in <client>` (`editor/vscode/src/preview-core.js:5582`) and ending `, then run Ermine: Preview Report... again` (`editor/vscode/src/preview-core.js:5583`). Two channel lines: `"preview: " + why + " and the bundle is not whole (" + (a.state || "problem") + "); showing the notice page"` (`editor/vscode/src/preview-core.js:5934`, state `absent`), then ``preview: ${bundle.title} -- ${bundle.message}`` (`editor/vscode/src/extension.js:2537`). **If the two deletions land more than 250 ms apart** you may see **`The preview bundle is HALF-BUILT`** (`editor/vscode/src/preview-core.js:5588`) for a moment first — not a failure.
+- **Then:** `cd client && npm run bundle`. **Expect** the page back without a command, and ONE line `"preview: " + why + " and the bundle is whole again; loading the panel page"` (`editor/vscode/src/preview-core.js:5932`).
+- **Do, part 2 (the folder):** `rm -rf client/dist/browser`. Wait five seconds. Then `cd client && npm run bundle` again. Wait five seconds.
+- **Record, one line each, in the notes:** (i) after the `rm -rf`: did the page flip to *not built*, or stay as it was? (**The typings predict it STAYS**: the page's scripts are already loaded and the folder event does not match `*.js`.) (ii) after the rebuild: did a reload line appear by itself (the watcher resumed when the folder was re-created, as the first quote says it may "with a delay"), or nothing?
+- **Either answer to (i) and (ii) is a PASS as long as the next Ermine: Preview Report... puts the page right** — an existing panel on the notice page re-checks on every explicit command (`openPanel`, `editor/vscode/src/extension.js:2569` onwards). **FAIL only if** part 1 does not flip, or the command does not recover the page after part 2.
+- **Failure paste:** the Ermine channel from the `rm` on, and `ls -l client/dist/browser` at the moment you judged.
+- **Bears on:** W10 (the not-built page is the default first experience); H4; the S3 review's docs must-fix M1 (it was about exactly this folder delete).
+
+### E9 [new] — `table` renders THROUGH `runTabular` — **NEVER RUN**
+
+- **Setup:** E2's `Doc.SalesReport` document; writers at the default.
+- **Do:** look at the second item, `$.children[1]`.
+- **Expect:** a real table drawn by the legacy writers, with the headers `Region`, `Sales` and `Change` (`core/src/test/resources/modules/Doc/SalesReport.e:46` and the two lines after it) and three rows, EMEA, APAC and AMER, sorted by the second column (INFERRED from the `ColumnSort 1 True` in the same `TableProps`). **No error box** for it, and **no** `preview panel: widget "table" …` line in the channel (`client/src/host/page.ts:300`). The error it would show without the writers is `env.htmlwriter with a runTabular function is required by this widget` (`client/src/legacy.ts:338`), and seeing THAT means the writers did not load.
+- **Failure:** an error box; a table with no rows; an unstyled table (then `common.css` did not load — look in E3's console). **Paste:** the channel, the console, and one sentence describing what is drawn.
+- **Bears on:** WP-11 done-when (the one row that has been HUMAN since WP-9); §5's Bundle checklist third row.
+
+### E10 [new] — A `pieChart` draws — **NEVER RUN**
+
+- **Setup:** E2's document.
+- **Do:** scroll to the last item, `$.children[3]`, and the bar chart above it, `$.children[2]`.
+- **Expect:** a pie titled **`Share of sales`** (`core/src/test/resources/modules/Doc/SalesReport.e:59`) with three slices and a legend table to its right (INFERRED from `LegendRightTable` in the same props); above it a bar chart, also titled `Sales by region` (`core/src/test/resources/modules/Doc/SalesReport.e:52`), with three bars. Both are Highcharts, which is bundled inside `htmlwriter.js` (MEASURED by the design review: 11 webpack modules), so no other script loads. **No error box, no `preview panel: widget` line.** Without the writers the box would read `env.htmlwriter with a runPiechart function is required by this widget` (`client/src/charts.ts:451`, with `runPiechart` for the name).
+- **Failure:** an empty box where the chart should be; a chart with no slices; an error box. **Paste:** the channel and the console.
+- **Bears on:** WP-11 done-when.
+
+### E11 [new] — A style-box click does nothing, and that is by design (OPTIONAL, NEEDS A FIXTURE) — **NEVER RUN**
+
+- **Setup:** **THERE IS NO REPORT TO RUN THIS ON.** MEASURED by `grep`: no report-typed binding in this repository draws a `styleBox`. The only `.e` files that use it are `core/examples/Present/*.e`, and none of them has a binding of a report type. **Record SKIP — "no fixture"** unless you write a small report yourself (`Layout.Widgets.StyleBox`; `styleBox` is the `rawWidget` name).
+- **If you have one:** click a cell of the 3×3 grid.
+- **Expect:** nothing visible happens in the panel, nothing throws, and the channel gets NO new line. The writers' click-through always POSTs for the popup's rows; the page's CSP has no `connect-src` (`default-src 'none'`), so the POST is refused, and the legacy code reports it through its own error callback: *"`relation` and `legend` are sent as `null`, the POST fails, and stylebox.js logs through its own `callbackError`. No exception reaches the page."* (`client/src/charts.ts:21`). **The console is where "logs" happens**: a `connect-src` refusal and whatever `callbackError` prints (unread). That refusal is the expected exception to E3.
+- **Failure:** the page blanks, an exception surfaces, or a popup opens with rows (then something is reachable that the CSP should have refused). **Paste:** the console lines from the click.
+- **Bears on:** WP-11 (W9: the click-through cannot work under `default-src 'none'`).
+
+### E12 [new] — Close the panel, re-run the command: ONE panel — **NEVER RUN**
+
+- **Setup:** a panel open with any document.
+- **Do:** (1) run **Ermine: Render Report to JSON** twice more with the panel open. (2) Close the panel's tab. (3) Run **Ermine: Render Report to JSON** again.
+- **Expect:** after (1), still exactly one `Ermine preview` tab — the second command reveals the panel that exists (`previewPanel.reveal(undefined, true);`, `editor/vscode/src/extension.js:2569`). After (2), nothing in the channel beyond what a render writes; the panel's state is dropped (`previewPanel = undefined;`, `editor/vscode/src/extension.js:2606`). After (3), a NEW `Ermine preview` tab with the current document, and a fresh ``preview: watching ${dir} for bundle rebuilds`` line (`editor/vscode/src/extension.js:2658`). **Never two panels.**
+- **Failure:** two `Ermine preview` tabs at once; or no panel after (3). **Paste:** the Ermine channel from (1) to the end.
+- **Bears on:** H9 (two commands, one panel); the dispose path.
+
+### E13 [new] — `ermine.preview.target`: `json` is the old tab, `both` is both — **NEVER RUN**
+
+- **Setup:** close the panel first. The code shows that an ALREADY OPEN panel keeps being sent the state whatever the target (`setPreviewStatus` posts a snapshot for every state change, `postSnapshot("status");` at `editor/vscode/src/extension.js:712`, and every render folds its answer into the panel's state before `present` routes it, `editor/vscode/src/extension.js:2305` — INFERRED from those two lines, not observed), so an open panel would muddy this step.
+- **Do:** (1) set `"ermine.preview.target": "json"`, run **Ermine: Render Report to JSON**. (2) Set it to `"both"`, run it again. (3) Set it to `"tab"`, run it again. (4) Set it back to `"panel"`.
+- **Expect:** (1) the untitled JSON tab exactly as in A7 and A9 — **the tab path is byte-for-byte 0.1.11's** — and no panel: `json` routes to the tab only (`return Object.freeze({ tab: t === "json" || t === "both", panel: t === "panel" || t === "both" });`, `editor/vscode/src/preview-core.js:5523`). (2) the tab updated first, then a panel (`editor/vscode/src/extension.js:2414`, then `:2416`, `if (reveal) openPanel();`). (3) ONE channel line, `ermine.preview.target is one of "panel", "json" or "both", not "tab"; the preview uses "panel"` prefixed `preview: ` (`editor/vscode/src/preview-core.js:5156` to `:5158`, logged by `editor/vscode/src/extension.js:2427`), and the panel is used; running it again does NOT repeat the line.
+- **Failure:** a panel under `json`; no tab under `both`; the `tab` line repeated per command. **Paste:** the channel.
+- **Bears on:** U1 (taken by the orchestrator, not asked of you: see the open decisions).
+
+### E14 [new] — The writers-missing banner — **NEVER RUN**
+
+- **Setup:** `mkdir -p /tmp/wp-empty`. **Close the panel**: a page built WITH the whole writers is not re-checked by a command (only a page built without them is), so changing the setting under an open, healthy panel does nothing until a new panel or a bundle rebuild.
+- **Do:** set `"ermine.preview.writersPath": "/tmp/wp-empty"`, then **Ermine: Preview Report...** → `core/src/test/resources/modules/Doc/SalesReport.e` → `report`.
+- **Expect, the banner** (status 0, so no `NNN:` prefix and no path): `the legacy writers are not loaded: no htmlwriter.js in /tmp/wp-empty. table, drilldownTable, the charts and styleBox show an error box instead; set ermine.preview.writersPath to the writers' web/ folder and run Ermine: Preview Report... again` — built at `editor/vscode/src/preview-core.js:5758` and `:5759`, with the `why` of `:5757` and the fix of `:5754`, sent as an `error` with `status: 0` (`editor/vscode/src/preview-core.js:5333`). **The document is DIMMED** under it, the scorecard drawn, and the three legacy widgets are error boxes: the table's says `env.htmlwriter with a runTabular function is required by this widget` (`client/src/legacy.ts:338`), the charts' `env.htmlwriter with a …` (`client/src/charts.ts:451`). **The channel** has the same sentence once, prefixed `preview: ` (`editor/vscode/src/preview-core.js:5778`), and one `preview panel: widget "…" at $.children[N]: it threw while rendering: …` line per legacy widget (`client/src/host/page.ts:300`, `client/src/dispatcher.ts:247`). While this banner is up a re-render in flight shows NO *re-rendering* banner (an error outranks `stale`, `client/src/host/index.ts:225`) — expected, and in the README since this stage.
+- **Then:** set `writersPath` back to `""` and run **Ermine: Preview Report...** again, the same pick. **Expect** the page to reload WITH the writers (a page built without them IS re-checked on a command) and the banner to go.
+- **Failure:** no banner; a banner that begins `0:`; widgets drawn although the folder is empty; or the fix in "Then" needing a window reload. **Paste:** the channel.
+- **Bears on:** WP-11's second done-when half; the Bundle checklist row's third state; N2.
+
+---
+
 ## Group D — the honest leftovers
 
 **Nothing in this group is a step you run.** D1–D18 are the things a human at a
@@ -939,7 +1164,9 @@ and the notes column is where to say why:
 **New steps with no old id:** A6 (invalidation of an importing module), A11
 (the status bar's states and tooltips), B10 (a reordered file renders the same
 document), B21 (a params type that is not a JSON object), C30 (exactly one
-`lsp.Main` after every restart).
+`lsp.Main` after every restart), and all of Group E, E1–E14 (the webview panel,
+WP-10 and WP-11; added by WP-10 stage 5). The old §1.7, "there is no panel", is
+A8, now scoped to `target: json`.
 
 **Obsolete instructions from the old checklist, deliberately not carried over:**
 every "write this module into `/tmp/wp7`" (the fixtures are checked in under
@@ -947,5 +1174,5 @@ every "write this module into `/tmp/wp7`" (the fixtures are checked in under
 **Remove Folder from Workspace** (a second folder makes the window multi-root
 and VS Code then ignores the window-scoped settings this guide sets), and the
 old §0 claim that `node_modules` is already in place (the extension is now
-installed from a `.vsix` YOU PACKAGE at 0.1.10 (the checked-in one is 0.1.9); `tracker/PLAYTEST-SETUP.md`
+installed from `editor/vscode/ermine-lang-0.1.14.vsix`, packaged by WP-10 stage 5; `tracker/PLAYTEST-SETUP.md`
 owns that).

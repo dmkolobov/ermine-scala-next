@@ -379,9 +379,9 @@ test("(pg-root-id) the page draws into the element the extension's html builder 
   assert.equal(PREVIEW_ROOT_ID, core.PREVIEW_ROOT_ID);
 });
 
-test("(pg-fetch-refuses) U6: fetchData REJECTS, naming the token and that inline is the only delivery the preview asks for", async () => {
-  await assert.rejects(refuseDeferred("tok-123"), /deferred relation "tok-123"/);
-  await assert.rejects(refuseDeferred("tok-123"), /delivers every relation inline -- inline is the only delivery its render request asks for/);
+test("(pg-fetch-refuses) U6: fetchData REJECTS, naming the token and that this preview does not fetch deferred relations", async () => {
+  await assert.rejects(refuseDeferred("tok-123"), /deferred delivery of "tok-123"/);
+  await assert.rejects(refuseDeferred("tok-123"), /this preview does not fetch deferred relations, and the report asked for deferred delivery of "tok-123" \(the panel has no network access: its CSP has no connect-src\)$/);
   await assert.rejects(refuseDeferred("tok-123"), /no connect-src/);
 });
 
@@ -537,12 +537,12 @@ test("(pg-fetch-deferred-box) WP-10 S3: a widget asking for deferred data shows 
     assert.ok(box, "the dispatcher drew the widget's own error box: " + d.body.innerHTML.slice(0, 300));
     assert.equal(box!.getAttribute("data-widget"), "table");
     assert.equal(box!.getAttribute("role"), "alert");
-    assert.match(box!.textContent!, /a deferred relation could not be resolved: the preview delivers every relation inline/);
+    assert.match(box!.textContent!, /a deferred relation could not be resolved: this preview does not fetch deferred relations, and the report asked for deferred delivery of/);
     assert.match(box!.textContent!, /"tok-deferred-1"/);
     assert.equal(d.querySelector(".ermine-page-error"), null, "a widget failure, not a page failure");
     const logs = posted.filter((m) => (m as { type?: string }).type === "log").map((m) => (m as { message: string }).message);
     assert.equal(logs.length, 1, "the page logs the widget failure to the output channel once");
-    assert.match(logs[0]!, /^widget "table" at .*deferred relation "tok-deferred-1"/);
+    assert.match(logs[0]!, /^widget "table" at .*deferred delivery of "tok-deferred-1"/);
     assert.deepStrictEqual(network, [], "no fetch and no XMLHttpRequest, in either realm");
   } finally {
     g["fetch"] = saved.fetch;

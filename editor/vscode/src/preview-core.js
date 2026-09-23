@@ -5154,7 +5154,7 @@ function panelTarget(raw) {
   return {
     target: PANEL_TARGET_DEFAULT,
     problem: 'ermine.preview.target is one of "panel", "json" or "both", not ' +
-      (typeof raw === "string" ? JSON.stringify(raw) : "a " + typeName(raw)) +
+      (typeof raw === "string" ? JSON.stringify(raw) : (/^[aeiou]/.test(typeName(raw)) ? "an " : "a ") + typeName(raw)) +
       '; the preview uses "' + PANEL_TARGET_DEFAULT + '"',
   };
 }
@@ -5703,7 +5703,9 @@ function previewWritersDir(raw, folderPath, serverRoot) {
     return Object.freeze({ dir: path.join.apply(path, [serverRoot].concat(WRITERS_DEFAULT_SEGMENTS)), source: "default", problem: null });
   }
   if (typeof raw !== "string") {
-    return Object.freeze({ dir: null, source: "setting", problem: WRITERS_SETTING + " is a directory path, not a " + typeName(raw) });
+    // WP-11 review N3: "not an array", not "not a array".
+    const t = typeName(raw);
+    return Object.freeze({ dir: null, source: "setting", problem: WRITERS_SETTING + " is a directory path, not " + (/^[aeiou]/.test(t) ? "an " : "a ") + t });
   }
   const r = absoluteRoots([raw], folderPath, WRITERS_SETTING);
   if (r.roots.length === 1) return Object.freeze({ dir: r.roots[0], source: "setting", problem: null });
