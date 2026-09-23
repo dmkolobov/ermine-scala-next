@@ -57,8 +57,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.13.vsix
-code --install-extension ermine-lang-0.1.13.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.14.vsix
+code --install-extension ermine-lang-0.1.14.vsix
 ```
 
 `npm run package` does the same. Upgrading is the same command with the new
@@ -138,6 +138,15 @@ and the open panel loads the page by itself (since 0.1.13 it watches the bundle
 folder; running **Ermine: Preview Report...** again also works). A
 directory with only one of `ermine-client.js` / `ermine-host.js` in it is
 reported as **HALF-BUILT** — delete `client/dist/browser` and bundle again.
+
+**The legacy widgets need the writers** (`table`, `drilldownTable`, the
+charts, `styleBox`; since 0.1.14). The panel loads the `ermine-writers`
+bundle from `ermine.preview.writersPath`; empty means
+`<checkout>/../ermine-writers/writers/html/src/main/resources/web`, the sibling
+checkout — **that default is the layout of the machine this was built on, not
+a guarantee**. Without `htmlwriter.js` there the panel still loads,
+`scorecard`, `headline` and `crosstab` still draw, each legacy widget shows an
+error box, and a banner says where it looked (see **0.1.14**).
 
 **Working on the client?** Run `npm run bundle:watch` in `client/` and leave
 it running: every save of a `client/src` file rebuilds the bundle, and the open
@@ -433,6 +442,28 @@ type one frame early and without its constraints (`go : List a -> a -> a` for
 a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
+
+### 0.1.14
+
+**The legacy writers in the panel** (WP-11, stage 4 of the panel). The page
+now loads the `ermine-writers` bundle first, then the client and host bundles,
+plus three of the writers' style sheets.
+
+| | |
+|---|---|
+| **where** | `ermine.preview.writersPath` (new, window scope): the writers' `web/` folder. A relative path is resolved against the first workspace folder, exactly as `ermine.preview.roots` is. **Empty = `<checkout>/../ermine-writers/writers/html/src/main/resources/web`**, `<checkout>` being the folder `bin/ermine-lsp` lives in — the sibling layout of the machine this was built on, **not a guarantee** |
+| **what loads** | `htmlwriter.js` (5.2 MB; jQuery and Highcharts are bundled inside it, so there is no other script), then `ermine-client.js`, then `ermine-host.js` — plain `<script src>`, in that order, because the writers assign `window.ermine_htmlwriter` in a `DOMContentLoaded` listener that must be registered before the page's own. Style sheets: `common.css`, `htmlwriter.css`, `htmlwriter_classic.css`. **Not** `htmlwriter_dark.css` (it re-adds DataTables' sort arrows through a sprite image the webview cannot load, so every arrow would be an empty box) and **not** `javafxwriter.css` (JavaFX). The writers folder becomes the page's second `localResourceRoots` entry; the CSP is unchanged from 0.1.11 (`'unsafe-eval'` is there for this bundle, a webpack-4 `eval` build) |
+| **writers missing** | no `htmlwriter.js` in that folder (or no folder): the page loads **without** the writers, `scorecard` / `headline` / `crosstab` draw, each legacy widget draws its own error box naming `window.ermine_htmlwriter`, and the panel's banner says *"the legacy writers are not loaded: no htmlwriter.js in …"* with the path and the setting to fix — plus **one** line in the Ermine output channel per page built. The banner is the panel's ordinary error banner, so **the document below it is dimmed** while the writers are missing. A failed render keeps its own error banner and the writers sentence is appended to it |
+| **half** | `htmlwriter.js` present but a style sheet missing: the script and the sheets that exist load, and the banner names what is missing (the widgets draw unstyled) |
+| **fixing it** | the writers folder is **not watched**. After setting the path (or checking the writers out), run **Ermine: Preview Report...** again: a panel built without the whole writers re-checks on an explicit command and reloads only if the answer changed (a machine without the writers is not reloaded on every command). A bundle rebuild (`bundle:watch`) re-checks too, and so does a new panel. Restarting the language server does not |
+| **expected console noise** | in the webview's developer tools (**Developer: Open Webview Developer Tools**): `common.css` references `url("/CIQDotNet/images/TopMenuBar/tmbllsprite.png?urwvid=1")` (on `.headerlabel`), a root-relative sprite that is neither under the webview's resource root nor allowed by `img-src`, so the webview refuses it — a blocked-image line is **expected, not a broken panel**. The other sprite the design review named, `url("/content/themes/base/images/mainSprite.png")`, is in `htmlwriter_dark.css`, which the panel does not load, so it should not appear |
+| **by design, not a failure** | a click in a **style box** does nothing: the writers' click-through always posts to a server, and the page's CSP (`default-src 'none'`, no `connect-src`) blocks it; the legacy code reports it through its own error callback and nothing throws. **`treeMap`** stays unregistered, so it is always the error box naming it |
+
+**None of this has run in VS Code or a browser.** Whether the writers bundle
+loads under the CSP, whether `table` draws through `runTabular`, whether a
+`pieChart` draws and what the console shows are the playtest's (E3, E9-E11).
+What the tests hold is what the extension decides: the page it builds, the
+roots it grants, the banner it sends and when it re-checks.
 
 ### 0.1.13
 
@@ -790,6 +821,7 @@ Three costs, in the order you meet them:
 | `ermine.preview.restartAfterStuckSeconds` | `0` *(never)* | How long the preview may stay stuck before the extension restarts the language server itself; client-side only, never sent to the server |
 | `ermine.preview.maxDocumentBytes` | `16777216` | Largest rendered document the server will send |
 | `ermine.preview.target` | `panel` | Where a render is shown: the webview `panel`, the `json` tab (0.1.11's, unchanged), or `both` |
+| `ermine.preview.writersPath` | *(sibling `ermine-writers`)* | The legacy writers' `web/` folder the panel loads `htmlwriter.js` and its CSS from; empty = `<checkout>/../ermine-writers/writers/html/src/main/resources/web`, this machine's layout, not a guarantee |
 | `ermine.trace.server` | `off` | Trace LSP traffic to the output channel |
 
 | Command | |
@@ -884,7 +916,14 @@ for two builds apart), the notice page on a vanished or half-built bundle and
 the page again on its return, a reload in the middle of a render, the watcher's
 lifetime, a random explorer, source pins for the one watcher and its three
 arms, the CSP's absent `connect-src`, and `gate_client`'s three verdicts over a
-stub `npm`. It runs under `node --test` with no
+stub `npm`. **Since 0.1.14** it covers the writers: the page's script order and
+three style sheets, their escaping and the exact CSP; `writersState` over
+listings (fail-closed on `htmlwriter.js`); `ermine.preview.writersPath`
+through the roots' absolutiser and its sibling default; the second
+`localResourceRoots` entry; the banner as the `error` kind; the re-check on an
+explicit command and on a bundle rebuild, in the panel model; source pins for
+the one roots list, the setting and the output line; and a test that the
+model's view passes exactly the glue's fields. It runs under `node --test` with no
 `node_modules` at all, and it is the `extension` gate of `scripts/gate.sh`
 (commit tier).
 
@@ -892,6 +931,9 @@ stub `npm`. It runs under `node --test` with no
 `activate()` exactly as the editor would, then checks that every command
 package.json contributes is registered, that `ermine.preview.target` is
 contributed with the values and default `preview-core.js` decides with, that
+`ermine.preview.writersPath` is a window-scoped string whose empty default
+resolves to the sibling writers folder (it prints whether that folder is
+there), that
 activation creates no webview panel, that activation returns without
 waiting on the server, and that `deactivate()` is safe after a failed start.
 

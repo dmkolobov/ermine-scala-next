@@ -52,7 +52,7 @@ is long-standing, not new.
 With that checkout present, the command above is green. Eight of the tests skip, each
 naming what would make it run: three need FIXTURES the Scala side writes — property (b)'s
 200-document corpus, its negative half, and the end-to-end document — and five need the
-browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (100 tests: 97 passed, 3 skipped after S1; **112 tests: 109 passed, 3 skipped after WP-10 S2**; **114 tests: 111 passed, 3 skipped after WP-10 S3**, with the bundle built, MEASURED 2026-09-23)
+browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (100 tests: 97 passed, 3 skipped after S1; **112 tests: 109 passed, 3 skipped after WP-10 S2**; **114 tests: 111 passed, 3 skipped after WP-10 S3**; **115 tests: 112 passed, 3 skipped after WP-11**, with the bundle built, MEASURED 2026-09-23)
 (MEASURED 2026-09-21 on node v24.20.0; the count this paragraph carried before WP-9 was
 33/3 and was stale by 29 passing tests). `npm run test:bundle` builds the bundle first and
 gives 87 passed, 3 skipped; writing the fixtures as well runs all 90:
@@ -137,6 +137,18 @@ path is created again"* and that a folder delete may fold into one event for the
 up until the next build or the next explicit preview command re-checks. Playtest E8 records which. The page's `fetchData` REJECTS (the preview only ever asks for inline
 relations, and the page's CSP has no `connect-src`), so a document with a deferred relation
 draws that widget's own error box and fetches nothing — `(pg-fetch-deferred-box)`.
+
+**The writers in the panel** (extension 0.1.14, WP-11): the page loads the writers bundle
+FIRST (`htmlwriter.js` from `ermine.preview.writersPath`, default the sibling
+`../ermine-writers/writers/html/src/main/resources/web`), then this package's two entries,
+with `common.css`, `htmlwriter.css` and `htmlwriter_classic.css`. `src/host/page.ts` was NOT
+changed: it already posts `ready` from a `DOMContentLoaded` listener registered by the host
+script (so after the writers' own listener, registered by the earlier script) and reads
+`window.ermine_htmlwriter` at RENDER time. `(pg-writers-global)` pins both with the REAL
+client in a JSDOM: a stub writers listener registered first has run before `ready`, `table`
+reaches `runTabular` of the global, and without the global `table` is its own error box under
+the extension's writers banner (the reducer's `error` kind, so the document is dimmed).
+Whether the real bundle does this in a webview is the playtest's (E9).
 
 **`gate_client`** (`scripts/gates.sh`, nightly tier since WP-10 S3) runs `npm test` here and
 prints one `SUMMARY <n> tests, <p> pass, <f> fail, <s> skipped` line. Without

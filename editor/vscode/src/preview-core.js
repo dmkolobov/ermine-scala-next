@@ -46,21 +46,24 @@ const crypto = require("crypto");
  * @param {string|undefined} folderPath the owning workspace folder, if any
  * @returns {{roots: string[], problems: string[]}}
  */
-function absoluteRoots(entries, folderPath) {
+function absoluteRoots(entries, folderPath, settingName) {
+  // WP-11: `ermine.preview.writersPath` is absolutised by THIS function too
+  // (`previewWritersDir`), so its refusals name their own setting.
+  const name = typeof settingName === "string" && settingName ? settingName : "ermine.preview.roots";
   const roots = [];
   const problems = [];
   if (entries === undefined || entries === null) return { roots, problems };
   if (!Array.isArray(entries)) {
-    return { roots, problems: ["ermine.preview.roots is an array of directory paths, not a " + typeName(entries)] };
+    return { roots, problems: [name + " is an array of directory paths, not a " + typeName(entries)] };
   }
   for (const entry of entries) {
     if (typeof entry !== "string") {
-      problems.push("ermine.preview.roots has an entry that is a " + typeName(entry) + "; each root is a directory path");
+      problems.push(name + " has an entry that is a " + typeName(entry) + "; each root is a directory path");
       continue;
     }
     const trimmed = entry.trim();
     if (!trimmed) {
-      problems.push("ermine.preview.roots has an empty entry; each root is a directory path");
+      problems.push(name + " has an empty entry; each root is a directory path");
       continue;
     }
     // A NUL BYTE IS NOT A PATH ON ANY PLATFORM, and -- MEASURED on Node 24
@@ -70,7 +73,7 @@ function absoluteRoots(entries, folderPath) {
     // review asked for this to be caught here; the `try` below stays for
     // the platforms and future versions where `path` itself throws.
     if (trimmed.indexOf("\u0000") >= 0) {
-      problems.push('ermine.preview.roots entry "' + printable(trimmed) +
+      problems.push(name + ' entry "' + printable(trimmed) +
                     '" is not a usable path: it contains a NUL byte');
       continue;
     }
@@ -81,7 +84,7 @@ function absoluteRoots(entries, folderPath) {
       } else if (folderPath) {
         absolute = path.resolve(folderPath, trimmed);
       } else {
-        problems.push('ermine.preview.roots entry "' + printable(trimmed) +
+        problems.push(name + ' entry "' + printable(trimmed) +
                       '" is relative and there is no workspace folder to resolve it against');
         continue;
       }
@@ -89,7 +92,7 @@ function absoluteRoots(entries, folderPath) {
       // `path.resolve`/`normalize` THROW on a string the platform cannot
       // hold -- a NUL byte is the reachable one (review S1). A setting the
       // developer typed must never take the command down with it.
-      problems.push('ermine.preview.roots entry "' + printable(trimmed) + '" is not a usable path: ' +
+      problems.push(name + ' entry "' + printable(trimmed) + '" is not a usable path: ' +
                     (err && err.message ? String(err.message) : String(err)));
       continue;
     }
@@ -5236,6 +5239,9 @@ function unsavedNames(documents) {
  *                  overwrites the reducer's slice.
  *   reloading      a bundle reload was ANNOUNCED and `webview.html` has not
  *                  been re-set yet (S3's watcher)
+ *   writers        WP-11: `previewWritersCheck`'s answer the page was last
+ *                  built from (the glue's `panelWriters`), or null; the view
+ *                  keeps only `{state, message}` when it is not `present`
  *
  * The result is a frozen plain object with no functions in it.
  */
@@ -5260,16 +5266,30 @@ function panelView(parts) {
     fastMode: p.fastMode === true,
     switching: typeof p.switching === "string" && p.switching.trim() ? p.switching : null,
     reloading: p.reloading === true,
+    writers: panelWritersNotice(p.writers),
   });
 }
 
+/** WP-11: the view's `writers` slot -- `{state, message}` when the page was
+ *  built WITHOUT the whole writers (`previewWritersCheck`'s `missing` or
+ *  `half`), else null.  The glue passes its `panelWriters` global, the check
+ *  the page was last built from, exactly as `setPanelHtml` stored it. */
+function panelWritersNotice(check) {
+  if (!check || typeof check !== "object") return null;
+  if (check.state !== "missing" && check.state !== "half") return null;
+  const message = typeof check.message === "string" && check.message.trim() ? check.message : null;
+  if (!message) return null;
+  return Object.freeze({ state: check.state, message });
+}
+
 /** An `{ok:false}` answer as the reducer's `error` message, with W5's suffix. */
-function panelErrorMessage(answer, fastMode) {
+function panelErrorMessage(answer, fastMode, writersNote) {
   const text = typeof answer.message === "string" && answer.message.trim() ? answer.message : PANEL_ERROR_DEFAULT;
+  const withFast = fastMode === true ? text + FAST_MODE_SUFFIX : text;
   return {
     kind: "error",
     status: typeof answer.status === "number" && isFinite(answer.status) ? answer.status : 0,
-    message: fastMode === true ? text + FAST_MODE_SUFFIX : text,
+    message: typeof writersNote === "string" && writersNote ? withFast + WRITERS_NOTE_SEPARATOR + writersNote : withFast,
     path: typeof answer.path === "string" && answer.path.trim() ? answer.path : null,
     reason: typeof answer.reason === "string" && answer.reason.trim() ? answer.reason : null,
   };
@@ -5304,7 +5324,13 @@ function panelMessagesFor(view) {
     });
   }
   const last = v.answer;
-  if (last && typeof last === "object" && !isOk(last)) out.push(panelErrorMessage(last, v.fastMode));
+  // WP-11: the writers banner is an `error` too (no tenth kind; the choice is
+  // argued at `WRITERS_NOTE_SEPARATOR`).  A failed answer keeps the slot and
+  // carries the writers sentence as a suffix, W5's pattern; otherwise the
+  // writers sentence IS the error, status 0, no path.
+  const writersNote = v.writers && typeof v.writers.message === "string" && v.writers.message ? v.writers.message : null;
+  if (last && typeof last === "object" && !isOk(last)) out.push(panelErrorMessage(last, v.fastMode, writersNote));
+  else if (writersNote) out.push({ kind: "error", status: 0, message: writersNote, path: null, reason: null });
   out.push({ kind: "stale", stale: v.pending === true || !!(last && typeof last === "object" && last.stale === true) });
   if (v.stuck) {
     const m = { kind: "stuck", stuck: true };
@@ -5370,9 +5396,10 @@ function withStamp(uri, stamp) {
  *   cspSource   `webview.cspSource`                       required
  *   client      `client/dist/browser/ermine-client.js`    required
  *   host        `client/dist/browser/ermine-host.js`      required
- *   writers     the writers' `web/htmlwriter.js`          optional (WP-11 / S4)
- *   styles      up to the writers' three CSS files, in    optional (WP-11 / S4)
- *               order: common.css, htmlwriter.css, a theme
+ *   writers     the writers' `web/htmlwriter.js`          optional; WP-11 (S4)
+ *   styles      up to the writers' three CSS files, in    fills both through
+ *               order: common.css, htmlwriter.css, a      `previewPageUris`
+ *               theme (`PREVIEW_WRITERS_STYLES`)
  *
  * `opts.stamp` is appended to the client and host URIs only.
  *
@@ -5604,6 +5631,191 @@ function buildPanelNoticeHtml(notice) {
 
 /** The notice page's CSP: the inline style block, nothing else at all. */
 const PANEL_NOTICE_CSP = "default-src 'none'; style-src 'unsafe-inline';";
+
+// ------------------------------------ the legacy writers (WP-11 = WP-10, S4)
+//
+// The page loads the legacy `ermine-writers` bundle FIRST (`buildPreviewHtml`'s
+// script order), plus three of its style sheets, from a folder the developer
+// names in `ermine.preview.writersPath` (U3).  What is borrowed from the
+// writers is only what the design review MEASURED or READ: the file names in
+// `writers/html/src/main/resources/web/`, that the bundle assigns
+// `window.ermine_htmlwriter` inside a `DOMContentLoaded` listener, and the
+// two root-relative sprite `url()`s its CSS carries.
+//
+// THE THREE STYLE SHEETS, chosen by reading the CSS files themselves (none
+// has an `@import`; MEASURED by `grep`):
+//   * `common.css` -- the `.tabular` / `.tabular_wrapper` rules the table
+//     adapter's skeleton uses (`client/src/legacy.ts` `tableSkeleton`);
+//   * `htmlwriter.css` -- its own comment: it removes DataTables' sorting
+//     arrows ("so that they arent visible. but sorting still works");
+//   * `htmlwriter_classic.css`, NOT `htmlwriter_dark.css` -- classic has no
+//     `url()` at all and paints sorted cells white / #E9E9E9, the same grey as
+//     `common.css`'s `.tabular`; dark's own header comment says it "Add[s] back
+//     in the sorting arrow indicators", three times through
+//     `url("/content/themes/base/images/mainSprite.png")`, a root-relative
+//     sprite the webview can never load (default-src 'none', and the path is
+//     not under `cspSource`) -- so under dark every sort arrow would be an
+//     empty box.  Consequence: of the two sprite `url()`s the design review
+//     named, only `common.css`'s (`/CIQDotNet/images/TopMenuBar/
+//     tmbllsprite.png?urwvid=1`, on `.headerlabel`) can appear in the console.
+//   * `javafxwriter.css` is JavaFX's and JavaFX is dead.
+//
+// THE BANNER'S KIND, chosen among the reducer's nine (no tenth): `error`.
+//   The writers missing is a FAILURE the developer must act on (set the path),
+//   nothing is trying to fix it, and every legacy widget in the document is
+//   drawn as the dispatcher's error box -- which is exactly the reducer's
+//   `error` meaning and its dimming rule ("dimmed exactly when nothing is
+//   currently trying to replace it").  The alternatives say something false:
+//   `held` claims a wedge, `stuck` offers Restart and outranks real errors,
+//   `switching` prints "switching to ...", `unsaved` prints "unsaved: ...",
+//   `stale` / `offline` / `reloadBundle` carry no text.  The cost, said here:
+//   the document is DIMMED while the writers are missing, including its
+//   non-legacy widgets, and the banner replaces the `initial` "Pick a report"
+//   text before the first render.  A failed ANSWER keeps the one `error` slot
+//   and the writers sentence rides on it after this separator (W5's pattern).
+const WRITERS_NOTE_SEPARATOR = " -- ";
+
+/** The writers bundle, and the three style sheets in link order. */
+const PREVIEW_WRITERS_SCRIPT = "htmlwriter.js";
+const PREVIEW_WRITERS_STYLES = Object.freeze(["common.css", "htmlwriter.css", "htmlwriter_classic.css"]);
+const WRITERS_SETTING = "ermine.preview.writersPath";
+/** The DEFAULT, relative to `resolveServer().root`: the sibling checkout
+ *  layout of the machine this was built on (MEASURED there: `readlink -f
+ *  ../ermine-writers` from both `ermine-scala` and its worktrees), NOT a
+ *  guarantee -- which is why it is a setting. */
+const WRITERS_DEFAULT_SEGMENTS = Object.freeze(["..", "ermine-writers", "writers", "html", "src", "main", "resources", "web"]);
+
+/**
+ * Where the writers are: `ermine.preview.writersPath` absolutised by THE SAME
+ * `absoluteRoots` that `ermine.preview.roots` goes through (relative to the
+ * first workspace folder, `folderPath`), or -- when the setting is empty --
+ * the sibling default under `serverRoot` (`resolveServer().root`).
+ * `{dir, source: "setting" | "default", problem}`; `dir` is null exactly when
+ * `problem` says why.
+ */
+function previewWritersDir(raw, folderPath, serverRoot) {
+  const empty = raw === undefined || raw === null || (typeof raw === "string" && !raw.trim());
+  if (empty) {
+    if (typeof serverRoot !== "string" || !serverRoot.trim()) {
+      return Object.freeze({ dir: null, source: "default", problem: WRITERS_SETTING +
+        " is empty and there is no checkout (no workspace folder, no ermine.serverPath) to find the sibling ermine-writers beside" });
+    }
+    return Object.freeze({ dir: path.join.apply(path, [serverRoot].concat(WRITERS_DEFAULT_SEGMENTS)), source: "default", problem: null });
+  }
+  if (typeof raw !== "string") {
+    return Object.freeze({ dir: null, source: "setting", problem: WRITERS_SETTING + " is a directory path, not a " + typeName(raw) });
+  }
+  const r = absoluteRoots([raw], folderPath, WRITERS_SETTING);
+  if (r.roots.length === 1) return Object.freeze({ dir: r.roots[0], source: "setting", problem: null });
+  return Object.freeze({ dir: null, source: "setting", problem: r.problems[0] || WRITERS_SETTING + " is not a usable path" });
+}
+
+/**
+ * THE WRITERS' STATE, from a LISTING of their folder (`fs.readdirSync`'s names,
+ * or null when it could not be read).  FAIL-CLOSED on the script:
+ *   present  `htmlwriter.js` and all three style sheets;
+ *   half     `htmlwriter.js`, but not every style sheet (the script loads,
+ *            the widgets draw unstyled);
+ *   missing  no `htmlwriter.js` (or no folder) -- the page is built WITHOUT the
+ *            writers and the client's registry draws its per-widget error box.
+ */
+function writersState(listing) {
+  if (!Array.isArray(listing)) return "missing";
+  const names = listing.filter((n) => typeof n === "string");
+  if (names.indexOf(PREVIEW_WRITERS_SCRIPT) < 0) return "missing";
+  return PREVIEW_WRITERS_STYLES.every((f) => names.indexOf(f) >= 0) ? "present" : "half";
+}
+
+/**
+ * The check the glue builds the page from, and the view's `writers` slot:
+ *   state    `writersState(listing)` ("missing" when there is no dir);
+ *   dir, source, problem   from `previewWritersDir`;
+ *   script   `htmlwriter.js`, or null when the page must not load it;
+ *   styles   the style sheets to link, in order (only those listed);
+ *   root     the folder for `localResourceRoots`, or null when nothing of it
+ *            is loaded;
+ *   missing  the files that are not there;
+ *   message  the banner / channel sentence, null when present.
+ */
+function previewWritersCheck(where, listing) {
+  const w = where && typeof where === "object" ? where : {};
+  const dir = typeof w.dir === "string" && w.dir.trim() ? w.dir : null;
+  const source = w.source === "setting" ? "setting" : "default";
+  const state = dir ? writersState(listing) : "missing";
+  const names = dir && Array.isArray(listing) ? listing.filter((n) => typeof n === "string") : [];
+  const all = [PREVIEW_WRITERS_SCRIPT].concat(PREVIEW_WRITERS_STYLES);
+  const missing = all.filter((f) => names.indexOf(f) < 0);
+  const loads = state !== "missing";
+  const where2 = dir
+    ? dir + (source === "default" ? " (" + WRITERS_SETTING + " is empty, so this is the default: the ermine-writers checkout beside this one)" : "")
+    : null;
+  const fix = "set " + WRITERS_SETTING + " to the writers' web/ folder and run Ermine: Preview Report... again";
+  let message = null;
+  if (state === "missing") {
+    const why = dir ? "no " + PREVIEW_WRITERS_SCRIPT + " in " + where2 : (w.problem || WRITERS_SETTING + " gives no folder");
+    message = "the legacy writers are not loaded: " + why +
+      ". table, drilldownTable, the charts and styleBox show an error box instead; " + fix;
+  } else if (state === "half") {
+    message = "the legacy writers' style sheets are incomplete: " + where2 + " has " + PREVIEW_WRITERS_SCRIPT +
+      " but not " + missing.join(", ") + ", so the legacy widgets draw unstyled; " + fix;
+  }
+  return Object.freeze({
+    state, dir, source, problem: typeof w.problem === "string" ? w.problem : null,
+    script: loads ? PREVIEW_WRITERS_SCRIPT : null,
+    styles: Object.freeze(loads ? PREVIEW_WRITERS_STYLES.filter((f) => names.indexOf(f) >= 0) : []),
+    root: loads ? dir : null,
+    missing: Object.freeze(missing),
+    message,
+  });
+}
+
+/** The ONE output-channel line a page built without the whole writers
+ *  writes, or null when they are present (a present writers folder is
+ *  silent, so S3's one-line-per-reload stays true for it). */
+function writersLine(check) {
+  return check && typeof check.message === "string" && check.message ? "preview: " + check.message : null;
+}
+
+/**
+ * The URIs `buildPreviewHtml` takes, from the bundle check, the writers check
+ * and the glue's `uriOf(dir, file)` (`asWebviewUri(...).toString()`).  The
+ * writers' script and style sheets are passed only from `check.root`, so a
+ * page never references a file outside a `localResourceRoots` entry.
+ */
+function previewPageUris(cspSource, bundle, writers, uriOf) {
+  const u = {
+    cspSource,
+    client: uriOf(bundle.dir, PREVIEW_BUNDLE_FILES[0]),
+    host: uriOf(bundle.dir, PREVIEW_BUNDLE_FILES[1]),
+  };
+  const w = writers && typeof writers === "object" ? writers : null;
+  if (w && typeof w.root === "string" && w.root && typeof w.script === "string" && w.script) {
+    u.writers = uriOf(w.root, w.script);
+    u.styles = (Array.isArray(w.styles) ? w.styles : []).map((f) => uriOf(w.root, f));
+  }
+  return u;
+}
+
+/** An existing panel is worth re-checking on an explicit command when its
+ *  page is the notice page OR was built without the whole writers (the writers
+ *  folder is NOT watched: this is how a fixed path is picked up). */
+function panelRecheck(bundle, writers) {
+  return !bundle || bundle.ok !== true || !writers || writers.state !== "present";
+}
+
+/** ...and the page is re-set only when the fresh checks would build a
+ *  DIFFERENT page -- so a machine with no writers does not reload its panel
+ *  on every command. */
+function panelReload(beforeBundle, beforeWriters, bundle, writers) {
+  if (!bundle || bundle.ok !== true) return false;
+  if (!beforeBundle || beforeBundle.ok !== true) return true;
+  return writersKey(beforeWriters) !== writersKey(writers);
+}
+
+function writersKey(w) {
+  if (!w || typeof w !== "object") return "null";
+  return JSON.stringify([w.state, w.root, w.script, w.styles, w.message]);
+}
 
 // ------------------------------------------- the bundle watcher (WP-10, S3)
 //
@@ -5928,4 +6140,18 @@ module.exports = {
   bundleReloading,
   bundleWatchStep,
   bundleReloadLine,
+  // WP-11 (= WP-10 S4): the legacy writers.
+  PREVIEW_WRITERS_SCRIPT,
+  PREVIEW_WRITERS_STYLES,
+  WRITERS_SETTING,
+  WRITERS_DEFAULT_SEGMENTS,
+  WRITERS_NOTE_SEPARATOR,
+  previewWritersDir,
+  writersState,
+  previewWritersCheck,
+  writersLine,
+  previewPageUris,
+  panelRecheck,
+  panelReload,
+  panelWritersNotice,
 };

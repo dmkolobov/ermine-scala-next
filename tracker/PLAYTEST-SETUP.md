@@ -101,6 +101,26 @@ happens, run **Ermine: Preview Report...** again). To work on the client, leave
 `npm run bundle:watch` running in `client/`: each save becomes a *"the client
 bundle changed; reloading"* banner and then the redrawn panel, once per build.
 
+**Since 0.1.14 (WP-11) the panel also loads the legacy writers** for `table`,
+`drilldownTable`, the charts and `styleBox`: `htmlwriter.js` plus
+`common.css`, `htmlwriter.css` and `htmlwriter_classic.css`, from the setting
+`ermine.preview.writersPath`. **Leave it empty on this machine**: empty means
+`<checkout>/../ermine-writers/writers/html/src/main/resources/web`, i.e.
+`/home/dmitry/research/ermine/ermine-writers/writers/html/src/main/resources/web`
+from this worktree (MEASURED: that folder holds `htmlwriter.js`). That default
+is this machine's sibling layout, not a guarantee; on another machine set the
+path. Without `htmlwriter.js` there, the panel still loads, the legacy widgets
+show error boxes and a banner says where it looked (the document is dimmed
+under it); the folder is not watched, so after fixing it run **Ermine: Preview
+Report...** again. **Expected, not a failure**: in **Developer: Open Webview
+Developer Tools**, a blocked image for
+`/CIQDotNet/images/TopMenuBar/tmbllsprite.png?urwvid=1` (a root-relative
+sprite in `common.css`); `/content/themes/base/images/mainSprite.png` belongs
+to the dark sheet, which is not loaded, so it should not appear. A click in a
+style box does nothing (its click-through posts to a server the CSP blocks),
+and `treeMap` is always an error box. Whether `table` and a `pieChart`
+actually draw is what E9/E10 record: **nobody has run this yet.**
+
 ## 4. Install it
 
 **One line, and it is yours to run — this was not run for you:**

@@ -2,7 +2,7 @@
   "name": "ermine-lang",
   "displayName": "Ermine",
   "description": "Ermine language support: syntax highlighting, diagnostics, navigation, hover types, references, rename, symbols, completion and quick fixes, backed by bin/ermine-lsp.",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "publisher": "clarifi",
   "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {
@@ -106,6 +106,12 @@
           "default": "panel",
           "scope": "window",
           "markdownDescription": "Where **Ermine: Preview Report...** and **Ermine: Render Report to JSON** show the answer. `panel` (the default) draws the report in a webview panel beside the editor; `json` keeps the untitled JSON tab exactly as it was before 0.1.12; `both` does both. The panel needs the client bundle built once: `npm install && npm run bundle` in `client/` of the checkout that holds `bin/ermine-lsp` — until then it says so. Only an explicit command opens or reveals the panel; a re-render after a save updates it in place."
+        },
+        "ermine.preview.writersPath": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "markdownDescription": "The legacy writers' `web/` folder (the one holding `htmlwriter.js`, `common.css`, `htmlwriter.css` and `htmlwriter_classic.css`), which the preview panel loads for `table`, `drilldownTable`, the charts and `styleBox`. A relative path is resolved against the first workspace folder, the way `ermine.preview.roots` is. **Empty means the sibling checkout**: `<checkout>/../ermine-writers/writers/html/src/main/resources/web`, where `<checkout>` holds `bin/ermine-lsp` — the layout of the machine this was built on, not a guarantee. Without `htmlwriter.js` there the panel still loads, those widgets show an error box and a banner says why. The folder is not watched: after fixing it, run **Ermine: Preview Report...** again."
         },
         "ermine.preview.maxDocumentBytes": {
           "type": "number",

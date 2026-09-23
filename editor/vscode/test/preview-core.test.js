@@ -10731,6 +10731,10 @@ test("panel (explorer): over generated views, the stream's shape never breaks", 
 // ===========================================================================
 
 const BUNDLE_OK = ["ermine-client.js", "ermine-client.js.map", "ermine-host.js", "ermine-host.js.map"];
+/** The writers' web/ folder as listed on the machine this was built on
+ *  (MEASURED: `ls ermine-writers/writers/html/src/main/resources/web`). */
+const WRITERS_OK = ["common.css", "htmlwriter.css", "htmlwriter.js", "htmlwriter_classic.css", "htmlwriter_dark.css",
+  "iejson.js", "javafxwriter.css"];
 
 test("panel S2 (envelope): ONE shape -- {kind: snapshot, seq, messages} -- and the messages are panelMessagesFor's", () => {
   const view = panelAfter([answerOutcome("ok-wpint")], { pending: true });
@@ -10871,6 +10875,12 @@ test("panel S2 (roots): localResourceRoots is exactly what the page loads -- the
  * watcher is also MORE capable than the documented one: it reports per-file
  * events for a folder that is absent or re-created and every deleted file,
  * which the typings say a real one may not (the S3 review's M1).
+ * WP-11 (S4): `checkPreviewWriters` reads the setting from `m.writersPath` and
+ * uses `m.root` for BOTH the first workspace folder and `resolveServer().root`
+ * (the glue's two sources agree whenever `ermine.serverPath` is unset, which is
+ * the only case the model has); `panelOptions(bundle, writers)` is still not
+ * modelled -- its one `localResourceRoots` list is pinned by `glue pins
+ * (WP-11) the writers` and its content by `panel S4 (roots)`.
  *
  * THE H-NUMBERS in the test names are the design review's §3: H1 a panel
  * disposed or replaced under a render, H2 an answer overtaken by a newer
@@ -10883,6 +10893,10 @@ function panelGlueModel(opts) {
     target: o.target || "panel",
     root: o.root === undefined ? "/w" : o.root,
     listing: o.listing === undefined ? BUNDLE_OK.slice() : o.listing,
+    // WP-11: the setting and the writers folder's listing.
+    writersPath: o.writersPath === undefined ? "" : o.writersPath,
+    writersListing: o.writersListing === undefined ? WRITERS_OK.slice() : o.writersListing,
+    panelWriters: null,
     previewPanel: undefined,
     panelReady: false,
     panelSeq: 0,
@@ -11033,6 +11047,7 @@ function panelGlueModel(opts) {
     fastMode: m.fastMode === true,
     switching: null,
     reloading: core.bundleReloading(m.bundleWatch),
+    writers: o.mutantViewNoWriters ? null : m.panelWriters,
   });
   /** `postSnapshot(why)`. */
   m.postSnapshot = (why) => {
@@ -11058,8 +11073,15 @@ function panelGlueModel(opts) {
     const listing = dir ? m.listing : null;
     return core.previewBundleCheck(dir, listing);
   };
-  /** `setPanelHtml(panel, bundle)`. */
-  m.setPanelHtml = (panel, bundle) => {
+  /** `checkPreviewWriters()` (WP-11). */
+  m.checkPreviewWriters = () => {
+    const where = core.previewWritersDir(m.writersPath, m.root, m.root);
+    const listing = where.dir ? m.writersListing : null;
+    return core.previewWritersCheck(where, listing);
+  };
+  /** `setPanelHtml(panel, bundle, writers)`. */
+  m.setPanelHtml = (panel, bundle, writers) => {
+    m.panelWriters = writers;
     m.panelBundle = bundle;
     m.panelReady = false;
     if (!bundle.ok) {
@@ -11067,25 +11089,30 @@ function panelGlueModel(opts) {
       panel.webview.html = core.buildPanelNoticeHtml(bundle);
       return;
     }
-    const uri = (file) => panel.webview.asWebviewUri({ fsPath: path.join(bundle.dir, file) }).toString();
+    const writersNote = core.writersLine(writers);
+    if (writersNote) m.logs.push(writersNote);
+    const uriOf = (dir, file) => panel.webview.asWebviewUri({ fsPath: path.join(dir, file) }).toString();
     panel.webview.html = core.buildPreviewHtml(
-      { cspSource: panel.webview.cspSource, client: uri("ermine-client.js"), host: uri("ermine-host.js") },
+      core.previewPageUris(panel.webview.cspSource, bundle, writers, uriOf),
       { stamp: m.now });
   };
   /** `openPanel()`. */
   m.openPanel = () => {
     if (m.previewPanel && !o.mutantSecondPanel) {
       m.previewPanel.reveal(undefined, true);
-      if (!m.panelBundle || !m.panelBundle.ok) {
+      if (o.mutantNoWritersRecheck ? (!m.panelBundle || !m.panelBundle.ok) : core.panelRecheck(m.panelBundle, m.panelWriters)) {
         const bundle = m.checkPreviewBundle();
-        if (bundle.ok) {
-          m.setPanelHtml(m.previewPanel, bundle);
+        const writers = m.checkPreviewWriters();
+        const reload = o.mutantReloadEveryCommand ? bundle.ok : core.panelReload(m.panelBundle, m.panelWriters, bundle, writers);
+        if (reload) {
+          m.setPanelHtml(m.previewPanel, bundle, writers);
           m.watchBundle(bundle.dir);
         }
       }
       return;
     }
     const bundle = m.checkPreviewBundle();
+    const writers = m.checkPreviewWriters();
     const panel = m.fakePanel();
     m.created.push(panel);
     m.previewPanel = panel;
@@ -11098,6 +11125,7 @@ function panelGlueModel(opts) {
         m.previewPanel = undefined;
         m.panelReady = false;
         m.panelBundle = null;
+        m.panelWriters = null;
         if (!o.mutantNoUnwatch) m.unwatchBundle();
       }),
       panel.onDidChangeViewState(() => {
@@ -11106,7 +11134,7 @@ function panelGlueModel(opts) {
       }),
       panel.webview.onDidReceiveMessage((msg) => m.onPanelMessage(panel, msg))
     );
-    m.setPanelHtml(panel, bundle);
+    m.setPanelHtml(panel, bundle, writers);
     m.watchBundle(bundle.dir);
   };
   /** `watchBundle(dir)`. */
@@ -11159,11 +11187,12 @@ function panelGlueModel(opts) {
     const panel = m.previewPanel;
     if (!panel) return;
     const bundle = m.checkPreviewBundle();
+    const writers = m.checkPreviewWriters();
     m.logs.push(core.bundleReloadLine(m.panelBundle, bundle, events));
     m.reloads += 1;
     if (o.mutantReloadNoHtml) { m.postSnapshot("reloaded"); return; }
     if (o.mutantNoticeNotRestored && m.panelBundle && !m.panelBundle.ok) return;
-    m.setPanelHtml(panel, bundle);
+    m.setPanelHtml(panel, bundle, writers);
   };
   /** `onPanelMessage(panel, msg)`. */
   m.onPanelMessage = (panel, msg) => {
@@ -11250,6 +11279,7 @@ function panelGlueModel(opts) {
     }
     if (!o.mutantNoUnwatch) m.unwatchBundle();
     m.panelBundle = null;
+    m.panelWriters = null;
     m.panelAnswers = core.initialPanelAnswers();
   };
   m.answer = (i, value) => m.wires[i].settle(value);
@@ -11683,7 +11713,9 @@ test("glue pins (WP-10 S2) one panel -- one createWebviewPanel, create-or-reveal
   assert.ok(/viewColumn: vscode\.ViewColumn\.Beside, preserveFocus: true/.test(open) &&
             /retainContextWhenHidden: true/.test(open),
     pin("the panel does not open beside without focus, or retain is gone", "§2(a): the reveal never steals focus (U2's optimisation)"));
-  assert.ok(/if \(!panelBundle \|\| !panelBundle\.ok\) \{\s*const bundle = checkPreviewBundle\(\);\s*if \(bundle\.ok\) \{\s*previewPanel\.webview\.options = panelOptions\(bundle\);\s*setPanelHtml\(previewPanel, bundle\);/.test(open),
+  // WP-11 (S4) widened the re-check to a page built without the whole
+  // writers, and gated the re-set on core.panelReload (fresh checks differ).
+  assert.ok(/if \(core\.panelRecheck\(panelBundle, panelWriters\)\) \{\s*const bundle = checkPreviewBundle\(\);\s*const writers = checkPreviewWriters\(\);\s*if \(core\.panelReload\(panelBundle, panelWriters, bundle, writers\)\) \{\s*previewPanel\.webview\.options = panelOptions\(bundle, writers\);\s*setPanelHtml\(previewPanel, bundle, writers\);/.test(open),
     pin("the re-check of an existing panel changed (its condition, or the options reset before the html)",
         "that ONLY a panel showing the notice page is re-checked (a working page is never reloaded by a command), " +
         "and that a panel first opened with no root gets its localResourceRoots when the bundle appears (review M1: R15, R16)"));
@@ -11765,10 +11797,12 @@ test("glue pins (WP-10 S2) the post -- one postMessage, guarded by the ready lat
     "unsaved: [],", 'fastMode: config().get("fastMode", false) === true,', "switching: null,",
     // WP-10 S3: the watcher's coalescer raises it (`glue pins (WP-10 S3) ...`).
     "reloading: core.bundleReloading(bundleWatch),",
+    // WP-11 (S4): the writers check the page was built from.
+    "writers: panelWriters,",
   ];
   const got = (viewNow.match(/^\s*[a-zA-Z]+[:,][^\n]*$/gm) || []).map((l) => l.trim());
   assert.deepStrictEqual(got, fields,
-    pin("panelViewNow's fields are not exactly the ten the model passes", "that the model reads what the glue reads (review M1: R17, R18)"));
+    pin("panelViewNow's fields are not exactly the eleven the model passes", "that the model reads what the glue reads (review M1: R17, R18)"));
 });
 
 test("glue pins (WP-10 S2) the page talks back -- ready and visible resync, Restart is the command, dispose clears", () => {
@@ -11804,7 +11838,7 @@ test("glue pins (WP-10 S2) the page and the bundle -- the notice page on a faile
   const html = body("function setPanelHtml(", "function openPanel(");
   assert.ok(/panelBundle = bundle;\s*panelReady = false;\s*if \(!bundle\.ok\) \{[\s\S]*?log\([\s\S]*?core\.buildPanelNoticeHtml\(bundle\);\s*return;/.test(html),
     pin("a missing bundle is not the notice page plus a channel line, or the latch is not lowered first", "W10"));
-  assert.ok(/core\.buildPreviewHtml\(/.test(html) && /cspSource: panel\.webview\.cspSource/.test(html),
+  assert.ok(/core\.buildPreviewHtml\(\s*core\.previewPageUris\(panel\.webview\.cspSource, bundle, writers, uriOf\),/.test(html),
     pin("the page is not core.buildPreviewHtml with the webview's cspSource", "the exact CSP"));
   const check = body("function checkPreviewBundle(", "function panelOptions(");
   assert.ok(/core\.previewBundleDir\(server && server\.root\)/.test(check) && /fs\.readdirSync\(dir\)/.test(check) &&
@@ -12146,7 +12180,7 @@ test("glue pins (WP-10 S3) one watcher -- ONE createFileSystemWatcher on the bun
   assert.strictEqual(count(/\bwatchBundle\(/g, src), 3, pin("watchBundle is called other than from openPanel's two branches", "never a watcher without a panel"));
   const open = body("function openPanel(", "function watchBundle(");
   assert.strictEqual(count(/\bwatchBundle\(bundle\.dir\);/g, open), 2, pin("openPanel does not watch in both branches", "the recovered page is watched too"));
-  assert.ok(/setPanelHtml\(panel, bundle\);\s*watchBundle\(bundle\.dir\);\s*\}/.test(open),
+  assert.ok(/setPanelHtml\(panel, bundle, writers\);\s*watchBundle\(bundle\.dir\);\s*\}/.test(open),
     pin("the new panel is not watched after its page is set", "W4"));
 });
 
@@ -12164,7 +12198,7 @@ test("glue pins (WP-10 S3) the coalescer and the reload -- one timer, the announ
   // the definition, the arms' fire, the timer and the dispose -- nothing else feeds it
   assert.strictEqual(count(/\bbundleStep\(/g, src), 4, pin("bundleStep is called from somewhere new", "the watcher's inputs are the arms, the timer and dispose"));
   const reload = body("function reloadBundle(", "function onPanelMessage(");
-  assert.ok(/const panel = previewPanel;\s*if \(!panel\) return;\s*const bundle = checkPreviewBundle\(\);\s*log\(core\.bundleReloadLine\(panelBundle, bundle, events\)\);\s*if \(bundle\.ok\) panel\.webview\.options = panelOptions\(bundle\);\s*setPanelHtml\(panel, bundle\);\s*\}\s*$/.test(reload),
+  assert.ok(/const panel = previewPanel;\s*if \(!panel\) return;\s*const bundle = checkPreviewBundle\(\);\s*const writers = checkPreviewWriters\(\);\s*log\(core\.bundleReloadLine\(panelBundle, bundle, events\)\);\s*if \(bundle\.ok\) panel\.webview\.options = panelOptions\(bundle, writers\);\s*setPanelHtml\(panel, bundle, writers\);\s*\}\s*$/.test(reload),
     pin("reloadBundle is not: re-check, one channel line, the html re-set by setPanelHtml (page or notice)",
         "a reload loads new code (the html reset), a vanished bundle shows the notice and a returned one the page (H4)"));
   const viewNow = body("function panelViewNow(", "function postSnapshot(");
@@ -12174,9 +12208,9 @@ test("glue pins (WP-10 S3) the coalescer and the reload -- one timer, the announ
 test("glue pins (WP-10 S3) disposal -- the watcher goes with the panel and with the window", () => {
   const { src, pin, body } = s2Glue();
   const open = body("function openPanel(", "function watchBundle(");
-  assert.ok(/if \(previewPanel !== panel\) return;\s*previewPanel = undefined;\s*panelReady = false;\s*panelBundle = null;\s*unwatchBundle\(\);\s*\}\),/.test(open),
+  assert.ok(/if \(previewPanel !== panel\) return;\s*previewPanel = undefined;\s*panelReady = false;\s*panelBundle = null;\s*panelWriters = null;\s*unwatchBundle\(\);\s*\}\),/.test(open),
     pin("closing the panel does not dispose the bundle watcher", "never a watcher without a panel"));
-  assert.ok(/unwatchBundle\(\);\s*panelBundle = null;/.test(body("function disposePreview(", "function restorePick(")),
+  assert.ok(/unwatchBundle\(\);\s*panelBundle = null;\s*panelWriters = null;/.test(body("function disposePreview(", "function restorePick(")),
     pin("disposePreview does not dispose the bundle watcher", "teardown is a state"));
   const unwatch = body("function unwatchBundle(", "function bundleStep(");
   assert.ok(/const w = bundleWatcher;\s*bundleWatcher = null;\s*if \(w\) \{\s*for \(const d of w\.disposables\) \{/.test(unwatch) &&
@@ -12224,4 +12258,389 @@ test("gate_client (WP-10 S3): UNAVAILABLE (3) without client/node_modules, FAIL 
   } finally {
     fsMod.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+// ===========================================================================
+// WP-11 (= WP-10 STAGE 4): THE LEGACY WRITERS IN THE PANEL.
+//
+// The writers `<script>` (first), three style sheets, `ermine.preview.writersPath`
+// (U3) and the writers-missing banner (the reducer's `error`, argued at
+// `WRITERS_NOTE_SEPARATOR` in preview-core.js).  Whether the writers bundle
+// RUNS in a webview -- `table` through `runTabular`, a `pieChart` drawing, the
+// CSP console -- is NOT observable here: this stage's done-when is the
+// playtest (E3, E9-E11).  What node can hold is what the extension DECIDES:
+// the page it builds, the roots it grants, the banner it sends, and when it
+// re-checks.
+// ===========================================================================
+
+const S4_SRC = "https://file+.vscode-resource.vscode-cdn.net";
+const S4_UPON = (dir, file) => "U(" + path.join(dir, file) + ")";
+const s4Bundle = () => core.previewBundleCheck("/w/client/dist/browser", BUNDLE_OK);
+const s4Check = (listing, dir) => core.previewWritersCheck({ dir: dir === undefined ? "/wr/web" : dir, source: "setting", problem: null }, listing);
+const s4Page = (writers, stamp) =>
+  core.buildPreviewHtml(core.previewPageUris(S4_SRC, s4Bundle(), writers, S4_UPON), { stamp: stamp === undefined ? 9 : stamp });
+const s4Scripts = (html) => html.match(/<script\b[^>]*>[\s\S]*?<\/script>/g) || [];
+const s4Links = (html) => html.match(/<link [^>]*>/g) || [];
+
+test("panel S4 (html): writers FIRST, then client and host; the three style sheets in order; zero inline scripts; the writers unstamped", () => {
+  const html = s4Page(s4Check(WRITERS_OK));
+  assert.deepStrictEqual(s4Scripts(html), [
+    '<script src="U(/wr/web/htmlwriter.js)"></script>',
+    '<script src="U(/w/client/dist/browser/ermine-client.js)?v=9"></script>',
+    '<script src="U(/w/client/dist/browser/ermine-host.js)?v=9"></script>',
+  ]);
+  assert.strictEqual((html.match(/<script/g) || []).length, 3, "no <script> the tag list missed");
+  assert.strictEqual(s4Scripts(html).filter((t) => !/^<script src="[^"]+"><\/script>$/.test(t)).length, 0, "zero inline script bodies");
+  for (const attr of ["defer", "async", "type=", "nonce"]) assert.ok(html.indexOf(attr) < 0, attr);
+  assert.deepStrictEqual(s4Links(html), [
+    '<link rel="stylesheet" href="U(/wr/web/common.css)">',
+    '<link rel="stylesheet" href="U(/wr/web/htmlwriter.css)">',
+    '<link rel="stylesheet" href="U(/wr/web/htmlwriter_classic.css)">',
+  ]);
+  assert.ok(html.indexOf("<link") < html.indexOf("</head>") && html.indexOf("</head>") < html.indexOf("<script"),
+    "style sheets in the head, scripts after the root element");
+  assert.ok(html.indexOf('<div id="' + core.PREVIEW_ROOT_ID + '"></div>') < html.indexOf("<script"));
+  // the three are exactly these, and neither the dark theme nor the JavaFX sheet
+  assert.deepStrictEqual(core.PREVIEW_WRITERS_STYLES.slice(), ["common.css", "htmlwriter.css", "htmlwriter_classic.css"]);
+  assert.strictEqual(core.PREVIEW_WRITERS_SCRIPT, "htmlwriter.js");
+  assert.ok(!/dark|javafx/.test(html));
+});
+
+test("panel S4 (html): a missing writers folder builds the page WITHOUT them -- two scripts, no link; half loads the script and the sheets it has", () => {
+  const missing = s4Page(s4Check(["common.css", "htmlwriter.css", "htmlwriter_classic.css"]));
+  assert.deepStrictEqual(s4Scripts(missing).map((t) => t.replace(/\?v=9/, "")), [
+    '<script src="U(/w/client/dist/browser/ermine-client.js)"></script>',
+    '<script src="U(/w/client/dist/browser/ermine-host.js)"></script>',
+  ]);
+  assert.deepStrictEqual(s4Links(missing), [], "no style sheet of a folder the page does not load from");
+  const none = s4Page(s4Check(null));
+  assert.deepStrictEqual(s4Links(none), []);
+  assert.strictEqual(s4Scripts(none).length, 2);
+  const half = s4Page(s4Check(["htmlwriter.js", "common.css", "htmlwriter_classic.css"]));
+  assert.strictEqual(s4Scripts(half)[0], '<script src="U(/wr/web/htmlwriter.js)"></script>');
+  assert.deepStrictEqual(s4Links(half), [
+    '<link rel="stylesheet" href="U(/wr/web/common.css)">',
+    '<link rel="stylesheet" href="U(/wr/web/htmlwriter_classic.css)">',
+  ]);
+});
+
+test("panel S4 (html): a hostile writers folder is escaped -- no tag, no attribute, in the script or the links", () => {
+  const evil = '/x"><script>alert(1)</script><x a="';
+  const html = s4Page(s4Check(WRITERS_OK, evil));
+  assert.strictEqual((html.match(/<script/g) || []).length, 3);
+  assert.strictEqual((html.match(/<link/g) || []).length, 3);
+  assert.ok(html.indexOf("alert(1)</script>") < 0);
+  assert.strictEqual((html.match(/&quot;&gt;&lt;script&gt;alert\(1\)&lt;\/script&gt;/g) || []).length, 4, "the script and the three links, each escaped");
+});
+
+test("panel S4 (csp): the page with the writers carries the S1 policy EXACTLY -- 'unsafe-eval' stays, no blob:, no font-src, no connect-src", () => {
+  const exact = "default-src 'none'; script-src " + S4_SRC + " 'unsafe-eval'; style-src " + S4_SRC +
+    " 'unsafe-inline'; img-src " + S4_SRC + " data:;";
+  for (const listing of [WRITERS_OK, null, ["htmlwriter.js"]]) {
+    const html = s4Page(s4Check(listing));
+    const metas = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/g) || [];
+    assert.deepStrictEqual(metas, ['<meta http-equiv="Content-Security-Policy" content="' + exact + '">']);
+    for (const absent of ["blob:", "font-src", "connect-src", "nonce"]) assert.ok(html.indexOf(absent) < 0, absent);
+  }
+});
+
+test("panel S4 (writersState): present / half / missing from the listing, FAIL-CLOSED on htmlwriter.js", () => {
+  const rows = [
+    [WRITERS_OK, "present"],
+    [["htmlwriter.js", "common.css", "htmlwriter.css", "htmlwriter_classic.css"], "present"],
+    [["htmlwriter.js", "common.css", "htmlwriter.css"], "half"],
+    [["htmlwriter.js", "common.css", "htmlwriter.css", "htmlwriter_dark.css"], "half"],
+    [["htmlwriter.js"], "half"],
+    [["common.css", "htmlwriter.css", "htmlwriter_classic.css", "htmlwriter_dark.css", "iejson.js"], "missing"],
+    [["HTMLWRITER.JS", "common.css", "htmlwriter.css", "htmlwriter_classic.css"], "missing"],
+    [["htmlwriter.js.map", "common.css", "htmlwriter.css", "htmlwriter_classic.css"], "missing"],
+    [[], "missing"],
+    [null, "missing"],
+    [undefined, "missing"],
+    ["htmlwriter.js", "missing"],
+    [[7, null, "common.css"], "missing"],
+  ];
+  for (const [listing, want] of rows) assert.strictEqual(core.writersState(listing), want, JSON.stringify(listing));
+});
+
+test("panel S4 (check): what the page loads, the root it needs and the sentence it says -- per state", () => {
+  const present = s4Check(WRITERS_OK);
+  assert.deepStrictEqual(
+    { state: present.state, script: present.script, styles: present.styles.slice(), root: present.root, missing: present.missing.slice(), message: present.message },
+    { state: "present", script: "htmlwriter.js", styles: ["common.css", "htmlwriter.css", "htmlwriter_classic.css"], root: "/wr/web", missing: [], message: null });
+  assert.strictEqual(core.writersLine(present), null, "a present folder writes no channel line");
+  const missing = s4Check(["common.css"]);
+  assert.strictEqual(missing.state, "missing");
+  assert.strictEqual(missing.script, null);
+  assert.deepStrictEqual(missing.styles.slice(), []);
+  assert.strictEqual(missing.root, null, "nothing of the folder is loaded, so it is no resource root");
+  assert.match(missing.message, /^the legacy writers are not loaded: no htmlwriter\.js in \/wr\/web\. /);
+  assert.match(missing.message, /table, drilldownTable, the charts and styleBox show an error box/);
+  assert.match(missing.message, /set ermine\.preview\.writersPath to the writers' web\/ folder and run Ermine: Preview Report\.\.\. again$/);
+  assert.strictEqual(core.writersLine(missing), "preview: " + missing.message);
+  const half = s4Check(["htmlwriter.js", "common.css"]);
+  assert.strictEqual(half.state, "half");
+  assert.strictEqual(half.root, "/wr/web");
+  assert.deepStrictEqual(half.missing.slice(), ["htmlwriter.css", "htmlwriter_classic.css"]);
+  assert.match(half.message, /has htmlwriter\.js but not htmlwriter\.css, htmlwriter_classic\.css, so the legacy widgets draw unstyled/);
+  const dflt = core.previewWritersCheck({ dir: "/d/web", source: "default", problem: null }, null);
+  assert.match(dflt.message, /no htmlwriter\.js in \/d\/web \(ermine\.preview\.writersPath is empty, so this is the default: the ermine-writers checkout beside this one\)/);
+  const noDir = core.previewWritersCheck(core.previewWritersDir("", "/w", null), WRITERS_OK);
+  assert.strictEqual(noDir.state, "missing", "no folder is missing, whatever listing is handed in");
+  assert.strictEqual(noDir.root, null);
+  assert.match(noDir.message, /ermine\.preview\.writersPath is empty and there is no checkout/);
+  for (const c of [present, missing, half, dflt, noDir]) assert.ok(Object.isFrozen(c) && Object.isFrozen(c.styles));
+});
+
+test("panel S4 (dir): ermine.preview.writersPath goes through THE SAME absoluteRoots as ermine.preview.roots; empty is the sibling default", () => {
+  const base = path.join("/w", "folder");
+  for (const raw of ["web", "./a/../web", "../ermine-writers/web", path.join("/abs", "x", "..", "web"), "  web  "]) {
+    const got = core.previewWritersDir(raw, base, "/srv/root");
+    const via = core.absoluteRoots([raw], base, "ermine.preview.writersPath");
+    assert.deepStrictEqual({ dir: got.dir, problem: got.problem }, { dir: via.roots[0], problem: null }, JSON.stringify(raw));
+    assert.strictEqual(got.source, "setting");
+  }
+  for (const empty of ["", "   ", undefined, null]) {
+    const d = core.previewWritersDir(empty, base, path.join("/home", "me", "ermine-scala"));
+    assert.deepStrictEqual({ dir: d.dir, source: d.source, problem: d.problem },
+      { dir: path.join("/home", "me", "ermine-writers", "writers", "html", "src", "main", "resources", "web"), source: "default", problem: null },
+      JSON.stringify(empty));
+  }
+  const nul = core.previewWritersDir("we\u0000b", base, "/r");
+  assert.strictEqual(nul.dir, null);
+  assert.match(nul.problem, /^ermine\.preview\.writersPath entry .* contains a NUL byte/);
+  const rel = core.previewWritersDir("web", undefined, "/r");
+  assert.strictEqual(rel.dir, null);
+  assert.match(rel.problem, /^ermine\.preview\.writersPath entry "web" is relative and there is no workspace folder/);
+  assert.match(core.previewWritersDir(7, base, "/r").problem, /ermine\.preview\.writersPath is a directory path, not a number/);
+  assert.match(core.previewWritersDir(["web"], base, "/r").problem, /not a array/);
+  // the roots' own wording is unchanged by the new parameter
+  assert.match(core.absoluteRoots([" "], "/w").problems[0], /^ermine\.preview\.roots has an empty entry/);
+});
+
+test("panel S4 (roots): localResourceRoots gains the writers folder exactly when the page loads from it -- at most two entries", () => {
+  const b = "/w/client/dist/browser";
+  assert.deepStrictEqual(core.previewResourceRoots(b, s4Check(WRITERS_OK).root), [b, "/wr/web"]);
+  assert.deepStrictEqual(core.previewResourceRoots(b, s4Check(["htmlwriter.js"]).root), [b, "/wr/web"]);
+  assert.deepStrictEqual(core.previewResourceRoots(b, s4Check(null).root), [b]);
+  assert.deepStrictEqual(core.previewResourceRoots(b, s4Check(["common.css"]).root), [b]);
+  // every URI the page references lies under one of those roots
+  for (const listing of [WRITERS_OK, ["htmlwriter.js", "common.css"], null]) {
+    const w = s4Check(listing);
+    const roots = core.previewResourceRoots(b, w.root);
+    const refs = [];
+    core.previewPageUris(S4_SRC, s4Bundle(), w, (dir, file) => { refs.push(path.join(dir, file)); return "u"; });
+    for (const r of refs) assert.ok(roots.some((root) => r.startsWith(root + path.sep)), r + " outside " + JSON.stringify(roots));
+  }
+});
+
+test("panel S4 (banner): the writers sentence is the reducer's `error` -- alone after a good answer, a suffix on a failed one, absent when present", () => {
+  const missing = s4Check(null);
+  const half = s4Check(["htmlwriter.js"]);
+  const okView = (writers, extra) => panelAfter([answerOutcome("ok-wpint")], Object.assign({ writers }, extra || {}));
+  // present: the S1-S3 stream, unchanged
+  assert.deepStrictEqual(core.panelMessagesFor(okView(s4Check(WRITERS_OK))), core.panelMessagesFor(okView(null)));
+  // missing / half: ONE error after the render, status 0, no path, the check's own sentence
+  for (const w of [missing, half]) {
+    const msgs = core.panelMessagesFor(okView(w));
+    assert.deepStrictEqual(kinds(msgs), ["render", "error", "stale", "stuck", "held", "offline", "switching", "unsaved"]);
+    assert.deepStrictEqual(msgs[1], { kind: "error", status: 0, message: w.message, path: null, reason: null });
+  }
+  // before any render: the banner alone (it replaces "Pick a report")
+  const bare = core.panelMessagesFor(core.panelView({ writers: missing }));
+  assert.deepStrictEqual(kinds(bare), ["error", "stale", "stuck", "held", "offline", "switching", "unsaved"]);
+  // a FAILED answer keeps the one error slot; the writers sentence rides on it, after the fast-mode suffix
+  const failed = core.panelMessagesFor(panelAfter([{ current: 1, outcome: { answer: Object.assign({}, ERR_500, { generation: 1 }) } }],
+    { writers: missing, fastMode: true }));
+  const errs = failed.filter((x) => x.kind === "error");
+  assert.strictEqual(errs.length, 1, "one error message, never two");
+  assert.strictEqual(errs[0].status, 500);
+  assert.strictEqual(errs[0].message, ERR_500.message + core.FAST_MODE_SUFFIX + core.WRITERS_NOTE_SEPARATOR + missing.message);
+  // the view keeps only {state, message}, and only when not present
+  assert.deepStrictEqual(core.panelView({ writers: missing }).writers, { state: "missing", message: missing.message });
+  assert.strictEqual(core.panelView({ writers: s4Check(WRITERS_OK) }).writers, null);
+  assert.strictEqual(core.panelView({}).writers, null);
+  assert.strictEqual(core.panelView({ writers: { state: "missing", message: "  " } }).writers, null, "a blank sentence is no banner");
+  // no tenth kind, ever
+  for (const w of [missing, half, null]) {
+    for (const m of core.panelMessagesFor(okView(w))) assert.ok(core.PANEL_MESSAGE_KINDS.indexOf(m.kind) >= 0, m.kind);
+  }
+});
+
+test("panel S4 (recheck): an explicit command re-checks a page built without the whole writers, and re-sets it only when the checks differ", () => {
+  const ok = s4Bundle();
+  const notBuilt = core.previewBundleCheck("/w/client/dist/browser", null);
+  const P = s4Check(WRITERS_OK), M = s4Check(null), H = s4Check(["htmlwriter.js"]);
+  assert.strictEqual(core.panelRecheck(ok, P), false, "a working page with the writers is never reloaded by a command");
+  for (const [b, w] of [[ok, M], [ok, H], [notBuilt, P], [null, P], [ok, null]]) assert.strictEqual(core.panelRecheck(b, w), true);
+  assert.strictEqual(core.panelReload(ok, M, ok, P), true, "missing -> present: the page gains the writers");
+  assert.strictEqual(core.panelReload(ok, H, ok, P), true);
+  assert.strictEqual(core.panelReload(ok, M, ok, s4Check(null)), false, "still missing, same folder: no reload per command");
+  assert.strictEqual(core.panelReload(ok, M, ok, s4Check(null, "/other/web")), true, "the setting moved: a new sentence");
+  assert.strictEqual(core.panelReload(notBuilt, P, ok, M), true, "the bundle came back: the page, whatever the writers");
+  assert.strictEqual(core.panelReload(ok, M, notBuilt, P), false, "never swap a page for a notice on a command");
+  assert.strictEqual(core.panelReload(notBuilt, M, notBuilt, P), false);
+});
+
+/** A model opened by an explicit render and loaded, then one more explicit render. */
+async function s4Explicit(m, note) {
+  const r = m.renderNow(true);
+  await flush();
+  m.answer(m.wires.length - 1, OK_DOC(note));
+  await r;
+}
+const s4Error = (env) => env.messages.filter((x) => x.kind === "error");
+
+test("panel S4 model (missing): the page loads WITHOUT the writers, ONE channel line, and the banner is the snapshot's error", async () => {
+  const m = panelGlueModel({ writersListing: ["common.css", "htmlwriter.css", "htmlwriter_classic.css"] });
+  const p = await s3OpenReady(m, "a");
+  assert.strictEqual((p.webview.html.match(/<script/g) || []).length, 2, "client and host only");
+  assert.ok(!/htmlwriter/.test(p.webview.html) && !/<link/.test(p.webview.html));
+  const lines = m.logs.filter((l) => /legacy writers/.test(l));
+  assert.strictEqual(lines.length, 1, m.logs.join("\n"));
+  assert.match(lines[0], /^preview: the legacy writers are not loaded: no htmlwriter\.js in \/ermine-writers\/writers\/html\/src\/main\/resources\/web \(ermine\.preview\.writersPath is empty/);
+  const errs = s4Error(p.last());
+  assert.strictEqual(errs.length, 1);
+  assert.strictEqual(errs[0].message, lines[0].slice("preview: ".length));
+  assert.strictEqual(p.last().messages[0].document.root.note, "a", "the document is still sent below the banner");
+  assert.deepStrictEqual(p.last().messages, m.truth());
+});
+
+test("panel S4 model (present / half): the writers load first with their sheets; present is silent, half says what is missing", async () => {
+  const m = panelGlueModel();
+  const p = await s3OpenReady(m, "a");
+  assert.match(s4Scripts(p.webview.html)[0], /\/ermine-writers\/writers\/html\/src\/main\/resources\/web\/htmlwriter\.js\)?"><\/script>$/);
+  assert.strictEqual(s4Links(p.webview.html).length, 3);
+  assert.deepStrictEqual(s4Error(p.last()), []);
+  assert.ok(!m.logs.some((l) => /legacy writers/.test(l)), "a present folder writes no line");
+  const h = panelGlueModel({ writersListing: ["htmlwriter.js", "common.css"] });
+  const ph = await s3OpenReady(h, "a");
+  assert.strictEqual(s4Links(ph.webview.html).length, 1);
+  assert.match(s4Error(ph.last())[0].message, /style sheets are incomplete/);
+  assert.strictEqual(h.logs.filter((l) => /legacy writers/.test(l)).length, 1);
+});
+
+test("panel S4 model (fixed): the writers folder is NOT watched -- a fixed path is picked up by the NEXT explicit command, once", async () => {
+  const m = panelGlueModel({ writersListing: null });
+  const p = await s3OpenReady(m, "a");
+  assert.strictEqual(s4Error(p.last()).length, 1);
+  assert.strictEqual(liveWatchers(m).length, 1, "the bundle folder only");
+  m.writersListing = WRITERS_OK.slice();              // the developer fixes the path (or checks the writers out)
+  m.setPreviewStatus();                               // a status post changes nothing: not watched
+  assert.strictEqual(p.htmls.length, 1);
+  await s4Explicit(m, "b");
+  assert.strictEqual(p.htmls.length, 2, "the explicit command re-set the page");
+  assert.match(p.webview.html, /htmlwriter\.js/);
+  p.loadPage();
+  assert.deepStrictEqual(s4Error(p.last()), [], "the banner is gone");
+  assert.strictEqual(p.last().messages[0].document.root.note, "b");
+  await s4Explicit(m, "c");
+  assert.strictEqual(p.htmls.length, 2, "a working page is never reloaded by a command");
+  assert.strictEqual(liveWatchers(m).length, 1);
+});
+
+test("panel S4 model (still missing): a machine with no writers is NOT reloaded on every command", async () => {
+  const m = panelGlueModel({ writersListing: null });
+  const p = await s3OpenReady(m, "a");
+  for (const n of ["b", "c", "d"]) await s4Explicit(m, n);
+  assert.strictEqual(p.htmls.length, 1);
+  assert.strictEqual(m.logs.filter((l) => /legacy writers/.test(l)).length, 1, "one line per page built, not per command");
+});
+
+test("panel S4 model (bundle rebuild): a reload re-checks the writers too, and the new page's ready carries the banner's new state", async () => {
+  const m = panelGlueModel({ writersListing: null });
+  const p = await s3OpenReady(m, "a");
+  m.writersListing = WRITERS_OK.slice();
+  m.build();
+  m.tick(Q + 10);
+  assert.strictEqual(m.reloads, 1);
+  assert.match(p.webview.html, /htmlwriter\.js/);
+  p.loadPage();
+  assert.deepStrictEqual(s4Error(p.last()), []);
+  m.writersListing = null;
+  m.build();
+  m.tick(Q + 10);
+  p.loadPage();
+  assert.ok(!/htmlwriter\.js/.test(p.webview.html));
+  assert.strictEqual(s4Error(p.last()).length, 1);
+});
+
+test("panel S4 model MUTANTS: no writers re-check, a reload per command, the banner left out of the view", async () => {
+  {
+    const m = panelGlueModel({ writersListing: null, mutantNoWritersRecheck: true });
+    const p = await s3OpenReady(m, "a");
+    m.writersListing = WRITERS_OK.slice();
+    await s4Explicit(m, "b");
+    assert.strictEqual(p.htmls.length, 1, "MUTANT: the fixed path is never picked up by a command");
+  }
+  {
+    const m = panelGlueModel({ writersListing: null, mutantReloadEveryCommand: true });
+    const p = await s3OpenReady(m, "a");
+    await s4Explicit(m, "b");
+    assert.strictEqual(p.htmls.length, 2, "MUTANT: the page is reloaded although nothing changed");
+  }
+  {
+    const m = panelGlueModel({ writersListing: null, mutantViewNoWriters: true });
+    const p = await s3OpenReady(m, "a");
+    assert.deepStrictEqual(s4Error(p.last()), [], "MUTANT: the page loads without the writers and says nothing");
+  }
+});
+
+test("glue pins (WP-11) the writers -- ONE localResourceRoots list of at most two entries, the setting through the roots' absolutiser, the output line", () => {
+  const { src, pin, body, count } = s2Glue();
+  assert.strictEqual(count(/localResourceRoots:/g, src), 1, pin("localResourceRoots is set other than in one place", "one list"));
+  const opts = body("function panelOptions(", "function setPanelHtml(");
+  assert.ok(/localResourceRoots: core\.previewResourceRoots\(bundle\.dir, writers\.root\)\.map\(\(p\) => vscode\.Uri\.file\(p\)\),/.test(opts),
+    pin("localResourceRoots is not exactly [bundle dir, writers root]", "the page may load the writers (and nothing else)"));
+  // the definition and its three calls (openPanel's two branches, reloadBundle)
+  assert.strictEqual(count(/panelOptions\(bundle, writers\)/g, src), 4, pin("a panelOptions call does not pass the writers check", "every page's roots include the folder it loads"));
+  assert.strictEqual(count(/panelOptions\(/g, src), 4, pin("panelOptions is called from somewhere new", "the same"));
+  const check = body("function checkPreviewWriters(", "function panelOptions(");
+  assert.ok(/const where = core\.previewWritersDir\(config\(\)\.get\("preview\.writersPath", ""\), workspaceRoot\(\), server && server\.root\);/.test(check),
+    pin("the setting is not read through core.previewWritersDir (the roots' absolutiser) with the workspace folder and the server root", "U3"));
+  assert.ok(/if \(where\.dir\) \{\s*try \{\s*listing = fs\.readdirSync\(where\.dir\);/.test(check) && /return core\.previewWritersCheck\(where, listing\);\s*\}\s*$/.test(check),
+    pin("the writers check is not the pure check over a listing", "fail-closed on htmlwriter.js"));
+  // the definition and its three calls
+  assert.strictEqual(count(/checkPreviewWriters\(\)/g, src), 4, pin("checkPreviewWriters is called other than from openPanel's two branches and reloadBundle", "the writers are NOT watched"));
+  assert.strictEqual(body("function watchBundle(", "function unwatchBundle(").indexOf("Writers"), -1, pin("the bundle watcher touches the writers", "not watched"));
+  const html = body("function setPanelHtml(", "function openPanel(");
+  assert.ok(/panelWriters = writers;\s*panelBundle = bundle;\s*panelReady = false;/.test(html),
+    pin("setPanelHtml does not store the writers check beside the bundle check", "the banner is the check the page was built from"));
+  assert.ok(/return;\s*\}\s*const writersNote = core\.writersLine\(writers\);\s*if \(writersNote\) log\(writersNote\);\s*const uriOf =/.test(html),
+    pin("the page built without the whole writers does not write its ONE channel line", "the output line"));
+  assert.strictEqual(count(/core\.writersLine\(/g, src), 1, pin("the writers line is written from somewhere else too", "one line per page"));
+  assert.ok(/const uriOf = \(dir, file\) => panel\.webview\.asWebviewUri\(vscode\.Uri\.file\(path\.join\(dir, file\)\)\)\.toString\(\);/.test(html),
+    pin("the page URIs are not asWebviewUri of the files", "the webview may load them"));
+  assert.strictEqual(count(/setPanelHtml\([a-zA-Z]+, bundle, writers\);/g, src), 3, pin("a setPanelHtml call does not pass the writers", "every page is built with the writers check"));
+  assert.ok(/writers: panelWriters,/.test(body("function panelViewNow(", "function postSnapshot(")), pin("the view does not carry the writers", "the banner"));
+});
+
+test("model = glue (WP-11): the model's view builder passes EXACTLY the glue's fields, and the same value wherever the two can be compared", () => {
+  const fsMod = require("node:fs");
+  const { body } = s2Glue();
+  const glue = body("function panelViewNow(", "function postSnapshot(");
+  const self = codeOf(fsMod.readFileSync(__filename, "utf8"));
+  const i = self.indexOf("m.viewNow = () => core.panelView({");
+  const j = self.indexOf("});", i);
+  assert.ok(i >= 0 && j > i, "the model's viewNow is where this test expects it");
+  const model = self.slice(i, j);
+  const fields = (text) => (text.match(/^\s*[a-zA-Z]+[:,][^\n]*$/gm) || []).map((l) => l.trim());
+  const g = fields(glue), mm = fields(model);
+  const key = (l) => l.split(/[:,]/)[0];
+  assert.deepStrictEqual(mm.map(key), g.map(key), "the model passes a field the glue does not, or omits one it passes");
+  // where the glue reads a global the model holds as m.<same name>, the text must match after `m.` goes
+  const LEGIT = {                                    // the glue's global -> the model's, and why
+    "stuckState,": "stuckState: m.stuckState,",
+    "mark: wedgeMark,": "mark: m.mark,",
+    "pick: picked,": "pick: m.picked,",
+    "restartedByUs: core.restartedByUs(restartState),": "restartedByUs: core.restartedByUs(m.restartState),",
+    "pending: renderInFlight || coalesceTimer !== undefined,": "pending: m.renderInFlight || m.coalescing,",
+    'fastMode: config().get("fastMode", false) === true,': "fastMode: m.fastMode === true,",
+    "reloading: core.bundleReloading(bundleWatch),": "reloading: core.bundleReloading(m.bundleWatch),",
+    "writers: panelWriters,": "writers: o.mutantViewNoWriters ? null : m.panelWriters,",
+  };
+  g.forEach((line, n) => {
+    if (Object.prototype.hasOwnProperty.call(LEGIT, line)) assert.strictEqual(mm[n], LEGIT[line], "field " + key(line));
+    else assert.strictEqual(mm[n].replace(/\bm\./g, ""), line, "field " + key(line) + ": the model's value is not the glue's");
+  });
 });

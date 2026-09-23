@@ -630,6 +630,14 @@ let panelAnswers = core.initialPanelAnswers();
 /** The bundle check the panel's html was last built from, or null. */
 let panelBundle = null;
 /**
+ * WP-11: the writers check (`core.previewWritersCheck`) the panel's html was
+ * last built from, or null. Set beside `panelBundle` by `setPanelHtml` only;
+ * the view's `writers` slot. The writers folder is NOT watched: a fixed path
+ * is picked up by the next explicit command (`openPanel`'s re-check), a
+ * bundle rebuild (`reloadBundle`) or a new panel.
+ */
+let panelWriters = null;
+/**
  * WP-10 S3: THE BUNDLE WATCHER -- `{dir, disposables}` while a panel exists
  * and has a bundle directory to watch, else null.  Created by `watchBundle`
  * from `openPanel` only, disposed by `unwatchBundle` with the panel and in
@@ -2438,6 +2446,8 @@ function panelViewNow() {
     // WP-10 S3: raised by the bundle watcher's FIRST event of a burst, lowered
     // when the burst's quiet period ends and the page is re-set.
     reloading: core.bundleReloading(bundleWatch),
+    // WP-11: the writers check the page was built from -- its banner.
+    writers: panelWriters,
   });
 }
 
@@ -2479,14 +2489,37 @@ function checkPreviewBundle() {
   return core.previewBundleCheck(dir, listing);
 }
 
-function panelOptions(bundle) {
+/**
+ * WP-11: the writers, checked from an fs listing by the pure
+ * `core.previewWritersCheck`. `ermine.preview.writersPath` goes through
+ * `core.previewWritersDir`, i.e. THE SAME `core.absoluteRoots` as
+ * `ermine.preview.roots` (relative to the first workspace folder); empty is
+ * the sibling default under `resolveServer().root`.
+ */
+function checkPreviewWriters() {
+  const server = resolveServer();
+  const where = core.previewWritersDir(config().get("preview.writersPath", ""), workspaceRoot(), server && server.root);
+  let listing = null;
+  if (where.dir) {
+    try {
+      listing = fs.readdirSync(where.dir);
+    } catch (_) {
+      listing = null;
+    }
+  }
+  return core.previewWritersCheck(where, listing);
+}
+
+function panelOptions(bundle, writers) {
   return {
     enableScripts: true,
     // Scripts on makes forms default ON (`@types/vscode`); none is wanted.
     enableForms: false,
     // `enableCommandUris` stays at its default `false`: the panel never runs
     // a command itself, it posts an intent.
-    localResourceRoots: core.previewResourceRoots(bundle.dir, null).map((p) => vscode.Uri.file(p)),
+    // ONE list, at most two entries: the bundle folder and, when the page
+    // loads anything of the writers, their folder (WP-11).
+    localResourceRoots: core.previewResourceRoots(bundle.dir, writers.root).map((p) => vscode.Uri.file(p)),
   };
 }
 
@@ -2496,7 +2529,8 @@ function panelOptions(bundle) {
  * gets the static notice page (`core.buildPanelNoticeHtml`) and one line in
  * the channel -- no script, so no `ready`, so nothing is ever posted to it.
  */
-function setPanelHtml(panel, bundle) {
+function setPanelHtml(panel, bundle, writers) {
+  panelWriters = writers;
   panelBundle = bundle;
   panelReady = false;
   if (!bundle.ok) {
@@ -2504,10 +2538,14 @@ function setPanelHtml(panel, bundle) {
     panel.webview.html = core.buildPanelNoticeHtml(bundle);
     return;
   }
-  const uri = (file) => panel.webview.asWebviewUri(vscode.Uri.file(path.join(bundle.dir, file))).toString();
+  // WP-11: a page built without the whole writers says so ONCE here, and
+  // its banner is the view's `writers` slot.
+  const writersNote = core.writersLine(writers);
+  if (writersNote) log(writersNote);
+  const uriOf = (dir, file) => panel.webview.asWebviewUri(vscode.Uri.file(path.join(dir, file))).toString();
   try {
     panel.webview.html = core.buildPreviewHtml(
-      { cspSource: panel.webview.cspSource, client: uri("ermine-client.js"), host: uri("ermine-host.js") },
+      core.previewPageUris(panel.webview.cspSource, bundle, writers, uriOf),
       { stamp: Date.now() }
     );
   } catch (err) {
@@ -2522,27 +2560,33 @@ function setPanelHtml(panel, bundle) {
  * from `present` with `reveal` true. A second command reveals the panel that
  * exists (H9: two commands, one panel). An existing panel showing the
  * not-built notice re-checks, so building the bundle and re-running the
- * command is enough.
+ * command is enough. WP-11: so does a page built without the whole writers
+ * (`core.panelRecheck`), and it is re-set only when the fresh checks differ
+ * (`core.panelReload`) -- a machine with no writers is not reloaded per command.
  */
 function openPanel() {
   if (previewPanel) {
     previewPanel.reveal(undefined, true);
-    if (!panelBundle || !panelBundle.ok) {
+    // WP-11: a page built without the whole writers is re-checked too, and
+    // re-set only when the fresh checks would build a different page.
+    if (core.panelRecheck(panelBundle, panelWriters)) {
       const bundle = checkPreviewBundle();
-      if (bundle.ok) {
-        previewPanel.webview.options = panelOptions(bundle);
-        setPanelHtml(previewPanel, bundle);
+      const writers = checkPreviewWriters();
+      if (core.panelReload(panelBundle, panelWriters, bundle, writers)) {
+        previewPanel.webview.options = panelOptions(bundle, writers);
+        setPanelHtml(previewPanel, bundle, writers);
         watchBundle(bundle.dir);
       }
     }
     return;
   }
   const bundle = checkPreviewBundle();
+  const writers = checkPreviewWriters();
   const panel = vscode.window.createWebviewPanel(
     core.PANEL_VIEW_TYPE,
     core.PANEL_TITLE,
     { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
-    Object.assign(panelOptions(bundle), {
+    Object.assign(panelOptions(bundle, writers), {
       // U2, TAKEN: an OPTIMISATION for scroll and drilldown only. The
       // typings contradict themselves on whether a hidden retained webview
       // receives messages (F1), so the resync on visibility is mandatory
@@ -2562,6 +2606,7 @@ function openPanel() {
       previewPanel = undefined;
       panelReady = false;
       panelBundle = null;
+      panelWriters = null;
       unwatchBundle();
     }),
     // U2 / H2: a hidden webview may have dropped every post; becoming
@@ -2571,7 +2616,7 @@ function openPanel() {
     }),
     panel.webview.onDidReceiveMessage((msg) => onPanelMessage(panel, msg))
   );
-  setPanelHtml(panel, bundle);
+  setPanelHtml(panel, bundle, writers);
   watchBundle(bundle.dir);
 }
 
@@ -2664,9 +2709,10 @@ function reloadBundle(events) {
   const panel = previewPanel;
   if (!panel) return;
   const bundle = checkPreviewBundle();
+  const writers = checkPreviewWriters();
   log(core.bundleReloadLine(panelBundle, bundle, events));
-  if (bundle.ok) panel.webview.options = panelOptions(bundle);
-  setPanelHtml(panel, bundle);
+  if (bundle.ok) panel.webview.options = panelOptions(bundle, writers);
+  setPanelHtml(panel, bundle, writers);
 }
 
 /** Panel -> extension, decided by `core.panelInbound`. The panel decides
@@ -2888,6 +2934,7 @@ function disposePreview() {
   // editor fires `onDidDispose` in.
   unwatchBundle();
   panelBundle = null;
+  panelWriters = null;
   panelAnswers = core.initialPanelAnswers();
   // WP-22 (c): the grace dies with the window. The reducer is asked rather
   // than the timer merely cleared, so nothing that runs after this can see

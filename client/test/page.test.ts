@@ -574,3 +574,71 @@ test("(pg-boot-listener-first) the message listener is in place BEFORE ready is 
   assert.deepStrictEqual(renders, ["first"]);
   dom.window.close();
 });
+
+test("(pg-writers-global) WP-11: the writers' DOMContentLoaded listener, registered FIRST, has run before ready; render hands window.ermine_htmlwriter to runTabular, and without it `table` is its error box under the writers banner", async () => {
+  const real = await import("../src/index");
+  const { inlineRelation, stubHtmlWriter } = await import("./harness");
+  const rows = inlineRelation([{ name: "region", type: "String" }, { name: "sales", type: "Double" }], [["EMEA", 1.5], ["APAC", 2]]);
+  const table = {
+    tag: "Widget", name: "table", props: {
+      columns: [
+        { column: "region", header: "Region", cellFormat: { tag: "Default", args: [] }, align: "AlignLeft", kind: "OtherColumn" },
+        { column: "sales", header: "Sales", cellFormat: { tag: "Round", color: false, negParens: false, places: 1 }, align: "AlignRight", kind: "NumberColumn" },
+      ],
+      sorts: [], paginate: false, scroll: false, rows,
+    },
+  };
+  const document = { version: 1, settings: {}, root: { tag: "VFlow", children: [table] } };
+  const answers = core.panelAnswerStep(core.initialPanelAnswers(), { answer: { ok: true, document, generation: 1 } }, 1);
+  const run = async (withWriters: boolean) => {
+    const dom = new JSDOM(`<!doctype html><html><head></head><body><div id="${PREVIEW_ROOT_ID}"></div></body></html>`);
+    const w = dom.window as unknown as BootWindow & Record<string, unknown>;
+    const d = dom.window.document;
+    const order: string[] = [];
+    const hw = stubHtmlWriter();
+    // SCRIPT 1, what the writers bundle does (READ: ermine-writers
+    // writers/js/htmlwriter.js:10-13): the global is assigned INSIDE a
+    // DOMContentLoaded listener, registered before the host script runs.
+    if (withWriters) d.addEventListener("DOMContentLoaded", () => { order.push("writers"); w["ermine_htmlwriter"] = hw; });
+    w.ErmineClient = {
+      parseDocument: real.parseDocument,
+      defaultRegistry: real.defaultRegistry,
+      render: real.render as unknown as NonNullable<BootWindow["ErmineClient"]>["render"],
+    };
+    const posted: unknown[] = [];
+    boot(w, {
+      postMessage: (m: unknown) => {
+        if ((m as { type?: string }).type === "ready") order.push("ready with the global " + (w["ermine_htmlwriter"] === undefined ? "absent" : "present"));
+        posted.push(m);
+      },
+    });
+    assert.equal(d.readyState, "loading", "sanity: the host script runs while the document is loading, as in a webview");
+    assert.deepStrictEqual(order, [], "nothing is posted before DOMContentLoaded");
+    await new Promise((r) => d.addEventListener("DOMContentLoaded", r));
+    const writers = core.previewWritersCheck({ dir: "/wr/web", source: "setting", problem: null },
+      withWriters ? ["htmlwriter.js", "common.css", "htmlwriter.css", "htmlwriter_classic.css"] : null);
+    const env = core.panelSnapshot(core.panelView({ answers, writers }), 1);
+    dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: env }));
+    for (let i = 0; i < 40 && !d.querySelector(".ermine-widget-error") && hw.calls.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    const banner = d.querySelector(".ermine-banner") as HTMLElement;
+    const out = { order, calls: hw.calls.length, box: d.querySelector(".ermine-widget-error"), banner, writers, dimmed: d.querySelector(".ermine-document")!.classList.contains("ermine-dimmed") };
+    dom.window.close();
+    return out;
+  };
+  const withW = await run(true);
+  assert.deepStrictEqual(withW.order, ["writers", "ready with the global present"],
+    "the writers' listener runs first, so the global exists when ready is posted");
+  assert.equal(withW.calls, 1, "the table went through runTabular of window.ermine_htmlwriter, read at render time");
+  assert.equal(withW.box, null);
+  assert.equal(withW.banner.hidden, true, "present writers: no banner");
+  const without = await run(false);
+  assert.deepStrictEqual(without.order, ["ready with the global absent"]);
+  assert.equal(without.calls, 0);
+  assert.ok(without.box, "the dispatcher's own error box for the legacy widget");
+  assert.equal(without.box!.getAttribute("data-widget"), "table");
+  assert.match(without.box!.textContent!, /window\.ermine_htmlwriter/);
+  assert.equal(without.banner.hidden, false);
+  assert.equal(without.banner.getAttribute("data-kind"), "error", "the writers banner is the reducer's error kind");
+  assert.equal(without.banner.textContent!.startsWith(without.writers.message), true, without.banner.textContent!);
+  assert.equal(without.dimmed, true, "the documented cost: the document is dimmed while the writers are missing");
+});

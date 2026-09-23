@@ -262,6 +262,26 @@ async function main() {
     check("ermine.preview.target's default is core.PANEL_TARGET_DEFAULT",
           target.default === core.PANEL_TARGET_DEFAULT, JSON.stringify(target.default));
   }
+  // WP-11: the writers setting is contributed as the pure core reads it --
+  // a window-scoped string, empty by default, and empty resolves to the
+  // sibling layout under this checkout (the layout of the machine it was
+  // built on; whether the folder EXISTS here is reported, not required).
+  const writersPath = manifest.contributes.configuration.properties["ermine.preview.writersPath"];
+  check("ermine.preview.writersPath is contributed", !!writersPath);
+  if (writersPath) {
+    check("ermine.preview.writersPath is a window-scoped string, empty by default",
+          writersPath.type === "string" && writersPath.default === "" && writersPath.scope === "window",
+          JSON.stringify({ type: writersPath.type, default: writersPath.default, scope: writersPath.scope }));
+    const where = core.previewWritersDir(writersPath.default, REPO_ROOT, REPO_ROOT);
+    check("its empty default is the sibling ermine-writers web/ folder",
+          where.source === "default" &&
+          where.dir === path.join(REPO_ROOT, "..", "ermine-writers", "writers", "html", "src", "main", "resources", "web"),
+          JSON.stringify(where));
+    const fsw = require("fs");
+    let listing = null;
+    try { listing = fsw.readdirSync(where.dir); } catch (_) { listing = null; }
+    console.log("   writers default " + where.dir + ": " + core.writersState(listing));
+  }
   check("activation created no webview panel", recorded.webviewPanels.length === 0,
         JSON.stringify(recorded.webviewPanels));
   check("subscriptions were registered for disposal", ctx.subscriptions.length >= 4,
