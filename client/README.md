@@ -150,6 +150,38 @@ reaches `runTabular` of the global, and without the global `table` is its own er
 the extension's writers banner (the reducer's `error` kind, so the document is dimmed).
 Whether the real bundle does this in a webview is the playtest's (E9).
 
+**The draw step, the paper and the layout** (playtest F3, 2026-09-23; no new `.vsix`: only
+this bundle changed). Measured in a headless Chromium with the real `buildPreviewHtml` and the
+real bundles (`scratch-widget-preview/panel-fix/RESULTS.md`):
+
+- **`renderFunction`.** `htmlwriter.runTabular` (and every `run*`) only QUEUES a widget; the
+  legacy page then calls `ermine_htmlwriter_conf.renderFunction(ermine_htmlwriter)` once
+  (`HTMLWriter.scala` `wrapHeader`). The page now does the same once after each `render`
+  resolves, when the tree is in the page. Without it every table was its skeleton (a header
+  and a row of `.`). With the writers' global but no `renderFunction` there is no call and ONE
+  `log` (`NO_RENDER_FUNCTION`) per page. With no writers at all there is no log, because the
+  writers banner already says so. `(pg-f3-draw-once-after-render)`, `(pg-f3-draw-absent)` and
+  `(pg-f3-draw-not-superseded)` (a render overtaken by a newer one is not drawn) pin this.
+- **Paper.** The document area (`#ermine-preview-root .ermine-document`) draws on white with
+  `#222` text at 13px, and table text is 12px. The writers' CSS is only ever used on a white
+  page: it colours headers and stripes and lets cells inherit their text colour, and
+  `common.css` makes the body 10px. Under a dark theme the cells were `--vscode-foreground`
+  grey on `#E9E9E9` (2.2:1). They now measure 13.1:1 or better, and headers 6.49:1, in both
+  themes. The banner and hint stay OUTSIDE the paper in `--vscode-editor-foreground` at
+  `--vscode-font-size`. Theme-aware overrides of the writers' colours were rejected for now:
+  every writers rule (stripes, sticky headers, fixed columns, charts, the style box) would need
+  re-colouring with no reference rendering to check against. The page's own error box sits inside the paper, so it uses `#b00020` (7.33:1) rather than the theme's error red (2.46:1 on white), and no paper rule takes a `--vscode-*` colour. `(pg-f3-paper)` pins this.
+- **Layout.** `Grid` rows are CSS grid rows (`repeat(auto-fit,minmax(min(100%,480px),1fr))`).
+  They sit side by side while each cell stays at least 480px wide, and stack when it would be
+  narrower. `HFlow` is a wrapping flex row. The writers split each table into a row-header part
+  and a `.main-table` part, and they size the pair to the WINDOW's width whatever the container
+  (a 1200px viewport gave a 1200px pair in a 560px cell). The page holds the pair inside its
+  cell as a flex row, and the main part scrolls sideways. A one-column table is all row header:
+  the writers gave its scroller the empty main part's 0px height. This is not a timing effect:
+  drawing two animation frames later, or 500 ms later, or with the table alone all measured
+  the same. Such a scroller now gets its natural height. `(pg-f3-grid)` pins the rules; only
+  the harness can see what they do.
+
 **`gate_client`** (`scripts/gates.sh`, nightly tier since WP-10 S3) runs `npm test` here and
 prints one `SUMMARY <n> tests, <p> pass, <f> fail, <s> skipped` line. Without
 `node_modules` it is UNAVAILABLE (exit 3), not FAIL; a skip is counted, a failure fails it.

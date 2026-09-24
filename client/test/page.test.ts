@@ -20,7 +20,7 @@ import fc from "fast-check";
 
 import {
   foldSnapshot, receive, applyMessage, initialHostState, presentation, MESSAGE_KINDS,
-  pageStep, initialPage, documentKey, boot, refuseDeferred, PREVIEW_ROOT_ID,
+  pageStep, initialPage, documentKey, boot, refuseDeferred, PREVIEW_ROOT_ID, NO_RENDER_FUNCTION,
   type HostMessage, type HostState, type PanelEnvelope, type PageModel, type BootWindow,
 } from "../src/host/page";
 import { JSDOM } from "jsdom";
@@ -114,7 +114,7 @@ test("(pg-surface) page re-exports the reducer's whole surface, so S2 can point 
   for (const k of want) assert.ok(have.includes(k), `page.ts is missing ${k}`);
   // S1's fold, and S2's step + DOM bootstrap: nothing else may grow here
   assert.deepStrictEqual(have.filter((k) => !want.includes(k)).sort(),
-    ["PREVIEW_ROOT_ID", "boot", "documentKey", "foldSnapshot", "initialPage", "pageStep", "receive", "refuseDeferred"]);
+    ["NO_RENDER_FUNCTION", "PREVIEW_ROOT_ID", "boot", "documentKey", "foldSnapshot", "initialPage", "pageStep", "receive", "refuseDeferred"]);
 });
 
 // ------------------------------------------------ H7, against the extension
@@ -641,4 +641,173 @@ test("(pg-writers-global) WP-11: the writers' DOMContentLoaded listener, registe
   assert.equal(without.banner.getAttribute("data-kind"), "error", "the writers banner is the reducer's error kind");
   assert.equal(without.banner.textContent!.startsWith(without.writers.message), true, without.banner.textContent!);
   assert.equal(without.dimmed, true, "the documented cost: the document is dimmed while the writers are missing");
+});
+
+// ------------------------------------------ F3 (playtest 2026-09-23): the draw
+
+// What JSDOM CAN see of F3: the writers' draw step is called, once, after the
+// widgets are in the page, and the page's CSS carries the paper and the grid.
+// What it cannot (colours as computed, rows drawn, the layout) is measured in
+// a headless Chromium: scratch-widget-preview/panel-fix/{fix.js,RESULTS.md}.
+
+interface DrawRun { order: string[]; posted: unknown[]; rfArgs: unknown[]; rfThis: unknown[]; dom: JSDOM; send(env: unknown): Promise<void> }
+
+async function drawHarness(conf: "function" | "absent" | "noFunction" | "throws"): Promise<DrawRun> {
+  const dom = new JSDOM(`<!doctype html><html><head></head><body><div id="${PREVIEW_ROOT_ID}"></div></body></html>`);
+  const w = dom.window as unknown as BootWindow;
+  const order: string[] = [];
+  const rfArgs: unknown[] = [];
+  const rfThis: unknown[] = [];
+  const hw = { runTabular() { /* queues, as the writers' does */ } };
+  const d = dom.window.document;
+  d.addEventListener("DOMContentLoaded", () => {
+    w.ermine_htmlwriter = hw;
+    if (conf === "function" || conf === "throws") {
+      w.ermine_htmlwriter_conf = {
+        renderFunction(this: unknown, h: unknown) {
+          rfArgs.push(h); rfThis.push(this);
+          // the widgets must be IN the page when the writers look them up by id
+          const shown = d.querySelector(`#${PREVIEW_ROOT_ID} .ermine-document [data-note]`);
+          order.push(`draw sees ${shown ? shown.getAttribute("data-note") : "nothing"}`);
+          if (conf === "throws") throw new Error("writers exploded");
+        },
+      };
+    } else if (conf === "noFunction") {
+      w.ermine_htmlwriter_conf = { renderFunction: "nope" as unknown as undefined };
+    }
+  });
+  w.ErmineClient = {
+    parseDocument: (v: unknown) => v,
+    defaultRegistry: () => ({}),
+    render: async (target, doc0) => {
+      const note = String((doc0 as { note?: unknown }).note);
+      order.push(`render ${note} starts`);
+      // a render of a document noted "slow" resolves AFTER a later one starts and ends
+      await new Promise((r) => setTimeout(r, note === "slow" ? 60 : 5));
+      const el = d.createElement("div");
+      el.setAttribute("data-note", note);
+      target.appendChild(el);
+      order.push(`render ${note} resolves`);
+      return { errors: [] };
+    },
+  };
+  const posted: unknown[] = [];
+  boot(w, { postMessage: (m: unknown) => { posted.push(m); } });
+  if (d.readyState === "loading") await new Promise((r) => d.addEventListener("DOMContentLoaded", r));
+  return {
+    order, posted, rfArgs, rfThis, dom,
+    async send(env) {
+      dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: env }));
+      await new Promise((r) => setTimeout(r, 30));
+    },
+  };
+}
+
+const logsOf = (posted: unknown[]): string[] =>
+  posted.filter((m) => (m as { type?: string }).type === "log").map((m) => (m as { message: string }).message);
+
+test("(pg-f3-draw-once-after-render) F3: conf.renderFunction(window.ermine_htmlwriter) is called exactly ONCE per render, AFTER render resolves, and never on a toggle", async () => {
+  const h = await drawHarness("function");
+  let seq = 0;
+  await h.send(envelopeOf({ answers: okAnswers(1, "a") }, ++seq));
+  assert.deepStrictEqual(h.order, ["render a starts", "render a resolves", "draw sees a"]);
+  for (const t of [{ pending: true }, { pending: false }, { unsaved: ["X.e"] }]) {
+    await h.send(envelopeOf({ answers: okAnswers(1, "a"), ...t }, ++seq));
+  }
+  assert.equal(h.rfArgs.length, 1, "toggles do not redraw");
+  await h.send(envelopeOf({ answers: okAnswers(2, "b") }, ++seq));
+  await h.send(envelopeOf({ answers: okAnswers(3, "a") }, ++seq));
+  assert.deepStrictEqual(h.order, [
+    "render a starts", "render a resolves", "draw sees a",
+    "render b starts", "render b resolves", "draw sees b",
+    "render a starts", "render a resolves", "draw sees a",
+  ]);
+  const w = h.dom.window as unknown as BootWindow;
+  assert.equal(h.rfArgs.length, 3);
+  for (const a of h.rfArgs) assert.equal(a, w.ermine_htmlwriter, "handed the writers' global");
+  for (const t of h.rfThis) assert.equal(t, w.ermine_htmlwriter_conf, "called as a method of conf");
+  assert.deepStrictEqual(logsOf(h.posted), [], "nothing to log when the draw step is there");
+  h.dom.window.close();
+});
+
+test("(pg-f3-draw-not-superseded) F3 review N1: a render overtaken by a newer one is NOT drawn -- the draw comes after the stale-render check", async () => {
+  const h = await drawHarness("function");
+  // the second snapshot arrives while the first render is still running
+  h.dom.window.dispatchEvent(new h.dom.window.MessageEvent("message", { data: envelopeOf({ answers: okAnswers(1, "slow") }, 1) }));
+  await h.send(envelopeOf({ answers: okAnswers(2, "b") }, 2));
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepStrictEqual(h.order, ["render slow starts", "render b starts", "render b resolves", "draw sees b", "render slow resolves"],
+    "one draw, for the render that is shown; none when the overtaken one resolves");
+  assert.equal(h.rfArgs.length, 1);
+  h.dom.window.close();
+});
+
+test("(pg-f3-draw-absent) F3: with the writers' global but without conf, or with a renderFunction that is not a function, there is no call and ONE log naming it per page", async () => {
+  // (no writers at all -> no log either: `(pg-fetch-deferred-box)` pins exactly one log there)
+  for (const conf of ["absent", "noFunction"] as const) {
+    const h = await drawHarness(conf);
+    await h.send(envelopeOf({ answers: okAnswers(1, "a") }, 1));
+    await h.send(envelopeOf({ answers: okAnswers(2, "b") }, 2));
+    assert.deepStrictEqual(h.order, ["render a starts", "render a resolves", "render b starts", "render b resolves"], conf);
+    assert.deepStrictEqual(logsOf(h.posted), [NO_RENDER_FUNCTION], `${conf}: one log, not one per render`);
+    assert.match(NO_RENDER_FUNCTION, /window\.ermine_htmlwriter_conf\.renderFunction/);
+    h.dom.window.close();
+  }
+  // a throwing draw step is logged, and the page carries on
+  const t = await drawHarness("throws");
+  await t.send(envelopeOf({ answers: okAnswers(1, "a") }, 1));
+  assert.deepStrictEqual(logsOf(t.posted), ["the legacy writers' renderFunction failed to draw: writers exploded"]);
+  assert.equal(t.dom.window.document.querySelector(".ermine-page-error"), null, "a draw failure is not a page failure");
+  t.dom.window.close();
+});
+
+/** The page's own stylesheet as `selector -> declarations` rules. */
+async function pageRules(): Promise<{ sel: string; body: string }[]> {
+  const h = await harness();
+  const css = [...h.dom.window.document.querySelectorAll("style")].map((s) => s.textContent ?? "").join("\n");
+  h.dom.window.close();
+  return css.split("}").map((r) => r.trim()).filter((r) => r.includes("{"))
+    .map((r) => { const i = r.indexOf("{"); return { sel: r.slice(0, i).trim(), body: r.slice(i + 1).trim() }; });
+}
+const PAPER_SEL = `#${PREVIEW_ROOT_ID} .ermine-document`;
+
+test("(pg-f3-paper) F3: the document draws on white paper with #222 text and 12px table text, SCOPED to the document; the banner keeps the theme's editor foreground", async () => {
+  const rules = await pageRules();
+  const paper = rules.find((r) => r.sel === PAPER_SEL);
+  assert.ok(paper, "a rule for exactly the document area");
+  for (const decl of ["background:#fff", "color:#222", "font-size:13px"]) assert.ok(paper!.body.includes(decl), `paper has ${decl}: ${paper!.body}`);
+  const root = rules.find((r) => r.sel === `#${PREVIEW_ROOT_ID}`);
+  assert.ok(root, "a root rule");
+  assert.match(root!.body, /color:var\(--vscode-editor-foreground\)/);
+  assert.doesNotMatch(root!.body, /color:var\(--vscode-foreground\)/, "not the theme's mid-grey foreground (F3)");
+  // review M-1: the page's own error box is inside the paper, so its red must be chosen for white
+  const pageError = rules.find((r) => r.sel === `${PAPER_SEL} .ermine-page-error`);
+  assert.ok(pageError && /color:#b00020/.test(pageError.body), "the page-error box takes a paper red, not the theme's");
+  for (const r of rules.filter((x) => x.sel.split(",").some((sel) => sel.trim().startsWith(PAPER_SEL)))) {
+    assert.doesNotMatch(r.body, /color:var\(--vscode-/, `a theme colour inside the paper: ${r.sel}`);
+  }
+  const cells = rules.find((r) => r.sel.includes(`${PAPER_SEL} td.tabledata-left`) && r.sel.includes(`${PAPER_SEL} td.tabledata-right`));
+  assert.ok(cells && /font-size:12px/.test(cells.body), "table text is 12px, not the writers' 10px");
+  // every rule that paints white or #222 is under the document area, so the banner is untouched
+  for (const r of rules.filter((x) => /#fff\b|#222\b/.test(x.body))) {
+    for (const sel of r.sel.split(",")) assert.ok(sel.trim().startsWith(PAPER_SEL), `unscoped paper rule: ${sel}`);
+  }
+});
+
+test("(pg-f3-grid) F3: Grid rows lay out as CSS grid columns, and the writers' table pair is held inside its cell", async () => {
+  const rules = await pageRules();
+  const row = rules.find((r) => r.sel === `${PAPER_SEL} .ermine-grid-row`);
+  assert.ok(row, "a rule for the dispatcher's grid rows");
+  assert.match(row!.body, /display:grid/);
+  assert.match(row!.body, /grid-template-columns:repeat\(auto-fit,minmax\(min\(100%,480px\),1fr\)\)/);
+  const pair = rules.find((r) => r.sel === `${PAPER_SEL} .table-full-scroll-wrapper`);
+  assert.ok(pair && /display:flex!important/.test(pair.body) && /width:auto!important/.test(pair.body),
+    "the writers size the pair to the WINDOW; the page holds it to its cell");
+  assert.ok(rules.some((r) => r.sel === `${PAPER_SEL} .table-full-scroll-wrapper:not(:has(.main-table th)) .table-vscroll-wrapper` && /height:auto!important/.test(r.body)),
+    "a one-column table's scroller gets its natural height, not the empty main part's 0px");
+  for (const r of rules) {
+    if (r.sel.startsWith(`#${PREVIEW_ROOT_ID}{`) || r.sel === `#${PREVIEW_ROOT_ID}` || r.sel.startsWith(".ermine-banner") || r.sel.startsWith(".ermine-hint") ||
+        r.sel.startsWith(".ermine-document.ermine-dimmed") || r.sel.startsWith(".ermine-page-error")) continue;
+    for (const sel of r.sel.split(",")) assert.ok(sel.trim().startsWith(PAPER_SEL), `unscoped document rule: ${sel}`);
+  }
 });

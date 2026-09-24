@@ -156,6 +156,10 @@ export interface BootWindow {
   addEventListener(type: "message", listener: (ev: { data: unknown }) => void): void;
   ErmineClient?: ClientGlobal;
   ermine_htmlwriter?: unknown;
+  /** The writers' page configuration.  Its `renderFunction(htmlwriter)` DRAWS
+   *  what the `run*` calls only queued: the legacy page calls it once, after
+   *  `renderPage` (HTMLWriter.scala `wrapHeader` ~:365-376).  F3 (2026-09-23). */
+  ermine_htmlwriter_conf?: { renderFunction?: (htmlwriter: unknown) => unknown };
 }
 
 /**
@@ -192,8 +196,67 @@ export function refuseDeferred(token: string): Promise<never> {
  *  (`preview-core.js` `PREVIEW_ROOT_ID`). */
 export const PREVIEW_ROOT_ID = "ermine-preview-root";
 
+/** What the log says, once per page, when the writers' draw step is missing. */
+export const NO_RENDER_FUNCTION =
+  "window.ermine_htmlwriter_conf.renderFunction is not there, so the legacy widgets (tables, charts) were queued but not drawn";
+
+/**
+ * The page's own CSS.  F3 (playtest, 2026-09-23):
+ *
+ *   * the banner and hint keep the THEME's colours: `--vscode-editor-foreground`
+ *     (the colour the webview's body text has), not `--vscode-foreground`, which
+ *     some themes set to a mid grey (#9e9e9e in the user's);
+ *   * the document draws on a white PAPER with #222 text.  The writers' CSS is
+ *     only ever used on a white page: it colours headers (#48535B) and stripes
+ *     (#E9E9E9 / #fff) and lets every cell INHERIT its text colour, so under a
+ *     dark theme the cells were theme-grey on light grey (2.2:1).  Theme-aware
+ *     overrides would have to re-colour every writers rule with no reference
+ *     rendering, and are not attempted;
+ *   * the page's own error box is drawn INSIDE the paper, so it takes a red
+ *     chosen for white (#b00020, 7.33:1), not the theme's error colour (a dark
+ *     theme's is chosen for a dark background: #f48771 is 2.46:1 on white);
+ *   * the writers' common.css makes the body 10px (`font-size:62.5%`) and the
+ *     cells 10px outright: the root takes the editor's `--vscode-font-size`
+ *     back (so the banner is not 10px either), inside the paper the base is
+ *     13px and table text 12px;
+ *   * `Grid` is laid out as a grid (the dispatcher emits rows of cells and no
+ *     CSS; it stacked into one column), a row's cells wrapping under each
+ *     other only when a cell would be narrower than 480px; `HFlow` as a row;
+ *   * the writers' tables, MEASURED in a headless harness (F3 IMPL-REPORT):
+ *     each table is split into a row-header part (`.rowheader-table`, the
+ *     primary column) and a `.main-table` part, and the writers size the pair
+ *     to the WINDOW's width, whatever the container (1200px viewport -> a
+ *     1200px wrapper in a 560px grid cell, drawn over its neighbour).  So the
+ *     pair is a flex row no wider than its cell, the main part scrolling
+ *     sideways inside it.  A ONE-column table is all row header: its main part
+ *     has no columns and 0px height, and the writers give the row-header
+ *     scroller that height too, so its rows were drawn at 0px (not a timing
+ *     effect: drawing after two animation frames or 500 ms, or with the table
+ *     alone, measured the same 0px).  Such a scroller gets its natural height.
+ *     And the main part's truncating cell spans are inline-blocks with
+ *     overflow:hidden, which sit on their bottom edge and make those rows 3px
+ *     taller than the row-header rows beside them: top-aligned here.
+ *
+ * Everything document-side is scoped under `#${PREVIEW_ROOT_ID} .ermine-document`,
+ * so nothing leaks onto the banner or the page around it.
+ */
+const PAPER = `#${PREVIEW_ROOT_ID} .ermine-document`;
 const PAGE_CSS = `
-#${PREVIEW_ROOT_ID}{font-family:var(--vscode-font-family);color:var(--vscode-foreground)}
+#${PREVIEW_ROOT_ID}{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size,13px);color:var(--vscode-editor-foreground)}
+${PAPER}{background:#fff;color:#222;color-scheme:light;font-size:13px;padding:10px 14px;border-radius:3px}
+${PAPER} .ermine-page-error{color:#b00020}
+${PAPER} .tabular,${PAPER} th.tabledata-left,${PAPER} th.tabledata-right,${PAPER} td.tabledata-left,${PAPER} td.tabledata-right,${PAPER} .ermine-heading-summary,${PAPER} .ermine-text,${PAPER} .dataTables_info,${PAPER} .dataTables_paginate{font-size:12px}
+${PAPER} .ermine-grid{display:grid;gap:16px}
+${PAPER} .ermine-grid-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,480px),1fr));gap:16px;align-items:start}
+${PAPER} .ermine-grid-cell,${PAPER} .ermine-widget{min-width:0}
+${PAPER} .ermine-hflow{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+${PAPER} .table-full-scroll-wrapper{display:flex!important;width:auto!important;max-width:100%;height:auto!important}
+${PAPER} .table-full-scroll-wrapper>.rowheader-table{flex:none}
+${PAPER} .table-full-scroll-wrapper>.main-table{flex:1 1 auto;min-width:0}
+${PAPER} .main-table .table-hscroll-wrapper,${PAPER} .main-table .table-vscroll-pos-wrapper{width:auto!important}
+${PAPER} .main-table .tabular{min-width:0}
+${PAPER} .table-full-scroll-wrapper:not(:has(.main-table th)) .table-vscroll-wrapper{height:auto!important}
+${PAPER} .main-table .dataTable .shrinkable-cell{vertical-align:top}
 .ermine-banner{display:flex;gap:1em;align-items:center;padding:.4em .8em;margin-bottom:.6em;border-left:4px solid var(--vscode-focusBorder,#888)}
 .ermine-banner[hidden]{display:none}
 .ermine-banner[data-kind=error],.ermine-banner[data-kind=stuck],.ermine-banner[data-kind=offline]{border-left-color:var(--vscode-editorError-foreground,#c33)}
@@ -227,6 +290,28 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
     try { api.postMessage(m); } catch { /* nothing to tell: the channel IS the log */ }
   };
   const log = (message: string): void => post({ type: "log", message });
+  let saidNoRenderFunction = false;
+
+  /** The legacy page's tail call (HTMLWriter.scala `wrapHeader`): after the
+   *  widgets are in the page, `conf.renderFunction(htmlwriter)` draws every
+   *  table and chart `run*` queued.  Without it a table stays its skeleton: a
+   *  header and one row of "." (F3).  No writers at all: no call and no log
+   *  (the writers banner and each legacy widget's error box already say so).
+   *  Writers but no draw step: no call, and ONE log per page. */
+  const drawLegacy = (): void => {
+    if (win.ermine_htmlwriter === undefined) return;
+    const conf = win.ermine_htmlwriter_conf;
+    const fn = conf?.renderFunction;
+    if (typeof fn !== "function") {
+      if (!saidNoRenderFunction) { saidNoRenderFunction = true; log(NO_RENDER_FUNCTION); }
+      return;
+    }
+    try {
+      fn.call(conf, win.ermine_htmlwriter);
+    } catch (e) {
+      log(`the legacy writers' renderFunction failed to draw: ${(e as Error)?.message ?? String(e)}`);
+    }
+  };
 
   let banner: HTMLElement, bannerText: HTMLElement, restart: HTMLButtonElement;
   let hint: HTMLElement, area: HTMLElement;
@@ -303,6 +388,8 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
       });
       if (mine !== token) return;
       for (const e of result.errors) log(`widget "${e.widget}" at ${e.path}: ${e.message}`);
+      // the tree is attached now (the dispatcher appends it last)
+      drawLegacy();
     } catch (e) {
       if (mine === token) fail(`the document could not be rendered: ${(e as Error)?.message ?? String(e)}`);
     }

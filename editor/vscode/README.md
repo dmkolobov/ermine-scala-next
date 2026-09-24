@@ -479,6 +479,37 @@ a report type and now says what is true. Whether the runner should accept
 `tracker/JSON-WIDGET-PLAYGROUND.md`). Until then the panel's playtest steps use
 the typed `core/src/test/resources/doc/Sales.e`.
 
+**F3, fixed in the client bundle only (no new `.vsix`; the extension is
+unchanged): the panel drew the legacy tables EMPTY, in grey, too small and
+on top of each other.** The user's words: *"I can't see shit in the widgets
+generated. Text is too light, and it doesn't look like it's populating
+properly."* There were three causes, all measured in a headless Chromium with
+the real page builder and bundles
+(`scratch-widget-preview/panel-fix/RESULTS.md`):
+
+1. **Not populated.** `runTabular` only queues a table. The legacy page draws
+   it by calling `ermine_htmlwriter_conf.renderFunction(ermine_htmlwriter)`
+   afterwards, and the panel never made that call. It now does, once after each
+   render, so the Sales tables show 8, 4 and 8 rows.
+2. **Too light, too small.** The panel text was `--vscode-foreground`
+   (`#9e9e9e` in the user's theme), and every writers cell inherited it: 2.2:1
+   on the writers' `#E9E9E9` stripes. The writers' `common.css` also makes text
+   10px. The document now draws on a white "paper" with `#222` text: cells
+   measure 13.1:1 or better, headers 6.49:1, and table text is 12px, in dark and
+   light themes. The banner stays in the theme's editor colours.
+3. **Layout.** The `Grid` had no CSS and stacked into one column. The writers
+   size each table to the window's width, so tables in grid cells were drawn
+   over their neighbours, and a one-column table was drawn at 0px height. The
+   grid now lays out side by side and wraps when a cell would be under 480px.
+   Each table stays inside its cell, and the one-column table shows its 4 rows.
+
+To pick this up, run `npm run bundle` in `client/`. The open panel's bundle
+watcher (0.1.13) should reload the page; if it does not, run **Ermine: Preview
+Report...** again. On 2026-09-23 the user saw the fixed panel draw `Sales` with
+its tables after the rebuild, in VS Code 1.139.0 with the Vue Theme (*"It renders
+now, the tables show up"*). It also re-rendered on a params save and on a
+`Sales.e` save. Which of the two reloaded the page was not recorded.
+
 ### 0.1.14
 
 **The legacy writers in the panel** (WP-11, stage 4 of the panel). The page
