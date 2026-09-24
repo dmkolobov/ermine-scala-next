@@ -27,6 +27,8 @@ types=(
   "Layout.Widgets.DrilldownBar:DrilldownBarProps:drilldownBar:DrilldownBarPropsSchema"
   "Layout.Widgets.Headline:HeadlineProps:headline:HeadlinePropsSchema"
   "Layout.Widgets.Crosstab:CrosstabProps:crosstab:CrosstabPropsSchema"
+  "Layout.Widgets.Heading:HeadingProps:heading:HeadingPropsSchema"
+  "Layout.Widgets.Text:TextProps:text:TextPropsSchema"
 )
 
 mkdir -p "$out"
@@ -66,6 +68,8 @@ done
   echo "  drilldownBar: DrilldownBarPropsSchema,"
   echo "  headline: HeadlinePropsSchema,"
   echo "  crosstab: CrosstabPropsSchema,"
+  echo "  heading: HeadingPropsSchema,"
+  echo "  text: TextPropsSchema,"
   echo "};"
   echo
   echo "/** Registry names Stage 3 reserves that have NO renderer: the dispatcher's"

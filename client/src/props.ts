@@ -139,6 +139,21 @@ export interface CrosstabProps {
   crosstabFormat: CellFormat;
 }
 
+/** Layout.Widgets.Heading.HeadingProps (Q25) -- a report heading; no relation.
+ *  `sortColumn` is a column NAME shown as text, not an index like ColumnSort's. */
+export interface HeadingProps {
+  title: string;
+  sortColumn: string;
+  matched: number;
+  total: number;
+}
+
+/** Layout.Widgets.Text.TextProps (Q25) -- a paragraph of plain text.  A record,
+ *  so `{"body": ".."}` on the wire, never a bare string. */
+export interface TextProps {
+  body: string;
+}
+
 // --------------------------------------------------------------- charts (J3e)
 
 /** Layout.Widgets.Chart.LegendLocation -- writers.ChartLegendLocation. */

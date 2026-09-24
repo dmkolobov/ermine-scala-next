@@ -7,7 +7,8 @@
     "The burst: three renders sent back to back (generations 8, 9, 10); the server keeps one in flight and one queued, latest wins, so 9 was displaced.",
     "The wedge: WpSpin with a 4 s watchdog answers stuck:true; every later render in that process (WpInt, WpChain, WpBlow) is refused with the same stuck:true 500 -- WpChain and WpBlow therefore appear ONLY as stuck refusals, since one boot can wedge once.",
     "`notifications` holds the ermine/* notifications the server sent during the run, in arrival order.",
-    "RE-CAPTURED 2026-09-23 (HEAD 69abc962 + the uncommitted Q21 change), one entry only: `error-500-wpempty` REPLACES `error-500-sales`. Since the user's Q21 decision Sales builds its byDay table with relationWithHeader, so Sales with an empty date range now renders (ok=true, an empty four-column table) and no longer answers this 500. The 500 is kept reproducible by tracker/playtest/fixtures/WpEmpty.e (`rawWidget \"table\" (relation [])`, TestRunner's (b7) RgEmpty shape). Harness: scratch-widget-preview/q21-sales/capture.py, same wire helpers, launch and env as above except preview.timeoutSeconds:30; its request paths are that scratch directory's. The other cases are the fbfb5ed3 captures, unchanged; ok-sales still matches the edited Sales.e (same document, deferred token and expiry aside, measured in the same boot)."
+    "RE-CAPTURED 2026-09-23 (HEAD 69abc962 + the uncommitted Q21 change), one entry only: `error-500-wpempty` REPLACES `error-500-sales`. Since the user's Q21 decision Sales builds its byDay table with relationWithHeader, so Sales with an empty date range now renders (ok=true, an empty four-column table) and no longer answers this 500. The 500 is kept reproducible by tracker/playtest/fixtures/WpEmpty.e (`rawWidget \"table\" (relation [])`, TestRunner's (b7) RgEmpty shape). Harness: scratch-widget-preview/q21-sales/capture.py, same wire helpers, launch and env as above except preview.timeoutSeconds:30; its request paths are that scratch directory's. The other cases are the fbfb5ed3 captures, unchanged; ok-sales still matches the edited Sales.e (same document, deferred token and expiry aside, measured in the same boot).",
+    "RE-CAPTURED 2026-09-23 BY Q25 (HEAD 936d1763 + the uncommitted Q25 change: Sales.e's body rewritten with the TYPED Layout.Widgets.* constructors), two entries only: `ok-sales` and `burst-0`, the two answers that carry Sales's document. Harness: scratch-widget-preview/q25/capture.py (same wire helpers, launch and env; preview.timeoutSeconds:30), one boot; its request paths are that scratch directory's. ONE FIELD IS SET, NOT CAPTURED: each entry's `generation` (in `request` and the answer's echo of it) is kept at the value this fixture already had (2 and 8), because the burst tests order answers by it; the server echoes whatever generation the request carries. The document is verbatim. Sales now has NO deferred relation (a typed table's `rows` is a bare relation and the preview asks inline), so neither entry carries a token. `error-400-sales-key` was measured in the same boot and is unchanged apart from its generation. Since this re-capture the BURST is mixed: burst-0 comes from the Q25 boot, burst-1 and burst-2 from the fbfb5ed3 boot; the ordering by generation (8, 9, 10) is what the tests read, and it is unchanged."
   ],
   "cases": {
     "ok-wpint": {
@@ -36,7 +37,7 @@
     },
     "ok-sales": {
       "request": {
-        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/Sales.e",
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/q25/ws/doc/Sales.e",
         "binding": "report",
         "params": {
           "fromDay": "2026-01-05",
@@ -45,7 +46,7 @@
           "orderBy": "ByAmount"
         },
         "roots": [
-          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+          "/home/dmitry/research/ermine/scratch-widget-preview/q25/ws/doc"
         ],
         "generation": 2
       },
@@ -75,79 +76,151 @@
                       "tag": "Widget",
                       "name": "table",
                       "props": {
-                        "kind": "inline",
                         "columns": [
                           {
-                            "name": "amount",
-                            "type": "Double",
-                            "nullable": false
+                            "column": "region",
+                            "header": "Region",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignLeft",
+                            "kind": "OtherColumn"
                           },
                           {
-                            "name": "day",
-                            "type": "Date",
-                            "nullable": false
+                            "column": "day",
+                            "header": "Day",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignLeft",
+                            "kind": "DateColumn"
                           },
                           {
-                            "name": "region",
-                            "type": "String",
-                            "nullable": false
+                            "column": "amount",
+                            "header": "Amount",
+                            "cellFormat": {
+                              "tag": "Currency",
+                              "color": false,
+                              "negParens": false,
+                              "symbol": "$",
+                              "places": 2
+                            },
+                            "align": "AlignRight",
+                            "kind": "NumberColumn"
                           },
                           {
-                            "name": "units",
-                            "type": "Int",
-                            "nullable": false
+                            "column": "units",
+                            "header": "Units",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignRight",
+                            "kind": "NumberColumn"
                           }
                         ],
-                        "rows": [
-                          [
-                            840,
-                            "2026-01-19",
-                            "north",
-                            2
-                          ],
-                          [
-                            1200.5,
-                            "2026-01-05",
-                            "north",
-                            3
-                          ],
-                          [
-                            2310.25,
-                            "2026-02-14",
-                            "north",
-                            7
-                          ]
+                        "sorts": [
+                          {
+                            "sortColumn": 2,
+                            "descending": true
+                          }
                         ],
-                        "rowCount": 3
+                        "paginate": true,
+                        "scroll": true,
+                        "rows": {
+                          "kind": "inline",
+                          "columns": [
+                            {
+                              "name": "amount",
+                              "type": "Double",
+                              "nullable": false
+                            },
+                            {
+                              "name": "day",
+                              "type": "Date",
+                              "nullable": false
+                            },
+                            {
+                              "name": "region",
+                              "type": "String",
+                              "nullable": false
+                            },
+                            {
+                              "name": "units",
+                              "type": "Int",
+                              "nullable": false
+                            }
+                          ],
+                          "rows": [
+                            [
+                              840,
+                              "2026-01-19",
+                              "north",
+                              2
+                            ],
+                            [
+                              1200.5,
+                              "2026-01-05",
+                              "north",
+                              3
+                            ],
+                            [
+                              2310.25,
+                              "2026-02-14",
+                              "north",
+                              7
+                            ]
+                          ],
+                          "rowCount": 3
+                        }
                       }
                     },
                     {
                       "tag": "Widget",
                       "name": "table",
                       "props": {
-                        "kind": "inline",
                         "columns": [
                           {
-                            "name": "region",
-                            "type": "String",
-                            "nullable": false
+                            "column": "region",
+                            "header": "Region",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignLeft",
+                            "kind": "OtherColumn"
                           }
                         ],
-                        "rows": [
-                          [
-                            "east"
+                        "sorts": [],
+                        "paginate": true,
+                        "scroll": true,
+                        "rows": {
+                          "kind": "inline",
+                          "columns": [
+                            {
+                              "name": "region",
+                              "type": "String",
+                              "nullable": false
+                            }
                           ],
-                          [
-                            "north"
+                          "rows": [
+                            [
+                              "east"
+                            ],
+                            [
+                              "north"
+                            ],
+                            [
+                              "south"
+                            ],
+                            [
+                              "west"
+                            ]
                           ],
-                          [
-                            "south"
-                          ],
-                          [
-                            "west"
-                          ]
-                        ],
-                        "rowCount": 4
+                          "rowCount": 4
+                        }
                       }
                     }
                   ],
@@ -156,32 +229,115 @@
                       "tag": "Widget",
                       "name": "table",
                       "props": {
-                        "kind": "deferred",
                         "columns": [
                           {
-                            "name": "amount",
-                            "type": "Double",
-                            "nullable": false
+                            "column": "item",
+                            "header": "Item",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignLeft",
+                            "kind": "OtherColumn"
                           },
                           {
-                            "name": "item",
-                            "type": "String",
-                            "nullable": false
+                            "column": "amount",
+                            "header": "Amount",
+                            "cellFormat": {
+                              "tag": "Currency",
+                              "color": false,
+                              "negParens": false,
+                              "symbol": "$",
+                              "places": 2
+                            },
+                            "align": "AlignRight",
+                            "kind": "NumberColumn"
                           },
                           {
-                            "name": "units",
-                            "type": "Int",
-                            "nullable": false
+                            "column": "units",
+                            "header": "Units",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignRight",
+                            "kind": "NumberColumn"
                           }
                         ],
-                        "token": "d9Rfeu3GLhTiPjKEqMkpww",
-                        "expires": "2026-09-23T16:43:57.653Z"
+                        "sorts": [],
+                        "paginate": true,
+                        "scroll": true,
+                        "rows": {
+                          "kind": "inline",
+                          "columns": [
+                            {
+                              "name": "amount",
+                              "type": "Double",
+                              "nullable": false
+                            },
+                            {
+                              "name": "item",
+                              "type": "String",
+                              "nullable": false
+                            },
+                            {
+                              "name": "units",
+                              "type": "Int",
+                              "nullable": false
+                            }
+                          ],
+                          "rows": [
+                            [
+                              75.5,
+                              "gizmo",
+                              1
+                            ],
+                            [
+                              615.75,
+                              "doohickey",
+                              1
+                            ],
+                            [
+                              840,
+                              "gizmo",
+                              2
+                            ],
+                            [
+                              1200.5,
+                              "widget",
+                              3
+                            ],
+                            [
+                              1550,
+                              "widget",
+                              4
+                            ],
+                            [
+                              1990,
+                              "widget",
+                              5
+                            ],
+                            [
+                              2310.25,
+                              "widget",
+                              7
+                            ],
+                            [
+                              4100,
+                              "doohickey",
+                              11
+                            ]
+                          ],
+                          "rowCount": 8
+                        }
                       }
                     },
                     {
                       "tag": "Widget",
                       "name": "text",
-                      "props": "line items on demand"
+                      "props": {
+                        "body": "every line item, whatever the date range"
+                      }
                     }
                   ]
                 ]
@@ -289,7 +445,7 @@
     },
     "burst-0": {
       "request": {
-        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc/Sales.e",
+        "uri": "file:///home/dmitry/research/ermine/scratch-widget-preview/q25/ws/doc/Sales.e",
         "binding": "report",
         "params": {
           "fromDay": "2026-01-05",
@@ -298,7 +454,7 @@
           "orderBy": "ByAmount"
         },
         "roots": [
-          "/home/dmitry/research/ermine/scratch-widget-preview/wp10-s1/ws/doc"
+          "/home/dmitry/research/ermine/scratch-widget-preview/q25/ws/doc"
         ],
         "generation": 8
       },
@@ -328,79 +484,151 @@
                       "tag": "Widget",
                       "name": "table",
                       "props": {
-                        "kind": "inline",
                         "columns": [
                           {
-                            "name": "amount",
-                            "type": "Double",
-                            "nullable": false
+                            "column": "region",
+                            "header": "Region",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignLeft",
+                            "kind": "OtherColumn"
                           },
                           {
-                            "name": "day",
-                            "type": "Date",
-                            "nullable": false
+                            "column": "day",
+                            "header": "Day",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignLeft",
+                            "kind": "DateColumn"
                           },
                           {
-                            "name": "region",
-                            "type": "String",
-                            "nullable": false
+                            "column": "amount",
+                            "header": "Amount",
+                            "cellFormat": {
+                              "tag": "Currency",
+                              "color": false,
+                              "negParens": false,
+                              "symbol": "$",
+                              "places": 2
+                            },
+                            "align": "AlignRight",
+                            "kind": "NumberColumn"
                           },
                           {
-                            "name": "units",
-                            "type": "Int",
-                            "nullable": false
+                            "column": "units",
+                            "header": "Units",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignRight",
+                            "kind": "NumberColumn"
                           }
                         ],
-                        "rows": [
-                          [
-                            840,
-                            "2026-01-19",
-                            "north",
-                            2
-                          ],
-                          [
-                            1200.5,
-                            "2026-01-05",
-                            "north",
-                            3
-                          ],
-                          [
-                            2310.25,
-                            "2026-02-14",
-                            "north",
-                            7
-                          ]
+                        "sorts": [
+                          {
+                            "sortColumn": 2,
+                            "descending": true
+                          }
                         ],
-                        "rowCount": 3
+                        "paginate": true,
+                        "scroll": true,
+                        "rows": {
+                          "kind": "inline",
+                          "columns": [
+                            {
+                              "name": "amount",
+                              "type": "Double",
+                              "nullable": false
+                            },
+                            {
+                              "name": "day",
+                              "type": "Date",
+                              "nullable": false
+                            },
+                            {
+                              "name": "region",
+                              "type": "String",
+                              "nullable": false
+                            },
+                            {
+                              "name": "units",
+                              "type": "Int",
+                              "nullable": false
+                            }
+                          ],
+                          "rows": [
+                            [
+                              840,
+                              "2026-01-19",
+                              "north",
+                              2
+                            ],
+                            [
+                              1200.5,
+                              "2026-01-05",
+                              "north",
+                              3
+                            ],
+                            [
+                              2310.25,
+                              "2026-02-14",
+                              "north",
+                              7
+                            ]
+                          ],
+                          "rowCount": 3
+                        }
                       }
                     },
                     {
                       "tag": "Widget",
                       "name": "table",
                       "props": {
-                        "kind": "inline",
                         "columns": [
                           {
-                            "name": "region",
-                            "type": "String",
-                            "nullable": false
+                            "column": "region",
+                            "header": "Region",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignLeft",
+                            "kind": "OtherColumn"
                           }
                         ],
-                        "rows": [
-                          [
-                            "east"
+                        "sorts": [],
+                        "paginate": true,
+                        "scroll": true,
+                        "rows": {
+                          "kind": "inline",
+                          "columns": [
+                            {
+                              "name": "region",
+                              "type": "String",
+                              "nullable": false
+                            }
                           ],
-                          [
-                            "north"
+                          "rows": [
+                            [
+                              "east"
+                            ],
+                            [
+                              "north"
+                            ],
+                            [
+                              "south"
+                            ],
+                            [
+                              "west"
+                            ]
                           ],
-                          [
-                            "south"
-                          ],
-                          [
-                            "west"
-                          ]
-                        ],
-                        "rowCount": 4
+                          "rowCount": 4
+                        }
                       }
                     }
                   ],
@@ -409,32 +637,115 @@
                       "tag": "Widget",
                       "name": "table",
                       "props": {
-                        "kind": "deferred",
                         "columns": [
                           {
-                            "name": "amount",
-                            "type": "Double",
-                            "nullable": false
+                            "column": "item",
+                            "header": "Item",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignLeft",
+                            "kind": "OtherColumn"
                           },
                           {
-                            "name": "item",
-                            "type": "String",
-                            "nullable": false
+                            "column": "amount",
+                            "header": "Amount",
+                            "cellFormat": {
+                              "tag": "Currency",
+                              "color": false,
+                              "negParens": false,
+                              "symbol": "$",
+                              "places": 2
+                            },
+                            "align": "AlignRight",
+                            "kind": "NumberColumn"
                           },
                           {
-                            "name": "units",
-                            "type": "Int",
-                            "nullable": false
+                            "column": "units",
+                            "header": "Units",
+                            "cellFormat": {
+                              "tag": "Default",
+                              "args": []
+                            },
+                            "align": "AlignRight",
+                            "kind": "NumberColumn"
                           }
                         ],
-                        "token": "XI19yDG4cirlr9WRCIgSYA",
-                        "expires": "2026-09-23T16:43:57.690Z"
+                        "sorts": [],
+                        "paginate": true,
+                        "scroll": true,
+                        "rows": {
+                          "kind": "inline",
+                          "columns": [
+                            {
+                              "name": "amount",
+                              "type": "Double",
+                              "nullable": false
+                            },
+                            {
+                              "name": "item",
+                              "type": "String",
+                              "nullable": false
+                            },
+                            {
+                              "name": "units",
+                              "type": "Int",
+                              "nullable": false
+                            }
+                          ],
+                          "rows": [
+                            [
+                              75.5,
+                              "gizmo",
+                              1
+                            ],
+                            [
+                              615.75,
+                              "doohickey",
+                              1
+                            ],
+                            [
+                              840,
+                              "gizmo",
+                              2
+                            ],
+                            [
+                              1200.5,
+                              "widget",
+                              3
+                            ],
+                            [
+                              1550,
+                              "widget",
+                              4
+                            ],
+                            [
+                              1990,
+                              "widget",
+                              5
+                            ],
+                            [
+                              2310.25,
+                              "widget",
+                              7
+                            ],
+                            [
+                              4100,
+                              "doohickey",
+                              11
+                            ]
+                          ],
+                          "rowCount": 8
+                        }
                       }
                     },
                     {
                       "tag": "Widget",
                       "name": "text",
-                      "props": "line items on demand"
+                      "props": {
+                        "body": "every line item, whatever the date range"
+                      }
                     }
                   ]
                 ]

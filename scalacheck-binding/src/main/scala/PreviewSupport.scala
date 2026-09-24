@@ -144,8 +144,8 @@ private[reporting] object PreviewSupport {
     * render `renderingD` cannot wrap (see `Bench.bootMillis`).
     *
     * NO SHAPE OF `Sales.*` IS EVER REGISTERED HERE.  `DataConDecl`'s maps
-    * are process-wide and both `TestRunner` and the registration property
-    * above read `Sales.Heading`; the fixture below is
+    * are process-wide, `TestRunner` renders `Sales`, and the registration
+    * property reads `SalesRaw.Heading` (since Q25); the fixture below is
     * `core/src/test/resources/doc/Sales.e` COPIED into a temp root with its
     * module header rewritten to `WpSales`, so every `data` it declares is a
     * fresh `Global`, and the file under `core/src/test/resources` is read

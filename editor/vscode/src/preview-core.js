@@ -171,7 +171,7 @@ function renderParams(pick, params, generation) {
     // IS A PARAMS FILE THAT REALLY SAYS `null`. "No params" is now spelled
     // `undefined` and still becomes `{}` -- WP-7's measured behaviour, which
     // is what the missing-file case sends. But a report whose parameter type
-    // is a `Maybe X` WANTS `null` (`docs/JSON-GUIDE.md:1295-1297`, and S1's
+    // is a `Maybe X` WANTS `null` (`docs/JSON-GUIDE.md:1329-1331`, and S1's
     // skeleton mints exactly that for such a root), and a file holding `null`
     // is a file whose content we must send. Coercing it here would have sent
     // `{}` instead and turned a correct params file into a 400 nobody could
@@ -543,7 +543,7 @@ function rootsFingerprint(roots) {
  * file holding `null`, and one that wedged on `null` was not un-held by
  * replacing it with `{}` or by deleting the file. A params file whose whole
  * content is `null` is what a `Maybe`-rooted report wants
- * (`docs/JSON-GUIDE.md:1295-1297`), so it is a value like any other.
+ * (`docs/JSON-GUIDE.md:1329-1331`), so it is a value like any other.
  *
  * `undefined` still maps to `{}` rather than to a fourth digest, and that is
  * DELIBERATE COMPATIBILITY: every mark WP-22 and 0.1.7 wrote carries
@@ -4064,7 +4064,7 @@ function paramsRootShape(schema) {
   }
   // A `Maybe`/`Nullable` root: the exporter writes `anyOf` with a null arm
   // (`json/Schema.scala:371`), and S1's corrected rule skeletonises it to
-  // `null` -- which is what `docs/JSON-GUIDE.md:1295-1297` says such a
+  // `null` -- which is what `docs/JSON-GUIDE.md:1329-1331` says such a
   // report wants. MEASURED on `WpMaybe`.
   if (Array.isArray(node.anyOf) && node.anyOf.some(admitsNull)) {
     const payload = node.anyOf.filter((a) => !admitsNull(a))[0];

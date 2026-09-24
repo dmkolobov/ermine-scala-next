@@ -1317,18 +1317,24 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * CONCURRENCY.  `core/test` is unforked and parallel and the registry is
     * global, so this property must leave it as it found it: it re-registers
     * the entry it saw before the check in a `finally`, on the failing path
-    * too.  Another suite may legitimately register `Sales.Heading` while this
+    * too.  Another suite may legitimately register `SalesRaw.Heading` while this
     * runs -- `TestRunner`'s runner loads the same `core/src/test/resources/doc`
-    * (`TestRunner.scala:112`, `:875`) -- and that is harmless in both
+    * (`TestRunner.scala:120`, `:896`) -- and that is harmless in both
     * directions: every other writer loads the SAME FILE, so the shape it
     * writes is the four-field one this property asserts, and entries differ
     * only in `Supply`-minted ids, which no reader looks at
     * (`json/Encode.scala:399-414` reads `isEnum`, `constructor(g)` and field
     * names).  The verdict is a field COUNT for that reason, not an identity.
-    * Nothing in the tree registers a `Sales.Heading` of any other shape. */
+    * Nothing in the tree registers a `SalesRaw.Heading` of any other shape.
+    *
+    * THE FIXTURE IS `SalesRaw.e`, NOT `Sales.e`, SINCE Q25 (2026-09-23):
+    * `Sales.e` is typed now (its heading is `Layout.Widgets.Heading`'s
+    * `HeadingProps`) and declares no `data Heading`; `SalesRaw.e` is the
+    * untyped copy kept for exactly this kind of runner-side property. */
   private val docRoot      = new File("core/src/test/resources/doc").getAbsoluteFile
   private val salesFile    = new File(docRoot, "Sales.e")
-  private val salesHeading = Global("Sales", "Heading")
+  private val salesRawFile = new File(docRoot, "SalesRaw.e")
+  private val salesHeading = Global("SalesRaw", "Heading")
 
   /** The fixture's `data Heading`, and the same block with a fifth field: the
     * half-typed buffer.  Matched as TEXT, so that an edit to the fixture
@@ -1357,7 +1363,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * `loadModule` would leave the control silently vacuous too. */
   private val markerTerm = "\nwp3Marker = wp3NoSuchTerm\n"
 
-  /** Fields of `Sales.Heading` as the registry has it RIGHT NOW: -1 = no
+  /** Fields of `SalesRaw.Heading` as the registry has it RIGHT NOW: -1 = no
     * entry at all, -2 = forcing the by-name constructor list threw. */
   private def headingFieldsNow(): Int =
     try DataConDecl.forConstructor(salesHeading)
@@ -1370,7 +1376,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * `processTypeDefComponent` assigns the `conMap` that the decl's BY-NAME
     * `constructors` substitutes through (`Session.scala:985-1009`), so another
     * thread that forces `constructors` inside that window can throw.
-    * `TestRunner` registers `Sales.Heading` from the same file in this same
+    * `TestRunner` registers `SalesRaw.Heading` from the same file in this same
     * unforked, parallel JVM, so the window is reachable from here.  Re-read a
     * bounded number of times on THAT outcome only: -1 and any field count are
     * verdicts, not races, and are never retried. */
@@ -1381,7 +1387,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     n
   }
 
-  /** Register `Sales` from a disk root by loading it into a `copy` of the
+  /** Register `SalesRaw` from a disk root by loading it into a `copy` of the
     * resident env -- `copy` CARRIES `registerDecls` (`SessionState.scala:113`)
     * and the boot env has it on, so this registers, exactly as the resident's
     * own boot and a render session do. */
@@ -1391,10 +1397,10 @@ object TestLspRobustness extends Properties("LSP robustness") {
     implicit val pr: Printer = resident.printer
     s.loadFile = S.SourceFile.inOrder(
       (m: String) => S.SourceFile.filesystem(root)(m), s.loadFile)
-    S.loadModules(List("Sales"))
+    S.loadModules(List("SalesRaw"))
   }
 
-  /** THE VACUITY GUARD.  Load `text` as module `Sales` from its own root on a
+  /** THE VACUITY GUARD.  Load `text` as module `SalesRaw` from its own root on a
     * NON-registering copy, and answer how many fields the `Heading` decl that
     * load built has -- read off the `Con` in that copy's own `cons` table,
     * which is where `processTypeDefComponent` puts it.  -1 = no such `Con`,
@@ -1406,13 +1412,13 @@ object TestLspRobustness extends Properties("LSP robustness") {
     * registration site, and the property's "still four" is the FLAG's doing
     * rather than a component that died in `guard(Error)`. */
   private def controlDeclFields(root: Path, text: String): Int = {
-    write(root.resolve("Sales.e"), text)
+    write(root.resolve("SalesRaw.e"), text)
     implicit val s: SessionEnv = resident.loadedEnv.get.copyNotRegistering
     implicit val su: Supply = resident.supply
     implicit val pr: Printer = resident.printer
     s.loadFile = S.SourceFile.inOrder(
       (m: String) => S.SourceFile.filesystem(root.toString)(m), s.loadFile)
-    S.loadModules(List("Sales"))
+    S.loadModules(List("SalesRaw"))
     s.cons.get(salesHeading).map(_.decl).collect { case d: DataConDecl => d }
       .flatMap(_.constructor(salesHeading)).map(_.fields.length) getOrElse -1
   }
@@ -1427,20 +1433,20 @@ object TestLspRobustness extends Properties("LSP robustness") {
       val before       = DataConDecl.forConstructor(salesHeading)
       val beforeFields = headingFieldsSettled()
       try {
-        val orig    = new String(Files.readAllBytes(salesFile.toPath), UTF_8)
+        val orig    = new String(Files.readAllBytes(salesRawFile.toPath), UTF_8)
         val control = orig.replace(headingDecl, headingDeclPlus)
         val mut     = control + markerTerm
         // 1. THE CHECK, down the product's own path, i.e. a NON-registering
         // copy (`Resident.withEnv`).  Nothing is written to disk.
-        val uri  = salesFile.toURI.toString
+        val uri  = salesRawFile.toURI.toString
         val docs = new Documents
         docs.put(uri, mut, 1)
-        val ds   = try Right(diagnose(salesFile, docs)) catch { case e: Throwable => Left(e) }
+        val ds   = try Right(diagnose(salesRawFile, docs)) catch { case e: Throwable => Left(e) }
         val said = ds.toOption.toList.flatten
         val afterCheck = headingFieldsSettled()
         // the marker's own position, 0-based as LSP counts: this is what
         // makes the conjunct below match THE MARKER and not merely some
-        // "undefined term" somewhere else in Sales.e.
+        // "undefined term" somewhere else in SalesRaw.e.
         val markerLine = mut.split("\n", -1).indexWhere(_ startsWith "wp3Marker")
         val markerCol  = "wp3Marker = ".length
         def at(d: Json, f: String): Option[Int] =
@@ -1453,10 +1459,10 @@ object TestLspRobustness extends Properties("LSP robustness") {
         // builds read off that copy's `Con` (see `controlDeclFields`).
         //
         // The copy is deliberately NON-registering rather than registering:
-        // `TestRunner` renders `Sales` in this same unforked JVM and reads
+        // `TestRunner` renders `SalesRaw` in this same unforked JVM and reads
         // THIS registry entry at runtime through `toJson#` ->
         // `Encode.userData` (`json/Encode.scala:400`), asserting on the
-        // heading's `title` (`TestRunner.scala:897`).  A five-field window in
+        // heading's `title` (`TestRunner.scala:915`).  A five-field window in
         // the shared registry, however short and however faithfully restored,
         // is a flake in another suite; proving the same thing off the `Con`
         // costs nothing and opens no window.  It also re-confirms the flag
@@ -1468,15 +1474,15 @@ object TestLspRobustness extends Properties("LSP robustness") {
         // one label carrying EVERY measurement, on the whole conjunction:
         // `&&` short-circuits, so without it a failure in the first conjunct
         // hides what the later ones measured and costs a whole run to learn.
-        (((control != orig) :| "Sales.e no longer contains this property's `data Heading` block verbatim") &&
-          ((beforeFields ?= 4) :| s"the disk load registered $beforeFields field(s) for Sales.Heading, not 4") &&
+        (((control != orig) :| "SalesRaw.e no longer contains this property's `data Heading` block verbatim") &&
+          ((beforeFields ?= 4) :| s"the disk load registered $beforeFields field(s) for SalesRaw.Heading, not 4") &&
           (ds.isRight :| s"the check of the mutated buffer THREW ${ds.left.toOption.map(trace)}") &&
           ((markerLine >= 0) :| "the marker line is not in the buffer this property built") &&
           (said.exists(atMarker) :|
              s"no undefined-term diagnostic at the marker ($markerLine:$markerCol), " +
              s"so the check did not read THIS buffer: ${said.map(key)}") &&
           ((afterCheck ?= 4) :|
-             "the buffer's five-field Heading reached DataConDecl.forConstructor(Global(\"Sales\",\"Heading\"))") &&
+             "the buffer's five-field Heading reached DataConDecl.forConstructor(Global(\"SalesRaw\",\"Heading\"))") &&
           ((ctl ?= Right(5)) :|
              s"the same five-field Heading did not survive a load on a copy ($ctl), so the verdict above is vacuous") &&
           ((afterControl ?= 4) :| "the control's own non-registering load reached the registry")) :|
@@ -1485,10 +1491,10 @@ object TestLspRobustness extends Properties("LSP robustness") {
       } finally {
         // Leave the registry as it was found, on EVERY path including the
         // failing one: `core/test` is unforked and parallel, and `TestRunner`
-        // reads these same entries.  Restoring `Sales.Heading` ALONE is
+        // reads these same entries.  Restoring `SalesRaw.Heading` ALONE is
         // enough: the only write this property makes is the ground-truth DISK
-        // load, whose `Sales.Sort` and `Sales.Query` are the fixture's own
-        // shapes, so `Sales.Heading` is the single entry that can be wrong --
+        // load, whose `SalesRaw.Sort` and `SalesRaw.Query` are the fixture's own
+        // shapes, so `SalesRaw.Heading` is the single entry that can be wrong --
         // and only on the path where the flag regressed, which is exactly
         // what this restore is here for.
         try before match {
@@ -1558,7 +1564,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   private lazy val salesSource: String = new String(Files.readAllBytes(salesFile.toPath), UTF_8)
   private def wpSalesSource(title: String): String =
     salesSource.replace("module Sales where", "module WpSales where")
-               .replace("Heading \"Sales\"", "Heading \"" + title + "\"")
+               .replace("HeadingProps \"Sales\"", "HeadingProps \"" + title + "\"")
 
 
   private def wpWidget(module: String, n: Int): String =
@@ -1731,7 +1737,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   property("D: a render answers a document, echoes the generation, and follows the file once invalidated") = secure {
     previewLock.synchronized { renderingD("render/invalidate/render") {
       val vacuous = !salesSource.contains("module Sales where") ||
-                    !salesSource.contains("Heading \"Sales\"")
+                    !salesSource.contains("HeadingProps \"Sales\"")
       val sales = writeFixture("WpSales", wpSalesSource("Sales"))
       bench.render(10, sales, "report", wpSalesParams, 41)
       val a1 = bench.answer(10)
@@ -1749,7 +1755,26 @@ object TestLspRobustness extends Properties("LSP robustness") {
         modulesOf(Some(j)).exists(_.contains("WpSales")))
       bench.render(11, sales, "report", wpSalesParams, 42)
       val a2 = bench.answer(11)
+      // Q25 (review M2): the LIVE render pins that `Sales.e` is TYPED -- the
+      // widgets in document order, and every `table`'s props a `TableProps`
+      // (`TableColumn`s with a `column` key, and `paginate`), not a bare
+      // relation arm -- whose `columns` carry `name`, and which has no `paginate`.  The client's own tests read
+      // a frozen capture, so without this a revert of `Sales.e` to `rawWidget`
+      // (or a dropped `plainText`) would pass every gate.
+      def widgetsOf(n: Json): List[Json] =
+        if ((n / "tag" flatMap (_.str)) == Some("Widget")) List(n)
+        else (n / "children" flatMap (_.arr)).getOrElse(Nil).flatMap(widgetsOf) ++
+             (n / "cells" flatMap (_.arr)).getOrElse(Nil).flatMap(r => r.arr.getOrElse(Nil)).flatMap(widgetsOf)
+      val liveWidgets = resultOf(a1) flatMap (_ / "document") flatMap (_ / "root") map widgetsOf getOrElse Nil
+      val liveNames   = liveWidgets map (w => (w / "name" flatMap (_.str)).getOrElse("?"))
+      val tablesTyped = liveWidgets.filter(w => (w / "name" flatMap (_.str)) == Some("table"))
+                          .forall(w => (w / "props" flatMap (_ / "columns") flatMap (_.arr))
+                                         .exists(cs => cs.nonEmpty && cs.forall(c => (c / "column").isDefined)) &&
+                                       (w / "props" flatMap (_ / "paginate")).isDefined)
       ((!vacuous) :| "Sales.e no longer contains the header or the heading this property rewrites") &&
+        ((liveNames ?= List("heading", "table", "table", "table", "text")) :|
+          "the live Sales document's widgets, in order, are not the typed report's") &&
+        (tablesTyped :| ("a table's props are not TableProps (no TableColumn `column` keys / `paginate`): " + docOf(a1).map(_.take(600)))) &&
         ((okOf(a1) ?= Some(true)) :| ("the first render: " + show(a1))) &&
         ((okOf(a2) ?= Some(true)) :| ("the second render: " + show(a2))) &&
         ((genOf(a1) ?= Some(41)) :| ("generation: " + show(a1))) &&

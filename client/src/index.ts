@@ -37,9 +37,9 @@ export * from "./charts";
 export { scorecardWidget, deltaDirection } from "./widgets/scorecard";
 export { headlineWidget, HEADLINE_FIGURES } from "./widgets/headline";
 export { crosstabWidget, EMPTY_CELL, TOTAL_LABEL } from "./widgets/crosstab";
-export { headingWidget, HeadingPropsSchema } from "./widgets/heading";
-export { textWidget, TextPropsSchema } from "./widgets/text";
-export { WIDGET_PROP_SCHEMAS, UNSUPPORTED_WIDGETS } from "./generated";
+export { headingWidget } from "./widgets/heading";
+export { textWidget } from "./widgets/text";
+export { WIDGET_PROP_SCHEMAS, UNSUPPORTED_WIDGETS, HeadingPropsSchema, TextPropsSchema } from "./generated";
 
 import type { Registry } from "./dispatcher";
 import type { FormatEnv } from "./format";
@@ -60,11 +60,12 @@ import { textWidget } from "./widgets/text";
  *  widget, which IS the "unsupported widget" behaviour.  `UNSUPPORTED_WIDGETS`
  *  names it; `test/charts.test.ts` `(x-treemap)` pins the box.
  *
- *  `heading` and `text` (Q24 (d), 2026-09-23) are the two names `Sales.e` uses
- *  that are NOT typed `Layout.Widgets.*` modules: they have no generated zod,
- *  so each carries its own schema (`Widget.schema`) and is absent from the
- *  generated `WIDGET_PROP_SCHEMAS`.  `(w-own-schema)` pins that every
- *  registered name has exactly one of the two. */
+ *  THE INVARIANT (Q25, 2026-09-23): every name registered here has a schema
+ *  GENERATED from its `Layout.Widgets.*` module in `WIDGET_PROP_SCHEMAS`, and a
+ *  renderer carries none of its own -- the client's widget vocabulary is the
+ *  typed one, never bare runtime values matched by hand.  `heading` and `text`
+ *  are `Layout.Widgets.Heading` and `Layout.Widgets.Text`.  `(w-generated-only)`
+ *  pins the registry's names to exactly the generated ones. */
 export function defaultRegistry(env?: FormatEnv): Registry {
   return {
     table: tableWidget(env) as Registry[string],

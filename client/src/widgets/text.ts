@@ -1,28 +1,25 @@
-// `text`: a paragraph.  `core/src/test/resources/doc/Sales.e` asks for
+// `text`: a paragraph of PLAIN text, the typed widget `Layout.Widgets.Text`
+// (core/src/main/resources/modules/Layout/Widgets/Text.e), built in Ermine with
 //
-//   rawWidget "text" "line items on demand"
+//   plainText (TextProps "every line item, whatever the date range")
 //
-// and `widget n p` applies `toJson` to `p`, so the props ON THE WIRE are a bare
-// JSON string -- MEASURED from the S1 capture (`scratch-widget-preview/wp10-s1/
-// captures.json`, `ok-sales`: `"props": "line items on demand"`), not a
-// `{text}` record.  Like `heading` it is outside the typed `Layout.Widgets.*`
-// vocabulary, so it carries its own schema through `Widget.schema`.  Added by
-// Q24 (d), 2026-09-23.  The DOM, built with textContent only:
+// and validated by the zod GENERATED from `TextProps` (src/generated/text.ts,
+// through WIDGET_PROP_SCHEMAS).  On the wire the props are a one-field record,
+// `{"body": ".."}` -- never a bare string: since Q25 (2026-09-23) the client's
+// widget vocabulary is the typed one and a bare runtime value is refused.
+// The DOM, built with textContent only (no HTML, no markdown):
 //
-//   <p class="ermine-text">line items on demand</p>
+//   <p class="ermine-text">every line item, whatever the date range</p>
 
-import { z } from "zod";
+import type { TextProps } from "../props";
 import type { Widget, WidgetContext } from "../dispatcher";
 
-export const TextPropsSchema = z.string();
-
-export function textWidget(): Widget<string> {
+export function textWidget(): Widget<TextProps> {
   return {
-    schema: TextPropsSchema,
-    render(ctx: WidgetContext, props: string): void {
+    render(ctx: WidgetContext, props: TextProps): void {
       const p = ctx.document.createElement("p");
       p.className = "ermine-text";
-      p.textContent = props;
+      p.textContent = props.body;
       ctx.target.appendChild(p);
     },
   };

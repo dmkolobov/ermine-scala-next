@@ -73,10 +73,10 @@ Where the code lives:
 | `core/src/main/scala/com/clarifi/reporting/ermine/json/` | `Encode`, `Decode`, `Schema`, `Validate`, `Zod`, `Doc`, `Write`, `Rows` (in `Write.scala`), `PlanCache`, `Runner`, `Server`, `Wire`, `SchemaMain`, `ServeMain` |
 | `core/src/main/resources/modules/Json.e` | the `Json` type, `toJson`/`render`/`pretty`/`parse`, the builders, `Inline`/`Deferred`/`Spread` |
 | `core/src/main/resources/modules/Layout/Doc.e` | `Node`, `widget`, `vflow`, `hflow`, `grid`, `tabbed` |
-| `core/src/main/resources/modules/Layout/Widgets.e` + `Layout/Widgets/*.e` | one module per widget: `Format`, `Table`, `Drilldown`, `Scorecard`, `Chart`, `AxisChart`, `PieChart`, `StyleBox`, `DrilldownBar` |
+| `core/src/main/resources/modules/Layout/Widgets.e` + `Layout/Widgets/*.e` | one module per widget: `Format`, `Table`, `Drilldown`, `Scorecard`, `Chart`, `AxisChart`, `PieChart`, `StyleBox`, `DrilldownBar`, `Headline`, `Crosstab`, `Heading`, `Text` |
 | `client/` | the npm package: generated zod, dispatcher, legacy adapters, the `scorecard` widget |
 | `bin/ermine`, `bin/ermine-schema`, `bin/ermine-serve` | the REPL (`:json`), the schema exporter, the document runner |
-| `core/src/test/resources/doc/Sales.e`, `core/src/test/resources/modules/Doc/SalesReport.e` | the two example reports |
+| `core/src/test/resources/doc/Sales.e`, `core/src/test/resources/modules/Doc/SalesReport.e`, `core/src/test/resources/doc/SalesRaw.e` | the example reports (the third is the runner's untyped fixture) |
 
 The registry (constructor names, field names, field types) is attached to each
 data type's `Con` at load time, plus a process-wide name → declaration map,
@@ -584,7 +584,7 @@ Three rules, in this order:
    stops there — the scan ends, the driver closes its result set — and the
    relation goes out deferred instead.
 
-`core/src/test/resources/doc/Sales.e` has one of each: `byDay` and `regions` are
+`core/src/test/resources/doc/SalesRaw.e` has one of each: `byDay` and `regions` are
 bare, `items` is `Deferred`. The walkthrough in §9 shows all three rules firing.
 
 The deferred re-request **re-scans** the plan. A relation carries no sort order,
@@ -951,7 +951,7 @@ carries a `"tag"`; `Tab` has one, so it does not:
 and the whole response is `{"version": 1, "settings": {...}, "root": <node>}`.
 
 `widget n p` applies `toJson` to `p`, so a widget's props can be any encodable
-value — including a bare `String`, as `Sales.e` does for its `"text"` widget.
+value — including a bare `String`, as `SalesRaw.e` does for its `"text"` widget (the client refuses it: Q25).
 
 ### The widgets
 
@@ -968,6 +968,8 @@ names and the relation field of each:
 | `drilldownPieChart` | `drilldownPieChart` | `pieRows` | `Inline r` |
 | `styleBox` | `styleBox` | `styleBoxRows` | `Inline r` |
 | `drilldownBar` | `drilldownBar` | `barRows` | bare `[..r]` |
+| `heading` | `heading` | — | no relation |
+| `plainText` | `text` | — | no relation |
 | — | `treeMap` | — | **unsupported** |
 
 `treeMap` is a reserved name with no renderer behind it at all (`runTreeMap` is
@@ -975,7 +977,7 @@ undefined in the legacy bundle and the Local branch of `HTMLWriter.treeMap` is
 `sys.error("todo")`), so it is deliberately left out of the client registry and a
 document asking for one gets an error box naming it.
 
-`Layout.Widgets.widgetNames` lists eleven: the nine above plus `headline` and `crosstab`. Two more names are registered in the CLIENT only, outside this vocabulary: `heading` and `text`, the untyped widgets `Sales.e` builds with `rawWidget` (Q24 (d), 2026-09-23). They have no Ermine module and no generated zod; each component carries its own schema (`client/src/widgets/heading.ts`: a strict `{title, sortColumn, matched, total}` record; `client/src/widgets/text.ts`: a bare string).
+`Layout.Widgets.widgetNames` lists thirteen: the eleven above plus `headline` and `crosstab`. `heading` (`Layout.Widgets.Heading`, `HeadingProps {title, sortColumn, matched, total}`) and `plainText` (`Layout.Widgets.Text`, `TextProps {body}`) were added by Q25 (2026-09-23) with generated zod like every other widget. `Layout.Widgets` re-exports Text but NOT Heading: Heading's `title`, `sortColumn` and `total` are field names Scorecard, Table's `ColumnSort` and Headline already own, and through the umbrella they would silently resolve to `HeadingProps`, so import `Layout.Widgets.Heading` by name. The client validates every widget against its GENERATED schema and nothing else (`client/README.md`, "Adding a widget").
 
 ### `CellFormat`
 
@@ -1000,7 +1002,8 @@ Scala-side fold. This is the single biggest thing standing between an existing
 
 ### `Sales.e`, line by line
 
-`core/src/test/resources/doc/Sales.e` is the runner's example report. It has no
+`core/src/test/resources/doc/Sales.e` is the runner's example report and, since
+Q25, a TYPED one: every widget is a `Layout.Widgets.*` constructor. It has no
 database: every relation is a literal.
 
 ```
@@ -1014,6 +1017,18 @@ import them.
 
 ```
 import List using {filter; length; nub; sum'; map_List; empty_Bracket; cons_Bracket}
+```
+
+The widget modules are imported with `using` lists too, because field selectors
+are module-global and `Layout.Widgets.Table`'s `sortColumn` would collide with
+`Layout.Widgets.Heading`'s:
+
+```
+import Layout.Widgets.Heading using {heading; HeadingProps}
+import Layout.Widgets.Text using {plainText; TextProps}
+import Layout.Widgets.Table using {tabular; TableProps; type TableColumn; TableColumn;
+                                   type ColumnSort; ColumnSort; AlignLeft; DateColumn;
+                                   textColumn; numberColumn}
 ```
 
 In the same way a `{region, day, ..}` Row literal desugars to `single_Brace` and
@@ -1051,10 +1066,12 @@ data Query = Query
   }
 ```
 
-`Heading` is a one-constructor record, so its props carry no `tag` — just the
-four fields. `Sale` is the in-memory fact type, and its named fields give the
-selectors (`sRegion`, `sDay`, ...) the rest of the module reads rows with. Then
-the data, eight `Sale` values with `@2026/1/5` date literals.
+`Sale` is the in-memory fact type, and its named fields give the selectors
+(`sRegion`, `sDay`, ...) the rest of the module reads rows with. Then the data,
+eight `Sale` values with `@2026/1/5` date literals, and two helpers: `sortOf`
+turns the `orderBy` parameter into the by-day table's `ColumnSort` (an index into
+its columns), and `salesTable cs ss rs = tabular (TableProps cs Nothing ss True
+True rs)`.
 
 The report itself:
 
@@ -1070,15 +1087,22 @@ report q =
                                    amount = sAmount s, units = sUnits s }) picked)
       -- `regions` and `items` are built from the whole `sales` list, never
       -- empty, so plain `relation` is enough there.
-      -- bare: the request's "data.default" decides how it is delivered
       regions = relation (map_List (r -> { region = r }) (nub (map_List sRegion sales)))
-      -- always deferred, whatever the request asks for
-      items = Deferred (relation (map_List (s -> { item = sItem s, amount = sAmount s,
-                                              units = sUnits s }) sales))
+      items = relation (map_List (s -> { item = sItem s, amount = sAmount s,
+                                         units = sUnits s }) sales)
   in vflow
-       [ rawWidget "heading" (Heading "Sales" (columnOf (orderBy q)) (length picked) total)
-       , grid [ [ rawWidget "table" byDay, rawWidget "table" regions ]
-              , [ rawWidget "table" items, rawWidget "text" "line items on demand" ] ]
+       [ heading (HeadingProps "Sales" (columnOf (orderBy q)) (length picked) total)
+       , grid [ [ salesTable [ textColumn "region" "Region"
+                             , TableColumn "day" "Day" Default AlignLeft DateColumn
+                             , numberColumn "amount" "Amount" money
+                             , numberColumn "units" "Units" Default ]
+                             [sortOf (orderBy q)] byDay
+                , salesTable [textColumn "region" "Region"] [] regions ]
+              , [ salesTable [ textColumn "item" "Item"
+                             , numberColumn "amount" "Amount" money
+                             , numberColumn "units" "Units" Default ]
+                             [] items
+                , plainText (TextProps "every line item, whatever the date range") ] ]
        ]
 ```
 
@@ -1088,16 +1112,26 @@ columns off the first row, an empty list has none, and the encoder would answer
 the `Headerless` 500 shown under the errors below. With the header the empty
 range renders a table with its four columns and `"rows": []`.
 
-Three relations, one of each delivery kind; a `VFlow` whose second child is a
-2x2 `Grid`; the parameters echoed back into a widget's props. The widget names
-here (`heading`, `text`, `table` over a bare relation) are deliberately outside
-the typed widget vocabulary — this report exercises the RUNNER, not the client,
-so its props are whatever `toJson` makes of them. Since Q24 (d) the client draws `heading` and `text` (each with a hand-written schema); `table` over a bare relation is still refused by the client's `TableProps` schema (`its props are invalid -- columns.0.column: Required`) for all three of this report's tables, the deferred one included, because validation comes before any fetch.
+Three typed tables over BARE relations; a `VFlow` whose second child is a 2x2
+`Grid`; the parameters echoed back into the heading and into the by-day table's
+sort. Every props object is one the client validates with the zod GENERATED from
+its `Layout.Widgets.*` module (Q25, 2026-09-23), so the whole report draws in the
+editor preview with no error box. A typed table cannot FORCE deferral (`rows` is
+`[..r]`, not `Deferred r`): the request decides, and the preview asks inline.
+
+**The runner's untyped fixture is `core/src/test/resources/doc/SalesRaw.e`**: the
+same parameters and data with the body `Sales.e` had before Q25 -- `rawWidget` over
+a report-local `data Heading`, a bare-string `text`, bare relations handed to
+`table` as the props themselves, and a `Deferred` line-items relation. It
+exercises the RUNNER, not the client (TestRunner `(ex)` and the walkthrough in §9
+read it), and in the client four of its five widgets are error boxes BY DESIGN (its
+heading record happens to have the typed shape): a bare runtime value is not in
+the typed vocabulary.
 
 ### `Doc/SalesReport.e`, line by line
 
-`core/src/test/resources/modules/Doc/SalesReport.e` is the opposite: it uses the
-TYPED widget props, which is what a real report should do.
+`core/src/test/resources/modules/Doc/SalesReport.e` is the other typed fixture: it
+uses the TYPED widget props, which is what a real report should do.
 
 ```
 field srRegion : String
@@ -1342,14 +1376,20 @@ Request body, all optional:
 
 ### The walkthrough, live
 
+The walkthrough serves the RUNNER's fixture, `SalesRaw.e` (§8), whose `Deferred`
+line items and raw props show every delivery rule; `Sales` answers the same
+requests with typed props. RELABELLED, NOT RE-RUN (Q25): the transcripts below
+were recorded against `Sales` before Q25 renamed that body to `SalesRaw`; only
+the module name was changed, so byte counts, tokens and timings are the old run's.
+
 ```
-$ bin/ermine-serve --root core/src/test/resources/doc --preload Sales --port 8080
+$ bin/ermine-serve --root core/src/test/resources/doc --preload SalesRaw --port 8080
 listening on 8080                       # the only thing it writes to stdout
 
 $ curl -s localhost:8080/health
-{"status":"ok","version":1,"modules":["Bool","Builtin","Constraint","Control.Alt",...,"Sales",...]}
+{"status":"ok","version":1,"modules":["Bool","Builtin","Constraint","Control.Alt",...,"SalesRaw",...]}
 
-$ curl -s localhost:8080/report/Sales -H 'Content-Type: application/json' \
+$ curl -s localhost:8080/report/SalesRaw -H 'Content-Type: application/json' \
        -d '{"params": {"fromDay": "2026-01-05", "toDay": "2026-02-20",
                        "onlyRegion": "north", "orderBy": "ByAmount"}}'
 {"version":1,"settings":{},"root":{"tag":"VFlow","children":[
@@ -1392,7 +1432,7 @@ the 4-row regions table stays inline, and the `Deferred`-wrapped line items are
 deferred as always:
 
 ```
-$ curl -s localhost:8080/report/Sales \
+$ curl -s localhost:8080/report/SalesRaw \
        -d '{"params": {"fromDay": "2026-01-01", "toDay": "2026-12-31",
                        "orderBy": "ByDay"},
             "data": {"default": "inline", "threshold": 4}}'
@@ -1419,7 +1459,7 @@ be encoded, or the relation whose scan failed — never a place in the request.
 $ curl -s -w ' [%{http_code}]' localhost:8080/report/Nope -d '{}'
 {"error":{"path":null,"message":"no module named Nope"}} [404]
 
-$ curl -s -w ' [%{http_code}]' localhost:8080/report/Sales \
+$ curl -s -w ' [%{http_code}]' localhost:8080/report/SalesRaw \
        -d '{"params":{"fromDay":"nope","toDay":"2026-01-01","orderBy":"ByDay"}}'
 {"error":{"path":"$.params.fromDay","message":"the string \"nope\" is not a date yyyy-MM-dd"}} [400]
 
@@ -1438,10 +1478,10 @@ $ curl -s -w ' [%{http_code}]' localhost:8080/data/notarealtokenatall00
 $ curl -s -w ' [%{http_code}]' localhost:8080/nope
 {"error":{"path":null,"message":"no such route: /nope; this server has POST /report/<Module>, GET /data/<token> and GET /health"}} [404]
 
-$ curl -s -w ' [%{http_code}]' localhost:8080/report/Sales        # GET on a POST route
+$ curl -s -w ' [%{http_code}]' localhost:8080/report/SalesRaw        # GET on a POST route
 {"error":{"path":null,"message":"this route takes POST"}} [405]
 
-$ curl -s -w ' [%{http_code}]' localhost:8080/report/Sales --data-binary @5mb.json
+$ curl -s -w ' [%{http_code}]' localhost:8080/report/SalesRaw --data-binary @5mb.json
 {"error":{"path":null,"message":"the request body is over the 4194304 byte limit"}} [413]
 ```
 
@@ -1510,16 +1550,16 @@ log4j.logger.ermine.json.http=INFO
 log4j.logger.ermine.json.doc=INFO
 EOF
 ERMINE_JAVA_OPTS="-Dlog4j1.compatibility=true -Dlog4j.configuration=file:res/conf/log4j.prp" \
-  bin/ermine-serve --root core/src/test/resources/doc --preload Sales --port 8084
+  bin/ermine-serve --root core/src/test/resources/doc --preload SalesRaw --port 8084
 ```
 
 ```
-listening on 8084
+listening on 8084                       # relabelled to SalesRaw, not re-run (Q25): the old run's figures
 INFO  ermine.json.http | GET /health status=200 ms=27 bytes=1089
 INFO  ermine.json.doc | relation $.children[1].cells[0][0].props deferred rows=0 bytes=296 ms=44 scanned=5 (over the threshold)
 INFO  ermine.json.doc | relation $.children[1].cells[0][1].props inline rows=4 bytes=140 ms=1
 INFO  ermine.json.doc | relation $.children[1].cells[1][0].props deferred rows=0 bytes=248 ms=1
-INFO  ermine.json.http | POST /report/Sales status=200 ms=224 bytes=1068
+INFO  ermine.json.http | POST /report/SalesRaw status=200 ms=224 bytes=1068
 ```
 
 (One stderr line, `main ERROR Reconfiguration failed: No configuration found`,

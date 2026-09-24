@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import {
   TablePropsSchema, DrilldownTablePropsSchema, ScorecardPropsSchema, HeadlinePropsSchema,
-  CrosstabPropsSchema,
+  CrosstabPropsSchema, HeadingPropsSchema, TextPropsSchema,
   AxisChartPropsSchema, PieChartPropsSchema, StyleBoxPropsSchema, DrilldownBarPropsSchema,
   CellFormatSchema, DocNodeSchema, WIDGET_PROP_SCHEMAS, UNSUPPORTED_WIDGETS,
 } from "../src/generated";
@@ -129,6 +129,18 @@ test("(p-headline) HeadlineProps as declared; no relation at all", () => {
     headlineTitle: "T", scope: "s", rowCount: 3, total: 1.5,
     headlineFormat: { tag: "Default", args: [] },
   }).success, false);
+});
+
+test("(p-heading-text) HeadingProps and TextProps as declared in Layout/Widgets/Heading.e and Text.e (Q25)", () => {
+  assert.deepStrictEqual(keysOf(HeadingPropsSchema), ["matched", "sortColumn", "title", "total"]);
+  assert.deepStrictEqual(optionalKeys(HeadingPropsSchema), []);
+  assert.deepStrictEqual(keysOf(TextPropsSchema), ["body"]);
+  assert.deepStrictEqual(optionalKeys(TextPropsSchema), []);
+  // a record, never a bare string: the pre-Q25 wire is refused
+  assert.equal(TextPropsSchema.safeParse({ body: "x" }).success, true);
+  assert.equal(TextPropsSchema.safeParse("x").success, false);
+  assert.equal(HeadingPropsSchema.safeParse({ title: "S", sortColumn: "day", matched: 1, total: 2.5 }).success, true);
+  assert.equal(HeadingPropsSchema.safeParse({ title: "S", sortColumn: "day", matched: 1.5, total: 2.5 }).success, false);
 });
 
 test("(p-crosstab) CrosstabProps as declared; a cell is a number OR null", () => {
@@ -264,8 +276,8 @@ test("(p-relation-guard) isWireRelation does not mistake a props record for a re
 
 test("(p-registry) every registry name has a generated schema, and treeMap has none", () => {
   assert.deepStrictEqual(Object.keys(WIDGET_PROP_SCHEMAS).sort(),
-    ["axisChart", "crosstab", "drilldownBar", "drilldownPieChart", "drilldownTable", "headline",
-     "pieChart", "scorecard", "styleBox", "table"]);
+    ["axisChart", "crosstab", "drilldownBar", "drilldownPieChart", "drilldownTable", "heading", "headline",
+     "pieChart", "scorecard", "styleBox", "table", "text"]);
   // the two pie names share ONE props type, as Layout/Widgets/PieChart.e declares
   assert.equal(WIDGET_PROP_SCHEMAS["pieChart"], WIDGET_PROP_SCHEMAS["drilldownPieChart"]);
   // treeMap is the reserved name with no renderer: no schema either, so a

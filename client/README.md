@@ -236,6 +236,18 @@ input.
 
 ## Adding a widget
 
+**The principle (Q25, decided by the user 2026-09-23: *"I'm pretty sure I want
+typed widget schemas in the typescript rather than matching runtime ermine values
+fallibly"*): a widget's props are validated by the zod GENERATED from its
+`Layout.Widgets.*` module, or the widget does not exist.** There is no
+hand-written schema path: `Widget` has no `schema` field, the dispatcher looks the
+name up in the generated `WIDGET_PROP_SCHEMAS` only, and a registered name without
+an entry there draws an error box. `test/widgets.test.ts` `(w-generated-only)` pins
+that the registry's names are exactly the generated ones and that no renderer
+carries a schema of its own. A report that hands a widget a bare runtime value --
+`rawWidget` over a report-local record, a bare string, a bare relation -- gets an
+error box, by design.
+
 Three edits, plus the generate step.
 
 1. **Ermine.** A new module under `core/src/main/resources/modules/Layout/Widgets/`
@@ -264,9 +276,15 @@ Three edits, plus the generate step.
    `WidgetName p` is a phantom type: `widget sparklineName x` type-checks only when `x`
    is a `SparklineProps`, so the string and the type cannot drift apart in Ermine. The
    untyped `rawWidget "name" x` remains for tests and for a name the registry does not
-   know yet; the client validates either the same way.
+   know yet; the client validates either the same way -- against the GENERATED
+   schema of that name, so a `rawWidget` whose value does not have the typed shape
+   is an error box.
 
-   Then `export Layout.Widgets.Sparkline` from `Layout/Widgets.e`. A relation field
+   Then `export Layout.Widgets.Sparkline` from `Layout/Widgets.e` (unless a field
+   name is one another widget module already owns: `Layout.Widgets.Heading` is
+   not re-exported for that reason -- through the umbrella its `title` would
+   silently shadow Scorecard's -- and is imported by name) and add its name to
+   `widgetNames` there. A relation field
    is `[..r]` when the request may defer it, `Inline r` when the widget cannot work
    without the rows. The row parameter stays FREE: one schema per widget, whatever
    relation it is used with.
@@ -324,17 +342,16 @@ is deliberately left out of `defaultRegistry()` and a document asking for one ge
 the dispatcher's error box naming it. `UNSUPPORTED_WIDGETS` says so in code;
 `test/charts.test.ts` `(x-treemap)` pins it.
 
-`heading` and `text` (Q24 (d), 2026-09-23) are registered but are NOT reserved
-`Layout.Widgets.*` names: they are the untyped widgets
-`core/src/test/resources/doc/Sales.e` builds with `rawWidget`, so there is no
-Ermine module, no `generate.sh` entry and no generated zod for them. Each
-component supplies its own schema through `Widget.schema` (the dispatcher uses it
-in place of `WIDGET_PROP_SCHEMAS`): `src/widgets/heading.ts` a strict
-`{title, sortColumn, matched, total}` record, `src/widgets/text.ts` a bare string,
-both MEASURED from the captured Sales answer. `test/widgets.test.ts`
-`(w-own-schema)` pins that every registered name has exactly one schema, generated
-or its own. A widget that belongs in the library should still take the three-edit
-route above; this is for names a report invents. The client's `text` is PLAIN text: the Ermine-side `Layout.Report.text` (a legacy Report builder, not a registry name) means markdown, so a typed `Layout.Widgets.Text` added later would have to settle which meaning the name keeps (`(w-own-schema)` fires the day a generated `text` appears).
+`heading` and `text` are registered too, and since Q25 (2026-09-23) they are typed
+like the rest: `Layout.Widgets.Heading` (`HeadingProps {title, sortColumn, matched,
+total}`, constructor `heading`) and `Layout.Widgets.Text` (`TextProps {body}`,
+constructor `plainText`), each with a `generate.sh` entry and generated zod
+(`src/generated/heading.ts`, `text.ts`). Q24 (d) had first registered them with
+hand-written schemas through a `Widget.schema` override; Q25 deleted that override
+and the `(w-own-schema)` allowance with it. The client's `text` is PLAIN text:
+the Ermine-side `Layout.Report.text` (a legacy Report builder, not a registry name)
+means markdown, which is why the typed constructor is `plainText` and its field is
+`body`.
 
 ## Charts and the style box
 

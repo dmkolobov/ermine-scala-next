@@ -170,9 +170,9 @@ export interface BootWindow {
  * U6 was TAKEN on the design review's F2, "the preview never mints a deferred
  * token" (`Preview.scala` sends `params` only, so `json.Request`'s defaults
  * deliver every relation inline).  F2 DOES NOT HOLD: a report that asks for
- * `Deferred` itself gets a token whatever the request says --
- * `core/src/test/resources/doc/Sales.e` does, and the S1 capture of its render
- * holds one -- so a document made by the preview's own render request CAN
+ * `Deferred` itself gets a token whatever the request says -- `doc/SalesRaw.e`
+ * does (`Sales.e` did until Q25 typed it), and the S1 capture of the old Sales
+ * held one -- so a document made by the preview's own render request CAN
  * reach this stub.  The refusal STAYS by the user's decision on Q24
  * (2026-09-23: "Do (a) and (d) now, file (c)"): WP-10's done-when is an inline
  * fixture (`Doc/SalesReport.e`), and fetching deferred rows through the

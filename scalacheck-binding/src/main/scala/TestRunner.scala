@@ -38,8 +38,9 @@ import scala.util.control.NonFatal
   *  - (d) concurrency: the same requests fired at once answer what they
   *    answer one at a time.
   *  - (e) one connection per request, however many relations.
-  *  - (ex) the example report, `core/src/test/resources/doc/Sales.e`, and
-  *    the curl walkthrough in the plan.
+  *  - (ex) the RAW example report, `core/src/test/resources/doc/SalesRaw.e`
+  *    (the untyped shape `Sales.e` had before Q25, kept for this), and the
+  *    curl walkthrough in the plan.
   *  - (sql) the two DB-layer tickets J3b handed on: a NULL in a GUID column,
   *    and a scan that throws being torn down.
   *  - (inv1, inv2, bind, nodb) WP-4, the editor preview's four (§11 row
@@ -889,10 +890,10 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
   // =====================================================================
   // (ex) the example report and the curl walkthrough
 
-  property("(ex) core/src/test/resources/doc/Sales.e answers the walkthrough's requests") = secure {
+  property("(ex) core/src/test/resources/doc/SalesRaw.e answers the walkthrough's requests") = secure {
     val params = "{\"fromDay\":\"2026-01-05\",\"toDay\":\"2026-02-20\"," +
                  "\"onlyRegion\":\"north\",\"orderBy\":\"ByAmount\"}"
-    val (st, text) = render(runner, "Sales", "{\"" + Request.Params + "\":" + params + "}")
+    val (st, text) = render(runner, "SalesRaw", "{\"" + Request.Params + "\":" + params + "}")
     if (st != 200) falsified :| ("status " + st + ": " + text)
     else {
       val doc = parsed(text)
@@ -906,7 +907,7 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
       val (gst, gbody) = fetch(runner, deferred.field(Wire.Token).flatMap(_.string).getOrElse(""))
       val items = parsed(gbody)
       // no filter at all: every region, every sale
-      val (st2, text2) = render(runner, "Sales",
+      val (st2, text2) = render(runner, "SalesRaw",
         "{\"" + Request.Params + "\":{\"fromDay\":\"2026-01-01\",\"toDay\":\"2026-12-31\"," +
         "\"orderBy\":\"ByDay\"},\"" + Request.Data + "\":{\"threshold\":4}}")
       val all = relationObjects(parsed(text2).field(Wire.Root).get)

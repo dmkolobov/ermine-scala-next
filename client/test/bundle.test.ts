@@ -107,11 +107,11 @@ const FIXTURE = JSON.stringify({
           headlineFormat: { tag: "Currency", color: false, negParens: false, symbol: "$", places: 2 },
         },
       },
-      // Q24 (d): the two widgets with their OWN schema (not generated), in the
-      // shapes Sales.e's captured answer carries
+      // Q25: the typed Layout.Widgets.Heading / Layout.Widgets.Text, validated by
+      // their GENERATED zod, in the shapes Sales.e's captured answer carries
       { tag: "Widget", name: "heading",
         props: { title: "Sales", sortColumn: "amount", matched: 3, total: 4350.75 } },
-      { tag: "Widget", name: "text", props: "line items on demand" },
+      { tag: "Widget", name: "text", props: { body: "every line item, whatever the date range" } },
     ],
   },
 });
@@ -224,7 +224,7 @@ test("(b-same-dom) a document rendered through the bundle matches the CommonJS b
   // and it is a real render, not two empty divs
   assert.ok(document.querySelectorAll("#bundle section.ermine-scorecard .ermine-scorecard-card").length === 3);
   assert.equal(document.querySelector("#bundle .ermine-heading-title")?.textContent, "Sales");
-  assert.equal(document.querySelector("#bundle p.ermine-text")?.textContent, "line items on demand");
+  assert.equal(document.querySelector("#bundle p.ermine-text")?.textContent, "every line item, whatever the date range");
   dom.window.close();
 });
 

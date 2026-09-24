@@ -46,6 +46,14 @@ export Layout.Widgets.StyleBox
 export Layout.Widgets.DrilldownBar
 export Layout.Widgets.Headline
 export Layout.Widgets.Crosstab
+export Layout.Widgets.Text
+-- Layout.Widgets.Heading (Q25, 2026-09-23) is a typed widget module too, with
+-- generated zod, but it is NOT re-exported here: its `title`, `sortColumn` and
+-- `total` are the names core/src/test/resources/doc/Sales.e has always put on
+-- the wire, and Scorecard, Table's ColumnSort and Headline own those field
+-- names already.  MEASURED by the Q25 review: exporting it gives no clash
+-- error -- the umbrella loads and `title` SILENTLY resolves to HeadingProps,
+-- breaking every importer's Scorecard/Table code.  Import it by name.
 import List using empty_Bracket; cons_Bracket
 
 -- | The registry names Stage 3 reserves.  Every one of them is built except
@@ -56,4 +64,4 @@ import List using empty_Bracket; cons_Bracket
 widgetNames : List String
 widgetNames = ["table", "drilldownTable", "axisChart", "pieChart",
                "drilldownPieChart", "styleBox", "drilldownBar", "treeMap",
-               "scorecard", "headline", "crosstab"]
+               "scorecard", "headline", "crosstab", "heading", "text"]

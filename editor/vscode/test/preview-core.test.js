@@ -5540,7 +5540,7 @@ test("S2 ASYNC: a missing params file sends `{}` -- exactly what WP-7 measured",
 });
 
 test("S2 ASYNC: a params file holding `null` is sent AS null, not coerced to `{}`", async () => {
-  // `docs/JSON-GUIDE.md:1295-1297`: a `Maybe`-rooted report wants null, and
+  // `docs/JSON-GUIDE.md:1329-1331`: a `Maybe`-rooted report wants null, and
   // S1's skeleton mints exactly that. WP-7's `null -> {}` coercion would have
   // turned a correct file into a 400 nobody could explain.
   const m = sendModel();

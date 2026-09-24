@@ -13,7 +13,6 @@
 // and (for a validation failure) the zod path.  One broken widget must not take the
 // page with it.
 
-import type { z } from "zod";
 import type { ReportDocument } from "./document";
 import type { DocNode, DocTab } from "./props";
 import { WIDGET_PROP_SCHEMAS } from "./generated";
@@ -45,9 +44,10 @@ export interface WidgetContext {
   uid(): string;
 }
 
+/** A renderer.  It carries NO schema: its props are validated by the zod GENERATED
+ *  from its `Layout.Widgets.*` module (`WIDGET_PROP_SCHEMAS`) or the widget is an
+ *  error box -- never a hand-written check (Q25; client/README.md "Adding a widget"). */
 export interface Widget<P = unknown> {
-  /** Overrides the generated schema for this name; normally omitted. */
-  schema?: z.ZodTypeAny;
   render(ctx: WidgetContext, props: P): void | Promise<void>;
 }
 
@@ -219,7 +219,7 @@ async function renderWidget(
     return fail(`no renderer is registered under that name`);
   }
 
-  const schema = widget.schema ?? WIDGET_PROP_SCHEMAS[name];
+  const schema = WIDGET_PROP_SCHEMAS[name];
   if (!schema) {
     return fail(`no props schema was generated for it -- add it to client/scripts/generate.sh`);
   }

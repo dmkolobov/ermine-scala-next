@@ -14,6 +14,8 @@ import { Schema as StyleBoxPropsSchemaRaw } from "./styleBox";
 import { Schema as DrilldownBarPropsSchemaRaw } from "./drilldownBar";
 import { Schema as HeadlinePropsSchemaRaw } from "./headline";
 import { Schema as CrosstabPropsSchemaRaw } from "./crosstab";
+import { Schema as HeadingPropsSchemaRaw } from "./heading";
+import { Schema as TextPropsSchemaRaw } from "./text";
 
 /** Layout.Doc.Node */
 export const DocNodeSchema: z.ZodTypeAny = DocNodeSchemaRaw;
@@ -37,6 +39,10 @@ export const DrilldownBarPropsSchema: z.ZodTypeAny = DrilldownBarPropsSchemaRaw;
 export const HeadlinePropsSchema: z.ZodTypeAny = HeadlinePropsSchemaRaw;
 /** Layout.Widgets.Crosstab.CrosstabProps */
 export const CrosstabPropsSchema: z.ZodTypeAny = CrosstabPropsSchemaRaw;
+/** Layout.Widgets.Heading.HeadingProps */
+export const HeadingPropsSchema: z.ZodTypeAny = HeadingPropsSchemaRaw;
+/** Layout.Widgets.Text.TextProps */
+export const TextPropsSchema: z.ZodTypeAny = TextPropsSchemaRaw;
 
 /** Widget registry name -> the zod its props are validated with. */
 export const WIDGET_PROP_SCHEMAS: Record<string, z.ZodTypeAny> = {
@@ -50,6 +56,8 @@ export const WIDGET_PROP_SCHEMAS: Record<string, z.ZodTypeAny> = {
   drilldownBar: DrilldownBarPropsSchema,
   headline: HeadlinePropsSchema,
   crosstab: CrosstabPropsSchema,
+  heading: HeadingPropsSchema,
+  text: TextPropsSchema,
 };
 
 /** Registry names Stage 3 reserves that have NO renderer: the dispatcher's

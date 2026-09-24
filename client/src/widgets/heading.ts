@@ -1,22 +1,20 @@
-// `heading`: the widget `core/src/test/resources/doc/Sales.e` asks for with
+// `heading`: the typed widget `Layout.Widgets.Heading` (core/src/main/resources/
+// modules/Layout/Widgets/Heading.e), built in Ermine with
 //
-//   rawWidget "heading" (Heading "Sales" (columnOf (orderBy q)) (length picked) total)
+//   heading (HeadingProps "Sales" (columnOf (orderBy q)) (length picked) total)
 //
-// It is NOT one of the typed `Layout.Widgets.*` modules -- `Heading` is a
-// report-local `data` type (Sales.e:75-80) -- so there is no generated zod for
-// it, and this component carries its OWN schema through `Widget.schema` (the
-// dispatcher's documented override) instead of an entry in the generated
-// `WIDGET_PROP_SCHEMAS`.  Added by Q24 (d), 2026-09-23, so Sales's heading box
-// draws in the preview panel.
+// Its props are validated by the zod GENERATED from `HeadingProps`
+// (src/generated/heading.ts, through WIDGET_PROP_SCHEMAS) like every other
+// widget's -- this component carries no schema of its own.  Q25 (2026-09-23,
+// the user: "I'm pretty sure I want typed widget schemas in the typescript
+// rather than matching runtime ermine values fallibly"): the client never
+// validates a bare runtime value with a hand-written schema.
 //
-// The props, MEASURED from the S1 capture (`scratch-widget-preview/wp10-s1/
-// captures.json`, `ok-sales`; the same four keys in editor/vscode/test/
-// fixtures/panel-answers.json): a one-constructor record, so no "tag" key --
+// On the wire, a one-constructor record, so no "tag" key:
 //
 //   {"title": "Sales", "sortColumn": "amount", "matched": 3, "total": 4350.75}
 //
-// and strict, as every generated schema is: an unknown key is refused, not
-// ignored.  The DOM, built with textContent only (nothing is parsed as HTML):
+// The DOM, built with textContent only (nothing is parsed as HTML):
 //
 //   <section class="ermine-heading">
 //     <h2 class="ermine-heading-title">Sales</h2>
@@ -29,21 +27,11 @@
 //
 // `total` has no CellFormat in the record, so it is printed as it arrives.
 
-import { z } from "zod";
+import type { HeadingProps } from "../props";
 import type { Widget, WidgetContext } from "../dispatcher";
-
-export const HeadingPropsSchema = z.object({
-  title: z.string(),
-  sortColumn: z.string(),
-  matched: z.number().int(),
-  total: z.number(),
-}).strict();
-
-export type HeadingProps = z.infer<typeof HeadingPropsSchema>;
 
 export function headingWidget(): Widget<HeadingProps> {
   return {
-    schema: HeadingPropsSchema,
     render(ctx: WidgetContext, props: HeadingProps): void {
       const d = ctx.document;
       const section = d.createElement("section");

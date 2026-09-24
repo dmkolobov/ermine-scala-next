@@ -395,16 +395,18 @@ At the end of a session `liveness.sh` should read `sbt=0 … lsp=0 … ermine-jv
 - **Deferred relations in the panel (WP-30, filed, NOT built).** The panel
   refuses every deferred relation by name (U6, kept by the user's Q24 decision,
   2026-09-23); fetching them through the extension is ticket WP-30.
-  **`Sales.report` in the panel is a heading, a paragraph and three table
-  boxes**: since Q24 (d) its `heading` and `text` widgets draw, but all three of
-  its tables are refused by the table schema (`its props are invalid --
-  columns.0.column: Required`: `Sales.e` hands `table` a bare relation) before
-  any fetch, the deferred one included (MEASURED in jsdom, checklist E2's
-  `Sales` sub-step). It is a test of names and parameters, not a widget
-  document; WP-10's done-when and checklist E2 use
-  `core/src/test/resources/modules/Doc/SalesReport.e`. A `client/` change such
-  as Q24 (d) needs only `npm run bundle` in `client/`, **no new `.vsix`** (§3's
-  bundle row).
+  **`Sales.report` in the panel draws all five widgets, NO error box** (Q25,
+  decided by the user 2026-09-23: typed widget schemas, "Rewrite it."): its
+  body is typed now -- `Layout.Widgets.Heading`, `Layout.Widgets.Text` and three
+  `tabular` tables, every props object validated by GENERATED zod -- and its
+  items table is INLINE (a typed table cannot force deferral), so NO report in
+  this repository shows the deferred-refusal box in the panel (MEASURED in
+  jsdom, checklist E2's `Sales` sub-step). WP-10's done-when and checklist E2
+  use `core/src/test/resources/modules/Doc/SalesReport.e` and, since Q25,
+  `Sales`. The runner's untyped fixture, `core/src/test/resources/doc/SalesRaw.e`,
+  is NOT a preview step: four of its five widgets are boxes by design. A
+  `client/` change such as Q25's needs only `npm run bundle` in `client/`, **no
+  new `.vsix`** (§3's bundle row).
 - **The render tab is untitled and always dirty.** Closing it offers to save a
   throwaway render: **Don't Save**. There is no way round it for an untitled
   document.

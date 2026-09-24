@@ -1,8 +1,9 @@
 module Sales where
 
 -- The example report of the JSON document runner (json/Runner.scala,
--- tracker/json-stage3/report-J3c.md).  It is deliberately small and has no
--- database behind it: every relation is built from literal rows, so
+-- tracker/json-stage3/report-J3c.md) AND of the editor preview.  It is
+-- deliberately small and has no database behind it: every relation is built
+-- from literal rows, so
 --
 --     bin/ermine-serve --root core/src/test/resources/doc --preload Sales --port 8080
 --     curl -s localhost:8080/report/Sales -H 'Content-Type: application/json' \
@@ -13,20 +14,30 @@ module Sales where
 -- answers with one JSON document and touches nothing but the in-memory
 -- SQLite connection the runner opens for the request.
 --
+-- TYPED SINCE Q25 (tracker/JSON-WIDGET-PLAYGROUND.md section 13, 2026-09-23):
+-- every widget is a Layout.Widgets.* constructor, so every props object is one
+-- the client validates with the zod GENERATED from that module.  The untyped
+-- shape this report had before (`rawWidget` over a report-local record, a bare
+-- string and bare relations) lives on in SalesRaw.e, which the runner's tests
+-- read; the params type below is the same there, byte for byte.
+--
 -- What it shows:
 --   * a params `data` with NAMED fields -- a date range, a `Maybe` filter
 --     and an enum -- which is what the request's "params" object is decoded
 --     into (json/Decode.scala).  A record-style constructor is a JSON object
 --     keyed by the field names, an all-nullary `data` is a string, and a
 --     `Maybe` field may be left out of the object entirely;
---   * a relation filtered by those parameters, delivered the way the request
---     asked (inline unless "data.default" says otherwise, and deferred
---     anyway once it is over "data.threshold" rows);
---   * one BARE relation (the regions) and one `Deferred` relation (the line
---     items), which goes out as columns plus a token whatever the request
---     asks for, to be fetched from GET /data/<token>;
---   * VFlow / Grid layout, and the parameters echoed back into a widget's
---     props;
+--   * the typed "heading" and "text" widgets (Layout.Widgets.Heading and
+--     Layout.Widgets.Text), the parameters echoed back into the heading;
+--   * three typed "table" widgets (Layout.Widgets.Table's `tabular`).  A
+--     table's `rows` is a BARE relation, so the request decides how they are
+--     delivered: inline unless "data.default" says otherwise, and deferred
+--     anyway once a relation is over "data.threshold" rows.  A typed table
+--     cannot FORCE deferral (`rows : [..r]`, not `Deferred r`), so under the
+--     editor preview's request -- inline, no threshold -- all three arrive
+--     inline; SalesRaw.e keeps the forced `Deferred` the runner tests;
+--   * VFlow / Grid layout, and the sort order a parameter picks carried into
+--     the tables' `sorts`;
 --   * a date range that matches NO sale still renders: `byDay` is built with
 --     `relationWithHeader`, so an empty table keeps its four columns.  A
 --     plain `relation []` has no columns to send (the header is read off the
@@ -38,6 +49,13 @@ import Date
 import Eq
 import Json
 import Layout.Doc
+import Layout.Widgets.Format using type CellFormat; Default; Currency
+import Layout.Widgets.Heading using {heading; HeadingProps}
+import Layout.Widgets.Text using {plainText; TextProps}
+-- a `using` list: Table's `sortColumn` selector would collide with Heading's
+import Layout.Widgets.Table using {tabular; TableProps; type TableColumn; TableColumn;
+                                   type ColumnSort; ColumnSort; AlignLeft; DateColumn;
+                                   textColumn; numberColumn}
 -- the `using` list keeps `map`/`length` from colliding with String's and
 -- Control.Functor's; `empty_Bracket`/`cons_Bracket` are what a `[..]`
 -- literal desugars to
@@ -70,15 +88,6 @@ data Query = Query
   , orderBy    : Sort
   }
 
--- What the "heading" widget is given.  A data type with ONE constructor
--- carries no "tag" key, so its props are just the four fields.
-data Heading = Heading
-  { title      : String
-  , sortColumn : String
-  , matched    : Int
-  , total      : Double
-  }
-
 -- One fact.  The named fields give selector functions (sRegion, sDay, ..),
 -- which is how the rows below are read.
 data Sale = Sale
@@ -106,6 +115,21 @@ columnOf ByDay    = "day"
 columnOf ByAmount = "amount"
 columnOf ByUnits  = "units"
 
+-- The by-day table's sort: an INDEX into its columns below (region, day,
+-- amount, units), oldest day first, the biggest amount or unit count first.
+sortOf : Sort -> ColumnSort
+sortOf ByDay    = ColumnSort 1 False
+sortOf ByAmount = ColumnSort 2 True
+sortOf ByUnits  = ColumnSort 3 True
+
+money : CellFormat
+money = Currency False False "$" 2
+
+-- A typed table over a bare relation: every knob at its legacy default but
+-- the sort.
+salesTable : List TableColumn -> List ColumnSort -> [..r] -> Node
+salesTable cs ss rs = tabular (TableProps cs Nothing ss True True rs)
+
 -- `Date` is a Primitive, so <= and >= compare two of them.
 keep : Query -> Sale -> Bool
 keep q s =
@@ -123,13 +147,20 @@ report q =
                                    amount = sAmount s, units = sUnits s }) picked)
       -- `regions` and `items` are built from the whole `sales` list, never
       -- empty, so plain `relation` is enough there.
-      -- bare: the request's "data.default" decides how it is delivered
       regions = relation (map_List (r -> { region = r }) (nub (map_List sRegion sales)))
-      -- always deferred, whatever the request asks for
-      items = Deferred (relation (map_List (s -> { item = sItem s, amount = sAmount s,
-                                              units = sUnits s }) sales))
+      items = relation (map_List (s -> { item = sItem s, amount = sAmount s,
+                                         units = sUnits s }) sales)
   in vflow
-       [ rawWidget "heading" (Heading "Sales" (columnOf (orderBy q)) (length picked) total)
-       , grid [ [ rawWidget "table" byDay, rawWidget "table" regions ]
-              , [ rawWidget "table" items, rawWidget "text" "line items on demand" ] ]
+       [ heading (HeadingProps "Sales" (columnOf (orderBy q)) (length picked) total)
+       , grid [ [ salesTable [ textColumn "region" "Region"
+                             , TableColumn "day" "Day" Default AlignLeft DateColumn
+                             , numberColumn "amount" "Amount" money
+                             , numberColumn "units" "Units" Default ]
+                             [sortOf (orderBy q)] byDay
+                , salesTable [textColumn "region" "Region"] [] regions ]
+              , [ salesTable [ textColumn "item" "Item"
+                             , numberColumn "amount" "Amount" money
+                             , numberColumn "units" "Units" Default ]
+                             [] items
+                , plainText (TextProps "every line item, whatever the date range") ] ]
        ]

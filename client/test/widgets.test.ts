@@ -351,12 +351,13 @@ test("(w-no-writer) the missing-writer box names the REAL global and its DOMCont
   assert.ok(target.querySelector(".ermine-widget-error"));
 });
 
-// ------------------------------------------ Q24 (d): `heading` and `text`
+// ------------------------------------ Q25: the typed `heading` and `text`
 //
-// The two names `core/src/test/resources/doc/Sales.e` uses that are not typed
-// `Layout.Widgets.*` modules.  Their props are taken from the REAL answer the
-// extension's fixture holds (CAPTURED from one `bin/ermine-lsp` boot, WP-10 S1),
-// never written by hand here.
+// `Layout.Widgets.Heading` and `Layout.Widgets.Text`, which the typed
+// `core/src/test/resources/doc/Sales.e` builds.  Their props are taken from the
+// REAL answer the extension's fixture holds (CAPTURED from one `bin/ermine-lsp`
+// boot, re-captured by Q25), never written by hand here, and they are validated
+// by the GENERATED zod -- no renderer carries a schema of its own.
 
 function findPanelAnswers(): string {
   let dir = __dirname;
@@ -373,11 +374,13 @@ const SALES_DOC = (JSON.parse(fs.readFileSync(findPanelAnswers(), "utf8")) as
   .cases["ok-sales"]!.answer.document;
 const SALES_HEADING = SALES_DOC.root.children[0] as { tag: string; name: string; props: Record<string, unknown> };
 const SALES_TEXT = ((SALES_DOC.root.children[1] as { cells: unknown[][] }).cells[1]![1]) as
-  { tag: string; name: string; props: unknown };
+  { tag: string; name: string; props: Record<string, unknown> };
+const SALES_TEXT_BODY = "every line item, whatever the date range";
 
 test("(w-heading) the captured Sales heading draws: title, matched, total, sort column", async () => {
   assert.equal(SALES_HEADING.name, "heading");
   assert.deepStrictEqual(Object.keys(SALES_HEADING.props).sort(), ["matched", "sortColumn", "title", "total"]);
+  assert.equal(WIDGET_PROP_SCHEMAS["heading"]!.safeParse(SALES_HEADING.props).success, true);
   const { document, target } = newDom();
   const result = await render(target, parseDocument(docOf(SALES_HEADING)), defaultRegistry(),
     { document, fetchData: refuseDeferred });
@@ -390,14 +393,14 @@ test("(w-heading) the captured Sales heading draws: title, matched, total, sort 
   assert.equal(target.querySelectorAll(".ermine-widget-error").length, 0);
 });
 
-test("(w-text) the captured Sales text widget -- a BARE string on the wire -- draws as a paragraph", async () => {
+test("(w-text) the captured Sales text widget -- a `{body}` record on the wire -- draws as a paragraph", async () => {
   assert.equal(SALES_TEXT.name, "text");
-  assert.equal(SALES_TEXT.props, "line items on demand");
+  assert.deepStrictEqual(SALES_TEXT.props, { body: SALES_TEXT_BODY });
   const { document, target } = newDom();
   const result = await render(target, parseDocument(docOf(SALES_TEXT)), defaultRegistry(),
     { document, fetchData: refuseDeferred });
   assert.deepStrictEqual(result.errors, []);
-  assert.equal(target.querySelector("p.ermine-text")?.textContent, "line items on demand");
+  assert.equal(target.querySelector("p.ermine-text")?.textContent, SALES_TEXT_BODY);
 });
 
 test("(w-heading-text-escape) markup in the props is TEXT, never parsed", async () => {
@@ -405,7 +408,7 @@ test("(w-heading-text-escape) markup in the props is TEXT, never parsed", async 
   const { document, target } = newDom();
   const result = await render(target, parseDocument(docOf({ tag: "VFlow", children: [
     { tag: "Widget", name: "heading", props: { ...SALES_HEADING.props, title: evil, sortColumn: evil } },
-    { tag: "Widget", name: "text", props: evil },
+    { tag: "Widget", name: "text", props: { body: evil } },
   ] })), defaultRegistry(), { document, fetchData: refuseDeferred });
   assert.deepStrictEqual(result.errors, []);
   assert.equal(target.querySelectorAll("img").length, 0, "an <img> was parsed out of the props");
@@ -415,15 +418,17 @@ test("(w-heading-text-escape) markup in the props is TEXT, never parsed", async 
   assert.equal(target.querySelector(".ermine-text")?.textContent, evil);
 });
 
-test("(w-heading-text-invalid) malformed props draw the error box naming the widget", async () => {
+test("(w-heading-text-invalid) malformed props -- a bare runtime value among them -- draw the error box naming the widget", async () => {
   const bad: [string, unknown, RegExp][] = [
     ["heading", { ...SALES_HEADING.props, title: 7 }, /props are invalid -- title: Expected string/],
     ["heading", { ...SALES_HEADING.props, matched: 1.5 }, /props are invalid -- matched/],
     ["heading", { title: "Sales", sortColumn: "day", matched: 1 }, /props are invalid -- total: Required/],
-    ["heading", { ...SALES_HEADING.props, extra: 1 }, /props are invalid/],   // strict, as the generated schemas are
+    ["heading", { ...SALES_HEADING.props, extra: 1 }, /props are invalid/],   // strict, as every generated schema is
     ["heading", "Sales", /props are invalid/],
     ["text", 42, /props are invalid/],
-    ["text", { text: "line items on demand" }, /props are invalid/],        // the wire carries a bare string
+    ["text", "line items on demand", /props are invalid/],    // the pre-Q25 wire: a bare string is REFUSED
+    ["text", { text: "x" }, /props are invalid/],
+    ["text", { body: "x", extra: 1 }, /props are invalid/],
     ["text", null, /props are invalid/],
   ];
   for (const [name, props, why] of bad) {
@@ -438,33 +443,33 @@ test("(w-heading-text-invalid) malformed props draw the error box naming the wid
   }
 });
 
-test("(w-own-schema) every registered name has EXACTLY ONE schema: generated, or its own; heading and text are the own ones", () => {
-  const reg = defaultRegistry() as Record<string, { schema?: unknown }>;
-  const own: string[] = [];
+test("(w-generated-only) every registered name has a GENERATED schema, and no renderer carries one of its own", () => {
+  // Q25 (2026-09-23): the client's widget vocabulary is the typed one.  A name in
+  // the registry without an entry in the generated WIDGET_PROP_SCHEMAS -- or a
+  // renderer that brings its own `schema` -- fails here, by name.
+  const reg = defaultRegistry() as Record<string, object>;
   for (const [name, w] of Object.entries(reg)) {
-    const generated = WIDGET_PROP_SCHEMAS[name] !== undefined;
-    const mine = w.schema !== undefined;
-    assert.ok(generated !== mine, `${name}: generated=${generated} own=${mine}`);
-    if (mine) own.push(name);
+    assert.ok(WIDGET_PROP_SCHEMAS[name] !== undefined, `${name} is registered with no generated schema`);
+    assert.ok(!("schema" in w), `${name}'s renderer carries a schema of its own`);
   }
-  assert.deepStrictEqual(own.sort(), ["heading", "text"]);
-  assert.deepStrictEqual(Object.keys(reg).sort(),
-    [...Object.keys(WIDGET_PROP_SCHEMAS), "heading", "text"].sort());
+  assert.deepStrictEqual(Object.keys(reg).sort(), Object.keys(WIDGET_PROP_SCHEMAS).sort());
+  assert.ok(reg["heading"] && reg["text"], "heading and text are registered");
 });
 
-test("(w-sales-panel) the captured Sales document with the panel's refusing fetchData: heading and text draw, the three tables are boxes", async () => {
+test("(w-sales-panel) the captured typed Sales document with the panel's refusing fetchData: every widget draws, no box", async () => {
   const { document, target } = newDom();
+  const hw = stubHtmlWriter();
   const result = await render(target, parseDocument(SALES_DOC), defaultRegistry(),
-    { document, fetchData: refuseDeferred, htmlwriter: stubHtmlWriter() });
+    { document, fetchData: refuseDeferred, htmlwriter: hw });
+  // Q25: Sales is typed, so every props object validates against the GENERATED
+  // zod; and a typed table's rows are a bare relation the preview asks INLINE,
+  // so nothing reaches the page's refusal either.
+  assert.deepStrictEqual(result.errors, []);
+  assert.equal(target.querySelectorAll(".ermine-widget-error").length, 0);
   assert.equal(target.querySelector(".ermine-heading-title")?.textContent, "Sales");
-  assert.equal(target.querySelector(".ermine-text")?.textContent, "line items on demand");
-  // MEASURED, Q24: Sales hands `table` a BARE relation, not TableProps, so all
-  // three tables -- the deferred one included -- fail VALIDATION, which comes
-  // before any fetch: the page's refusal is never reached for this document.
-  assert.deepStrictEqual(result.errors.map((e) => [e.widget, e.path, e.message]), [
-    ["table", "$.root.children[1].cells[0][0]", "its props are invalid -- columns.0.column: Required"],
-    ["table", "$.root.children[1].cells[0][1]", "its props are invalid -- columns.0.column: Required"],
-    ["table", "$.root.children[1].cells[1][0]", "its props are invalid -- columns.0.column: Required"],
-  ]);
-  assert.equal(target.querySelectorAll(".ermine-widget-error").length, 3);
+  assert.equal(target.querySelector(".ermine-text")?.textContent, SALES_TEXT_BODY);
+  assert.equal(target.querySelectorAll('[data-widget="table"]').length, 3);
+  // the three runTabular calls, in document order, with the typed columns' headers
+  assert.deepStrictEqual(hw.calls.map((c) => c.cols),
+    [["Region", "Day", "Amount", "Units"], ["Region"], ["Item", "Amount", "Units"]]);
 });

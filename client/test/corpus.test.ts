@@ -408,13 +408,21 @@ test("(b) the whole corpus parses, dispatches and reaches runTabular with legal 
     walk(doc.root);
   }
 
+  // DERIVED from the registry (Q25 round 1b), so a widget registered later cannot
+  // be silently missing from this pin: every registered name must occur, minus the
+  // two the WidgetCorpus generator does not draw (Layout.Widgets.Heading/Text,
+  // which no generated case uses).  The literal list this replaced had gone stale
+  // at crosstab/headline (J3g/J3i) and failed whenever target/widget-corpus existed.
+  const NOT_IN_CORPUS = new Set(["heading", "text"]);
   assert.deepStrictEqual([...widgetNames].sort(),
-    ["axisChart", "drilldownBar", "drilldownPieChart", "drilldownTable", "pieChart",
-     "scorecard", "styleBox", "table"],
+    Object.keys(defaultRegistry()).filter((n) => !NOT_IN_CORPUS.has(n)).sort(),
     "every registered widget must occur in the corpus, and nothing else may");
   assert.deepStrictEqual([...kinds].sort(), ["deferred", "inline"]);
   assert.ok(tokensResolved > 0, "no deferred relation was ever resolved");
-  assert.ok(cells > 1000, `only ${cells} cells were checked`);
+  // A vacuity floor near the measured count.  MEASURED 929 on the default corpus
+  // (WidgetCorpus seed 5150, 200 documents) since J3g/J3i added headline/crosstab
+  // cases, which reach no runTabular; the old floor of 1000 had gone stale with them.
+  assert.ok(cells > 900, `only ${cells} cells were checked`);
   assert.ok(formatTags.size >= 12, `only ${formatTags.size} CellFormat cases occurred: ${[...formatTags]}`);
   assert.deepStrictEqual([...sortDirections].sort(), ["asc", "desc"],
     "both sort directions must occur, and nothing else may");
