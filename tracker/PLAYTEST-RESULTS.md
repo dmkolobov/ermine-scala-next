@@ -11,7 +11,7 @@ U1-U7) get asked again with your answers in hand. Q21 is DECIDED (the user,
 schemas, "Rewrite it."); their rows below record the answers.
 
 **Date run:** ______  **Extension:** 0.1.14 —
-`editor/vscode/ermine-lang-0.1.14.vsix`, packaged 2026-09-23 by WP-10 stage 5
+`editor/vscode/ermine-lang-0.1.14.vsix`, repackaged 2026-09-23 from commit `6fb17d7a` and INSTALLED (replacing 0.1.4)
 (size and file count in `tracker/PLAYTEST-SETUP.md` §3). **Not the
 `ermine-lang-0.1.9.vsix` beside it**, which has no params command, no panel and
 no writers. Or run from source (`code --extensionDevelopmentPath=editor/vscode`).

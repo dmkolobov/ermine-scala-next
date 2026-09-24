@@ -13,9 +13,12 @@ Group E for the panel.
 **What was verified while writing this, and what was not.** Everything with a
 measured number below was run on this machine on 2026-09-23 against a real
 `bin/ermine-lsp` from this worktree, with no editor in the loop. **Nothing in
-VS Code was run at all** — the extension was packaged but deliberately not
-installed, and no editor window was opened. Every claim about what VS Code
-does is marked *(unobserved)*.
+VS Code was run at all** — no editor window was opened. Every claim about
+what VS Code does is marked *(unobserved)*. **INSTALLED 2026-09-23 (evening), at
+the user's request, by the orchestrator:** `code --install-extension …/ermine-lang-0.1.14.vsix --force`
+printed "successfully installed"; `code --list-extensions --show-versions` went
+from `clarifi.ermine-lang@0.1.4` to `clarifi.ermine-lang@0.1.14`; VS Code was not
+running at the time, so the next window picks it up with no reload.
 
 ---
 
@@ -80,11 +83,11 @@ VS Code.
 
 ## 3. Package the extension
 
-**Already done: `editor/vscode/ermine-lang-0.1.14.vsix`, 852,896 bytes, 334
-files** (`ls -l`; `unzip -l` lists 334 entries, 3,077,281 bytes unpacked; repackaged
-by S5's round 2 at 13:49 after a one-line `preview-core.js` wording fix),
-built 2026-09-23 by WP-10 stage 5 from HEAD `4846cd27` plus that stage's
-edits. `unzip -p … extension/package.json` says `"version": "0.1.14"`, and its
+**Already done: `editor/vscode/ermine-lang-0.1.14.vsix`, 854,103 bytes, 334
+files** (`ls -l`; `unzip -l` lists 334 entries, 3,091,342 bytes unpacked),
+REPACKAGED 2026-09-23 19:37 from commit `6fb17d7a` (Q25) after the earlier
+852,896-byte build from WP-10 stage 5; its `src/preview-core.js` sha256
+`eea5afd7…` equals the tree's. This is the file that is installed (§4). `unzip -p … extension/package.json` says `"version": "0.1.14"`, and its
 `src/extension.js`, `src/preview-core.js`, `test/preview-core.test.js` and
 readme are byte-identical to the working tree's (MEASURED with `sha256sum`).
 **Use it as it is.** The old `ermine-lang-0.1.9.vsix` (739,081 bytes, 328
