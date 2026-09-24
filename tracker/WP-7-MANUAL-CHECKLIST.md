@@ -857,7 +857,7 @@ group is READ from the code and tested in node and JSDOM only. No browser and
 no VS Code webview has shown any of it to anyone.** E3, E5, E8, E9, E10 and
 E11 are the only way anyone will learn the answers they record.
 
-**Standing setup for E1–E14** (it differs from Groups A–D):
+**Standing setup for E1–E15** (it differs from Groups A–D):
 
 - **`"ermine.preview.target": "panel"`** in `.vscode/settings.json` — change
   the `json` line the setup file wrote for Groups A–D, or delete it (`panel`
@@ -1035,6 +1035,15 @@ instrumentation below is what tells the two apart.
 - **Then:** set `writersPath` back to `""` and run **Ermine: Preview Report...** again, the same pick. **Expect** the page to reload WITH the writers (a page built without them IS re-checked on a command) and the banner to go.
 - **Failure:** no banner; a banner that begins `0:`; widgets drawn although the folder is empty; or the fix in "Then" needing a window reload. **Paste:** the channel.
 - **Bears on:** WP-11's second done-when half; the Bundle checklist row's third state; N2.
+
+### E15 [new, WP-31] — The Document / JSON toggle — **NEVER RUN**
+
+- **Setup:** the standing setup, the client bundle rebuilt AFTER WP-31 (`npm run bundle` in `client/`; no new `.vsix`, the extension did not change). Close the panel, then set `"ermine.preview.target": "both"` so ONE render fills the tab AND the panel (`panel: t === "panel" || t === "both"`, `editor/vscode/src/preview-core.js:5560`).
+- **Do:** (1) **Ermine: Preview Report...** → `core/src/test/resources/doc/Sales.e` → `report`. (2) In the panel, click **JSON**. (3) Select all the text in the panel's JSON and in the untitled JSON tab and compare them (a diff tool, or paste both into two scratch files and run **Compare Selected**). (4) Save the params file once (a re-render) while JSON is showing. (5) Click **Document**. (6) Click **JSON** again, then run `npm run bundle` in `client/` (the bundle watcher re-sets the page). (7) Tab from the editor into the panel and press Space on each button. (8) **Developer: Reload Window**, then **Ermine: Preview Report...** again. (9) Set the target back to `"panel"`.
+- **Expect:** (1) a toolbar between the banner and the white paper with two buttons, `Document` and `JSON` (`control("Document", "document")`, `control("JSON", "json")`, `client/src/host/page.ts:431`–`:432`), **Document** drawn in the theme's button colours (pressed, `aria-pressed="true"`). (2) the paper shows monospace JSON; the tables are gone from view; **no re-render**: no new render line in the channel, and the status bar does not move. (3) **the two texts are identical**: the panel's is `JSON.stringify(value, null, 2)` (`client/src/host/page.ts:191`) of the document, the tab's is `stringify(answer.document)` (`editor/vscode/src/preview-core.js:1971`), the same call. (4) the JSON updates to the new answer; the view stays on JSON. (5) the document is back AT ONCE, the tables with their rows (the same rows as the new answer in the tab): it was re-rendered once behind the JSON in (4), laid out off-stage (`area.classList.toggle("ermine-offstage", p.showDocument && view === "json");`, `client/src/host/page.ts:474`). (6) after the page reloads, **JSON is still the view** (read back by `try { view = restoredView(api.getState?.()); }`, `client/src/host/page.ts:401`; written by `api.setState?.({ ...base, view });`, `:450`). (7) each button is reachable with Tab and Space presses it. (8) after the window reload there is NO panel until the command runs (the extension registers no `WebviewPanelSerializer`), and the new panel opens in **Document**: the stored choice belongs to the panel that was closed.
+- **Optional, the error case:** with E4's failing params in place, click **JSON**: the text is the four fields `status`, `message`, `path`, `reason` of the banner, NOT the tab's whole `{ "ok": false, ... }` answer (no `ok`, no `generation`): that gap is stated, and Q28 in `tracker/JSON-WIDGET-PLAYGROUND.md` asks whether to close it.
+- **Failure:** the two texts in (3) differ; the tables redraw (a flash, or a channel render line) on a click; after (5) the tables are one-row skeletons (the writers drew a hidden document: the off-stage rule failed in the webview); (6) comes back as Document; the view is sent to the extension (a channel line on a click); a writers popup or tooltip drawn offset by the banner-plus-toolbar height (the root is now `position:relative`, WP-31 review N3). **Paste:** the channel, and the first 20 lines of each text in (3) if they differ.
+- **Bears on:** WP-31's done-when; whether `setState` survives a `webview.html` re-set in the real webview (UNVERIFIED: read from the `@types/vscode` docs only, never observed).
 
 ---
 

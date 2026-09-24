@@ -21,6 +21,7 @@ import fc from "fast-check";
 import {
   foldSnapshot, receive, applyMessage, initialHostState, presentation, MESSAGE_KINDS,
   pageStep, initialPage, documentKey, boot, refuseDeferred, PREVIEW_ROOT_ID, NO_RENDER_FUNCTION,
+  restoredView, jsonViewText,
   type HostMessage, type HostState, type PanelEnvelope, type PageModel, type BootWindow,
 } from "../src/host/page";
 import { JSDOM } from "jsdom";
@@ -112,9 +113,9 @@ test("(pg-surface) page re-exports the reducer's whole surface, so S2 can point 
   const want = Object.keys(hostIndex).sort();
   const have = Object.keys(pageModule);
   for (const k of want) assert.ok(have.includes(k), `page.ts is missing ${k}`);
-  // S1's fold, and S2's step + DOM bootstrap: nothing else may grow here
+  // S1's fold, and S2's step + DOM bootstrap (+ WP-31's two pure view helpers): nothing else may grow here
   assert.deepStrictEqual(have.filter((k) => !want.includes(k)).sort(),
-    ["NO_RENDER_FUNCTION", "PREVIEW_ROOT_ID", "boot", "documentKey", "foldSnapshot", "initialPage", "pageStep", "receive", "refuseDeferred"]);
+    ["NO_RENDER_FUNCTION", "PREVIEW_ROOT_ID", "boot", "documentKey", "foldSnapshot", "initialPage", "jsonViewText", "pageStep", "receive", "refuseDeferred", "restoredView"]);
 });
 
 // ------------------------------------------------ H7, against the extension
@@ -770,6 +771,10 @@ async function pageRules(): Promise<{ sel: string; body: string }[]> {
     .map((r) => { const i = r.indexOf("{"); return { sel: r.slice(0, i).trim(), body: r.slice(i + 1).trim() }; });
 }
 const PAPER_SEL = `#${PREVIEW_ROOT_ID} .ermine-document`;
+/** WP-31: the JSON view's <pre> is paper too; the toolbar is theme-coloured. */
+const JSON_SEL = `#${PREVIEW_ROOT_ID} .ermine-json`;
+const VIEWBAR_SEL = `#${PREVIEW_ROOT_ID} .ermine-viewbar`;
+const onPaper = (sel: string): boolean => sel.trim().startsWith(PAPER_SEL) || sel.trim().startsWith(JSON_SEL);
 
 test("(pg-f3-paper) F3: the document draws on white paper with #222 text and 12px table text, SCOPED to the document; the banner keeps the theme's editor foreground", async () => {
   const rules = await pageRules();
@@ -783,14 +788,15 @@ test("(pg-f3-paper) F3: the document draws on white paper with #222 text and 12p
   // review M-1: the page's own error box is inside the paper, so its red must be chosen for white
   const pageError = rules.find((r) => r.sel === `${PAPER_SEL} .ermine-page-error`);
   assert.ok(pageError && /color:#b00020/.test(pageError.body), "the page-error box takes a paper red, not the theme's");
-  for (const r of rules.filter((x) => x.sel.split(",").some((sel) => sel.trim().startsWith(PAPER_SEL)))) {
+  for (const r of rules.filter((x) => x.sel.split(",").some(onPaper))) {
     assert.doesNotMatch(r.body, /color:var\(--vscode-/, `a theme colour inside the paper: ${r.sel}`);
   }
   const cells = rules.find((r) => r.sel.includes(`${PAPER_SEL} td.tabledata-left`) && r.sel.includes(`${PAPER_SEL} td.tabledata-right`));
   assert.ok(cells && /font-size:12px/.test(cells.body), "table text is 12px, not the writers' 10px");
-  // every rule that paints white or #222 is under the document area, so the banner is untouched
+  // every rule that paints white or #222 is under the document area (or, WP-31,
+  // the JSON view's paper), so the banner and the toolbar are untouched
   for (const r of rules.filter((x) => /#fff\b|#222\b/.test(x.body))) {
-    for (const sel of r.sel.split(",")) assert.ok(sel.trim().startsWith(PAPER_SEL), `unscoped paper rule: ${sel}`);
+    for (const sel of r.sel.split(",")) assert.ok(onPaper(sel), `unscoped paper rule: ${sel}`);
   }
 });
 
@@ -807,7 +813,249 @@ test("(pg-f3-grid) F3: Grid rows lay out as CSS grid columns, and the writers' t
     "a one-column table's scroller gets its natural height, not the empty main part's 0px");
   for (const r of rules) {
     if (r.sel.startsWith(`#${PREVIEW_ROOT_ID}{`) || r.sel === `#${PREVIEW_ROOT_ID}` || r.sel.startsWith(".ermine-banner") || r.sel.startsWith(".ermine-hint") ||
-        r.sel.startsWith(".ermine-document.ermine-dimmed") || r.sel.startsWith(".ermine-page-error")) continue;
-    for (const sel of r.sel.split(",")) assert.ok(sel.trim().startsWith(PAPER_SEL), `unscoped document rule: ${sel}`);
+        r.sel.startsWith(".ermine-document.ermine-dimmed") || r.sel.startsWith(".ermine-page-error") || r.sel.startsWith(VIEWBAR_SEL)) continue;
+    for (const sel of r.sel.split(",")) assert.ok(onPaper(sel), `unscoped document rule: ${sel}`);
   }
+});
+
+// ------------------------------------ WP-31: the panel's Document / JSON toggle
+
+// The toggle is VIEWER-LOCAL (design review §2(a)): kept with the webview's
+// setState/getState, never posted, never in the reducer.  It only changes what
+// is SHOWN: the document is rendered by the snapshot rule alone.
+
+interface ToggleRun {
+  dom: JSDOM; posted: unknown[]; renders: unknown[]; draws: number; states: unknown[];
+  send(env: unknown): Promise<void>;
+  area(): HTMLElement; pre(): HTMLPreElement; bar(): HTMLElement; docBtn(): HTMLButtonElement; jsonBtn(): HTMLButtonElement;
+}
+
+async function toggleHarness(stored?: unknown, withState: boolean | "throws" = true): Promise<ToggleRun> {
+  const dom = new JSDOM(`<!doctype html><html><head></head><body><div id="${PREVIEW_ROOT_ID}"></div></body></html>`);
+  const w = dom.window as unknown as BootWindow;
+  const d = dom.window.document;
+  const posted: unknown[] = [];
+  const renders: unknown[] = [];
+  const states: unknown[] = [];
+  let current = stored;
+  const run = { draws: 0 };
+  d.addEventListener("DOMContentLoaded", () => {
+    w.ermine_htmlwriter = {};
+    w.ermine_htmlwriter_conf = { renderFunction() { run.draws += 1; } };
+  });
+  w.ErmineClient = {
+    parseDocument: (v: unknown) => v,
+    defaultRegistry: () => ({}),
+    render: async (target, d0) => {
+      renders.push((d0 as { note?: unknown }).note);
+      // what a widget renderer does with a string: text, never markup
+      const el = d.createElement("div");
+      el.setAttribute("data-note", String((d0 as { note?: unknown }).note));
+      el.textContent = `doc ${String((d0 as { note?: unknown }).note)}`;
+      target.appendChild(el);
+      return { errors: [] };
+    },
+  };
+  const api = withState === "throws"
+    ? {
+      postMessage: (m: unknown) => { posted.push(m); },
+      getState: (): unknown => { throw new Error("getState exploded"); },
+      setState: (_v: unknown): unknown => { throw new Error("setState exploded"); },
+    }
+    : withState
+    ? { postMessage: (m: unknown) => { posted.push(m); }, getState: () => current, setState: (v: unknown) => { states.push(v); current = v; } }
+    : { postMessage: (m: unknown) => { posted.push(m); } };
+  boot(w, api);
+  if (d.readyState === "loading") await new Promise((r) => d.addEventListener("DOMContentLoaded", r));
+  return {
+    dom, posted, renders, states,
+    get draws() { return run.draws; },
+    async send(env) {
+      dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: env }));
+      await new Promise((r) => setTimeout(r, 10));
+    },
+    area: () => d.querySelector(".ermine-document") as HTMLElement,
+    pre: () => d.querySelector("pre.ermine-json") as HTMLPreElement,
+    bar: () => d.querySelector(".ermine-viewbar") as HTMLElement,
+    docBtn: () => [...d.querySelectorAll(".ermine-viewbar button")].find((b) => b.textContent === "Document") as HTMLButtonElement,
+    jsonBtn: () => [...d.querySelectorAll(".ermine-viewbar button")].find((b) => b.textContent === "JSON") as HTMLButtonElement,
+  } as ToggleRun;
+}
+
+const docOf = (note: string): unknown => ({ ...doc, note });
+
+test("(pg-json-toolbar) WP-31: a toolbar with Document and JSON, below the banner and above the document; Document pressed by default; hidden until there is an answer", async () => {
+  const h = await toggleHarness();
+  const bar = h.bar();
+  assert.ok(bar, "the toolbar exists");
+  assert.equal(bar.getAttribute("role"), "toolbar");
+  const buttons = [...bar.querySelectorAll("button")];
+  assert.deepStrictEqual(buttons.map((b) => b.textContent), ["Document", "JSON"]);
+  for (const b of buttons) assert.equal(b.type, "button", "a real button: keyboard reachable, Enter and Space click it");
+  assert.equal(bar.hidden, true, "nothing to look at yet");
+  assert.equal(h.pre().hidden, true);
+  await h.send(envelopeOf({ answers: okAnswers(1, "a") }, 1));
+  assert.equal(bar.hidden, false);
+  assert.equal(h.docBtn().getAttribute("aria-pressed"), "true", "default: Document");
+  assert.equal(h.jsonBtn().getAttribute("aria-pressed"), "false");
+  assert.equal(h.area().hidden, false);
+  assert.equal(h.pre().hidden, true);
+  const kids = [...h.dom.window.document.getElementById(PREVIEW_ROOT_ID)!.children].map((e) => String(e.className).split(" ")[0]);
+  assert.deepStrictEqual(kids, ["ermine-banner", "ermine-hint", "ermine-viewbar", "ermine-document", "ermine-json"],
+    "the banner keeps precedence: the toolbar is below it, inside the document area");
+  h.dom.window.close();
+});
+
+test("(pg-json-shows-document) WP-31: JSON hides the document and shows exactly JSON.stringify(document, null, 2); Document shows the SAME rendered node again; no re-render either way", async () => {
+  const h = await toggleHarness();
+  await h.send(envelopeOf({ answers: okAnswers(1, "a") }, 1));
+  const shown = h.area().firstElementChild;
+  assert.deepStrictEqual(h.renders, ["a"]);
+  h.jsonBtn().click();
+  assert.equal(h.area().hidden, true, "the document element is hidden, not removed");
+  assert.equal(h.pre().hidden, false);
+  assert.equal(h.pre().textContent, JSON.stringify(docOf("a"), null, 2));
+  assert.equal(h.jsonBtn().getAttribute("aria-pressed"), "true");
+  assert.equal(h.docBtn().getAttribute("aria-pressed"), "false");
+  h.docBtn().click();
+  assert.equal(h.area().hidden, false);
+  assert.equal(h.pre().hidden, true);
+  assert.equal(h.area().firstElementChild, shown, "the already-rendered document, the same node");
+  for (let i = 0; i < 3; i++) { h.jsonBtn().click(); h.docBtn().click(); }
+  assert.deepStrictEqual(h.renders, ["a"], "toggling never re-renders");
+  assert.equal(h.draws, 1, "nor redraws the legacy widgets");
+  assert.deepStrictEqual(h.posted, [{ type: "ready" }], "nothing is posted to the extension");
+  h.dom.window.close();
+});
+
+test("(pg-json-error) WP-31: after an error the JSON view shows the error's fields {status, message, path, reason}, not the document kept below", async () => {
+  const h = await toggleHarness();
+  const failed = core.panelAnswerStep(okAnswers(1, "a"),
+    { answer: { ok: false, status: 400, message: "bad params", path: "$.params.fromDay", generation: 2 } }, 2);
+  await h.send(envelopeOf({ answers: failed }, 1));
+  h.jsonBtn().click();
+  const text = h.pre().textContent!;
+  assert.equal(text, JSON.stringify({ status: 400, message: "bad params", path: "$.params.fromDay", reason: null }, null, 2));
+  assert.doesNotMatch(text, /"note"/, "not the document");
+  // banners keep precedence: the error banner stays up while the JSON view shows
+  const banner = h.dom.window.document.querySelector(".ermine-banner") as HTMLElement;
+  assert.equal(banner.hidden, false, "the error banner is still shown in the JSON view");
+  assert.equal(banner.getAttribute("data-kind"), "error");
+  assert.match(banner.textContent!, /400: bad params/);
+  assert.equal(h.bar().hidden, false);
+  // an error with NO document at all still has a JSON view
+  const e = await toggleHarness({ view: "json" });
+  const first = core.panelAnswerStep(core.initialPanelAnswers(), { answer: { ok: false, status: 500, message: "boom", generation: 1 } }, 1);
+  await e.send(envelopeOf({ answers: first }, 1));
+  assert.equal(e.bar().hidden, false);
+  assert.equal(e.pre().hidden, false);
+  assert.equal(e.pre().textContent, JSON.stringify({ status: 500, message: "boom", path: null, reason: null }, null, 2));
+  assert.equal(e.area().hidden, true);
+  // and the pure function agrees
+  assert.equal(jsonViewText(initialHostState()), "");
+  h.dom.window.close(); e.dom.window.close();
+});
+
+test("(pg-json-render-while-json) WP-31: a new document while in the JSON view updates the <pre> AND renders the hidden document once, so Document is instant", async () => {
+  const h = await toggleHarness();
+  await h.send(envelopeOf({ answers: okAnswers(1, "a") }, 1));
+  h.jsonBtn().click();
+  await h.send(envelopeOf({ answers: okAnswers(2, "b") }, 2));
+  assert.equal(h.pre().textContent, JSON.stringify(docOf("b"), null, 2), "the <pre> follows the new document");
+  assert.deepStrictEqual(h.renders, ["a", "b"], "exactly one render per document");
+  assert.equal(h.draws, 2, "and one legacy draw per render");
+  assert.equal(h.area().hidden, true, "still in the JSON view");
+  // MEASURED (json-toggle IMPL-REPORT): the writers draw a display:none document
+  // as one-row skeletons, so the hidden document is laid out off-stage instead
+  assert.ok(h.area().classList.contains("ermine-offstage"), "hidden by the JSON view: kept laid out off-stage");
+  let seq = 2;
+  for (const t of [{ pending: true }, { pending: false }, { unsaved: ["X.e"] }]) {
+    await h.send(envelopeOf({ answers: okAnswers(2, "b"), ...t }, ++seq));
+  }
+  assert.deepStrictEqual(h.renders, ["a", "b"], "toggles in the JSON view do not render either");
+  h.docBtn().click();
+  assert.equal(h.area().querySelector("[data-note]")!.getAttribute("data-note"), "b", "the hidden document was already re-rendered");
+  assert.ok(!h.area().classList.contains("ermine-offstage"), "shown again: not off-stage");
+  // no document at all: hidden the ordinary way, never off-stage
+  h.jsonBtn().click();
+  await h.send(envelopeOf({}, ++seq));
+  assert.equal(h.area().hidden, true);
+  assert.ok(!h.area().classList.contains("ermine-offstage"), "nothing to lay out");
+  assert.deepStrictEqual(h.renders, ["a", "b"]);
+  h.dom.window.close();
+});
+
+test("(pg-json-state) WP-31: the choice round-trips through setState/getState (merged, never posted); a reload restores it; anything else restores Document", async () => {
+  const h = await toggleHarness({ other: 1 });
+  await h.send(envelopeOf({ answers: okAnswers(1, "a") }, 1));
+  h.jsonBtn().click();
+  assert.deepStrictEqual(h.states, [{ other: 1, view: "json" }], "stored, merged into what was there");
+  h.docBtn().click();
+  assert.deepStrictEqual(h.states[1], { other: 1, view: "document" });
+  h.jsonBtn().click();
+  assert.deepStrictEqual(h.posted, [{ type: "ready" }], "the view is never sent to the extension");
+  const saved = h.states[h.states.length - 1];
+  h.dom.window.close();
+  // "reload": a fresh page with the webview's stored state
+  const r = await toggleHarness(saved);
+  await r.send(envelopeOf({ answers: okAnswers(1, "a") }, 1));
+  assert.equal(r.jsonBtn().getAttribute("aria-pressed"), "true", "restored from getState");
+  assert.equal(r.pre().hidden, false);
+  assert.equal(r.area().hidden, true);
+  assert.deepStrictEqual(r.renders, ["a"], "the hidden document is still rendered on arrival");
+  assert.deepStrictEqual(r.states, [], "restoring writes nothing");
+  r.dom.window.close();
+  for (const s of [undefined, null, "json", { view: "JSON" }, { view: true }, []]) assert.equal(restoredView(s), "document", JSON.stringify(s));
+  assert.equal(restoredView({ view: "json" }), "json");
+  // an API without getState/setState boots, toggles, and starts in Document
+  const n = await toggleHarness(undefined, false);
+  await n.send(envelopeOf({ answers: okAnswers(1, "a") }, 1));
+  n.jsonBtn().click();
+  assert.equal(n.pre().hidden, false);
+  n.dom.window.close();
+});
+
+test("(pg-json-text-only) WP-31: the <pre> is filled with textContent -- a document holding markup shows it as text", async () => {
+  const h = await toggleHarness();
+  const evil = "<script>window.pwned = 1</script><img src=x onerror=\"window.pwned = 2\">";
+  await h.send(envelopeOf({ answers: okAnswers(1, evil) }, 1));
+  h.jsonBtn().click();
+  const pre = h.pre();
+  assert.equal(pre.children.length, 0, "no elements inside the <pre>");
+  assert.equal(pre.querySelector("script"), null);
+  assert.ok(pre.textContent!.includes(JSON.stringify(evil)), "the markup is there, as text");
+  assert.equal((h.dom.window as unknown as { pwned?: number }).pwned, undefined);
+  h.dom.window.close();
+});
+
+test("(pg-json-css) WP-31: the toolbar keeps the theme's button colours outside the paper; the <pre> is monospace text on the paper", async () => {
+  const rules = await pageRules();
+  const pressed = rules.find((r) => r.sel === `${VIEWBAR_SEL} button[aria-pressed=true]`);
+  assert.ok(pressed, "a rule for the pressed control");
+  assert.match(pressed!.body, /background:var\(--vscode-button-background/);
+  assert.match(pressed!.body, /color:var\(--vscode-button-foreground/);
+  const other = rules.find((r) => r.sel === `${VIEWBAR_SEL} button`);
+  assert.ok(other && /color:var\(--vscode-editor-foreground\)/.test(other.body));
+  const pre = rules.find((r) => r.sel === JSON_SEL);
+  assert.ok(pre, "a rule for the JSON view");
+  for (const decl of ["background:#fff", "color:#222", "monospace"]) assert.ok(pre!.body.includes(decl), `${decl}: ${pre!.body}`);
+  const off = rules.find((r) => r.sel === `${PAPER_SEL}.ermine-offstage[hidden]`);
+  assert.ok(off, "the off-stage rule");
+  for (const decl of ["display:block", "visibility:hidden", "position:absolute", "height:0", "overflow:hidden"]) assert.ok(off!.body.includes(decl), `${decl}: ${off!.body}`);
+});
+
+test("(pg-json-state-throws) WP-31 review M1: a getState that throws at boot and a getState/setState that throw on a click leave the page booting and toggling", async () => {
+  const h = await toggleHarness(undefined, "throws");
+  assert.deepStrictEqual(h.posted, [{ type: "ready" }], "boot survived a throwing getState and posted ready");
+  await h.send(envelopeOf({ answers: okAnswers(1, "a") }, 1));
+  assert.equal(h.bar().hidden, false, "the toolbar appears after an answer");
+  assert.equal(h.docBtn().getAttribute("aria-pressed"), "true", "a throwing getState restores Document");
+  h.jsonBtn().click();
+  assert.equal(h.pre().hidden, false, "the click still switched the view");
+  assert.equal(h.area().hidden, true);
+  assert.equal(h.pre().textContent, JSON.stringify(docOf("a"), null, 2));
+  h.docBtn().click();
+  assert.equal(h.area().hidden, false);
+  assert.deepStrictEqual(h.renders, ["a"]);
+  h.dom.window.close();
 });

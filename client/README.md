@@ -182,6 +182,53 @@ real bundles (`scratch-widget-preview/panel-fix/RESULTS.md`):
   the same. Such a scroller now gets its natural height. `(pg-f3-grid)` pins the rules; only
   the harness can see what they do.
 
+**The Document / JSON toggle** (WP-31, 2026-09-23; client only, no new `.vsix`). Above the
+paper, below the banner, a toolbar with two buttons, **Document** and **JSON**; the one
+showing has `aria-pressed="true"`. Both are ordinary buttons, so Tab reaches them and Enter or
+Space presses them. The toolbar is hidden until the panel has an answer (a document or an
+error).
+
+- **What JSON shows.** After a document: exactly `JSON.stringify(document, null, 2)`, the same
+  text the JSON tab shows for an `ok` answer (`editor/vscode/src/preview-core.js`
+  `tabContent`). After a failed answer: the panel's `error` fields `{status, message, path,
+  reason}`, pretty-printed the same way (`jsonViewText` in `src/host/page.ts`).
+- **What it does not show.** The panel is never sent the raw wire answer, so after a failure
+  this is NOT byte-for-byte the JSON tab's `{ok:false, ...}`: `ok`, `generation` and `stale`
+  are missing. The reducer has also normalised the fields (a blank message becomes "the render
+  failed"; a missing path or reason becomes `null`), and the extension may have appended the
+  fast-mode sentence or the writers note to `message`. A missing writers bundle reaches the
+  panel as an `error` (status 0) even when the answer was a document, and the JSON view then
+  shows that error. Forwarding the raw answer would be an extension change (Q28 in
+  `tracker/JSON-WIDGET-PLAYGROUND.md`: offered, not built).
+- **Text only.** The JSON is set with `textContent` in a `<pre>` (monospace, 12px, `#222` on
+  the white paper, selectable), never with `innerHTML`, so markup in a document shows as text.
+- **Viewer-local.** The choice is kept with the webview's `setState`/`getState` (merged into
+  whatever else is stored there) and restored when the page is re-created. It is never posted
+  to the extension and is not part of the reducer or `PageModel`. The extension registers no
+  `WebviewPanelSerializer`, so a closed panel, or a window reload (which does not bring the
+  panel back), starts again in Document. The default is Document.
+- **Never a re-render.** Switching views only changes what is shown: the document element gets
+  `hidden` and the `<pre>` is shown, and switching back shows the node already rendered. A new
+  document while JSON is showing updates the `<pre>` and renders the hidden document once (one
+  `renderFunction` call), so Document is instant. MEASURED in a headless Chromium
+  (`scratch-widget-preview/json-toggle/IMPL-REPORT.md`): the writers draw a `display:none`
+  document wrong. Every table stayed a one-row skeleton, 38px high, after switching back, and
+  DataTables logged `andSelf is not a function`. So a document hidden by the JSON view keeps
+  its `hidden` attribute but is laid out off-stage (`.ermine-offstage`: invisible, zero
+  content height (the paper's padding keeps the box 20px tall, adding nothing to the scroll
+  height), clipped, out of the flow). After that fix the tables of a hidden render matched a
+  visible one in row count, height and width.
+- **Colours.** The toolbar is outside the paper, in the theme's colours: the pressed button is
+  `--vscode-button-background` / `--vscode-button-foreground`, the other is
+  `--vscode-editor-foreground` with a button-coloured border. Measured: 11.14:1 (pressed) and
+  12.33:1 in the user's Vue Theme, and 4.51:1 (pressed; VS Code Light+'s own button colours)
+  and 12.63:1 in a light approximation. The `<pre>` is 15.91:1 in both. The toolbar and the
+  `<pre>` are not dimmed with the document.
+
+`(pg-json-toolbar)`, `(pg-json-shows-document)`, `(pg-json-error)`,
+`(pg-json-render-while-json)`, `(pg-json-state)`, `(pg-json-text-only)` and `(pg-json-css)`
+pin this.
+
 **`gate_client`** (`scripts/gates.sh`, nightly tier since WP-10 S3) runs `npm test` here and
 prints one `SUMMARY <n> tests, <p> pass, <f> fail, <s> skipped` line. Without
 `node_modules` it is UNAVAILABLE (exit 3), not FAIL; a skip is counted, a failure fails it.
@@ -233,7 +280,7 @@ should be committed instead is open, and belongs to WP-17 (closed-environment pa
 | `src/widgets/headline.ts` | the `headline` widget, plain DOM: a title, a scope and three figures. Its props carry NO relation -- the Ermine constructor `headlineOf` scanned one server-side (J3g). |
 | `src/widgets/crosstab.ts` | the `crosstab` widget, plain DOM: a `<table>` of row labels x column labels with totals. Its props carry a MATRIX, not a relation -- `crosstabOf` scanned one server-side and the column set IS the data (J3i) -- so it does not go through the table adapter. A `null` cell is a pair no row had and shows as an em dash. |
 | `src/index.ts` | the public surface and `defaultRegistry()`. |
-| `src/host/` | the preview panel's PRESENTATION reducer — `applyMessage`, `presentation`, `initialHostState` — bundled as `ermine-host.js`. It decides what the panel SHOWS and nothing else: every decision (is this answer current, should we re-render, did the wedge clear) stays in the extension's `preview-core.js`, so the two reducers cannot disagree. `page.ts` (WP-10) is the webview page built on it: the snapshot fold, `pageStep` (delivery only: snapshot envelopes, a rising `seq`, re-render only when the document changed) and `boot`, the DOM. |
+| `src/host/` | the preview panel's PRESENTATION reducer — `applyMessage`, `presentation`, `initialHostState` — bundled as `ermine-host.js`. It decides what the panel SHOWS and nothing else: every decision (is this answer current, should we re-render, did the wedge clear) stays in the extension's `preview-core.js`, so the two reducers cannot disagree. `page.ts` (WP-10) is the webview page built on it: the snapshot fold, `pageStep` (delivery only: snapshot envelopes, a rising `seq`, re-render only when the document changed) and `boot`, the DOM, with WP-31's Document / JSON toggle (`jsonViewText`, `restoredView`). |
 
 ## Formatting a cell
 

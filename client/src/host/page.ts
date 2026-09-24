@@ -137,8 +137,62 @@ export function pageStep(page: PageModel, envelope: unknown): PageStep {
 
 // ----------------------------------------------------------- the DOM (S2)
 
-/** What `acquireVsCodeApi()` returns, as far as this page uses it. */
-export interface VsCodeApi { postMessage(message: unknown): unknown }
+/** What `acquireVsCodeApi()` returns, as far as this page uses it.
+ *  `getState`/`setState` are the webview's own per-viewer store (restored when
+ *  the webview is re-created); optional here so a stub without them still boots,
+ *  and the page then starts in the Document view every time (WP-31). */
+export interface VsCodeApi {
+  postMessage(message: unknown): unknown;
+  getState?(): unknown;
+  setState?(state: unknown): unknown;
+}
+
+// ---------------------------------------------- the Document / JSON toggle (WP-31)
+
+/** Which view of the answer the panel shows.  VIEWER-LOCAL (the WP-10 design
+ *  review §2(a): "Use setState only for viewer-local trivia the extension
+ *  cannot know"): kept with `setState`/`getState`, never posted to the
+ *  extension and never part of the reducer or `PageModel`. */
+export type PanelView = "document" | "json";
+
+/** The view a `getState()` value restores: `json` only when it says so
+ *  exactly; anything else (nothing stored, another shape) is the Document. */
+export function restoredView(state: unknown): PanelView {
+  return state !== null && typeof state === "object" && (state as { view?: unknown }).view === "json" ? "json" : "document";
+}
+
+/**
+ * What the JSON view shows: the same text `editor/vscode/src/preview-core.js`
+ * `tabContent` puts in the JSON tab, AS FAR AS THE PANEL CAN KNOW IT.
+ *
+ *   * the last answer was a document (`render`, no `error` after it): exactly
+ *     `JSON.stringify(document, null, 2)`, the tab's `ok` case;
+ *   * the last message was an `error`: its fields `{status, message, path,
+ *     reason}`, pretty-printed the same way.  This is NOT byte-for-byte the
+ *     tab's `{ok:false}` case: the panel is not sent the raw wire answer, so
+ *     `ok`, `generation` and `stale` are not here; the reducer has normalised
+ *     the fields (a blank message is "the render failed", a missing path or
+ *     reason is null); and the extension's `panelErrorMessage` may have appended
+ *     the fast-mode sentence or the writers note to `message`.  A missing
+ *     writers bundle reaches the panel as an `error` (status 0) even when the
+ *     answer was a document, and then that error is what shows.  Forwarding the
+ *     raw answer would be an EXTENSION change (tracker Q28, offered, not built);
+ *   * nothing yet: the empty string.
+ *
+ * `render` clears `error` in the reducer, so a non-null `error` is always the
+ * more recent of the two.
+ */
+export function jsonViewText(host: HostState): string {
+  const value: unknown = host.error !== null
+    ? { status: host.error.status, message: host.error.message, path: host.error.path, reason: host.error.reason }
+    : host.document !== null ? host.document.payload : undefined;
+  if (value === undefined) return "";
+  try {
+    return JSON.stringify(value, null, 2) ?? "";
+  } catch (e) {
+    return JSON.stringify({ error: `the answer could not be printed: ${(e as Error)?.message ?? String(e)}` }, null, 2);
+  }
+}
 
 /** `window.ErmineClient`, as far as this page uses it.  Typed HERE, not
  *  imported: importing `../index` would pull zod into this bundle
@@ -237,12 +291,31 @@ export const NO_RENDER_FUNCTION =
  *     overflow:hidden, which sit on their bottom edge and make those rows 3px
  *     taller than the row-header rows beside them: top-aligned here.
  *
+ * WP-31, MEASURED in the same harness (json-toggle IMPL-REPORT): a document
+ * rendered while `display:none` is drawn wrong by the writers -- every table
+ * stayed its one-row skeleton, 38px, after switching back, and DataTables
+ * logged `andSelf is not a function` from `fnDestroy`.  So the document the
+ * JSON view hides keeps its `hidden` attribute but is laid out OFF-STAGE
+ * (`.ermine-offstage`): full width, invisible, zero CONTENT height (the
+ * paper's padding keeps the box 20px tall, MEASURED by the WP-31 review; it
+ * adds nothing to the page's scroll height), clipped, out of
+ * the flow and out of the accessibility tree.  The root is `position:relative`
+ * so that width is the document's own.
+ *
  * Everything document-side is scoped under `#${PREVIEW_ROOT_ID} .ermine-document`,
  * so nothing leaks onto the banner or the page around it.
  */
 const PAPER = `#${PREVIEW_ROOT_ID} .ermine-document`;
+/** WP-31: the JSON view's `<pre>`, drawn on the same paper as the document. */
+const JSON_PAPER = `#${PREVIEW_ROOT_ID} .ermine-json`;
+/** WP-31: the Document / JSON toolbar.  It sits between the banner and the
+ *  paper, OUTSIDE it, so it keeps the theme's own colours: the pressed control
+ *  is a VS Code button (`--vscode-button-background` / `-foreground`), the
+ *  other is editor text on the editor background with a button-coloured
+ *  border.  Not dimmed with the document (it is how you read the answer). */
+const VIEWBAR = `#${PREVIEW_ROOT_ID} .ermine-viewbar`;
 const PAGE_CSS = `
-#${PREVIEW_ROOT_ID}{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size,13px);color:var(--vscode-editor-foreground)}
+#${PREVIEW_ROOT_ID}{position:relative;font-family:var(--vscode-font-family);font-size:var(--vscode-font-size,13px);color:var(--vscode-editor-foreground)}
 ${PAPER}{background:#fff;color:#222;color-scheme:light;font-size:13px;padding:10px 14px;border-radius:3px}
 ${PAPER} .ermine-page-error{color:#b00020}
 ${PAPER} .tabular,${PAPER} th.tabledata-left,${PAPER} th.tabledata-right,${PAPER} td.tabledata-left,${PAPER} td.tabledata-right,${PAPER} .ermine-heading-summary,${PAPER} .ermine-text,${PAPER} .dataTables_info,${PAPER} .dataTables_paginate{font-size:12px}
@@ -257,6 +330,14 @@ ${PAPER} .main-table .table-hscroll-wrapper,${PAPER} .main-table .table-vscroll-
 ${PAPER} .main-table .tabular{min-width:0}
 ${PAPER} .table-full-scroll-wrapper:not(:has(.main-table th)) .table-vscroll-wrapper{height:auto!important}
 ${PAPER} .main-table .dataTable .shrinkable-cell{vertical-align:top}
+${VIEWBAR}{display:flex;gap:4px;margin-bottom:6px}
+${VIEWBAR}[hidden]{display:none}
+${VIEWBAR} button{font:inherit;padding:2px 10px;border-radius:2px;cursor:pointer;background:transparent;color:var(--vscode-editor-foreground);border:1px solid var(--vscode-button-background,#0e639c)}
+${VIEWBAR} button[aria-pressed=true]{background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#ffffff)}
+${VIEWBAR} button:focus-visible{outline:1px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}
+${JSON_PAPER}{background:#fff;color:#222;color-scheme:light;margin:0;padding:10px 14px;border-radius:3px;font-family:var(--vscode-editor-font-family,monospace);font-size:12px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;tab-size:2}
+${JSON_PAPER}[hidden]{display:none}
+${PAPER}.ermine-offstage[hidden]{display:block;visibility:hidden;position:absolute;top:0;left:0;right:0;height:0;overflow:hidden;pointer-events:none}
 .ermine-banner{display:flex;gap:1em;align-items:center;padding:.4em .8em;margin-bottom:.6em;border-left:4px solid var(--vscode-focusBorder,#888)}
 .ermine-banner[hidden]{display:none}
 .ermine-banner[data-kind=error],.ermine-banner[data-kind=stuck],.ermine-banner[data-kind=offline]{border-left-color:var(--vscode-editorError-foreground,#c33)}
@@ -315,6 +396,11 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
 
   let banner: HTMLElement, bannerText: HTMLElement, restart: HTMLButtonElement;
   let hint: HTMLElement, area: HTMLElement;
+  // WP-31: the toggle.  The view is read ONCE from the webview's own state
+  // and written back on every click; it never reaches the extension.
+  let viewbar: HTMLElement, showDoc: HTMLButtonElement, showJson: HTMLButtonElement, json: HTMLPreElement;
+  let view: PanelView = "document";
+  try { view = restoredView(api.getState?.()); } catch { /* no state: the Document view */ }
 
   const layout = (): void => {
     const root = doc.getElementById(PREVIEW_ROOT_ID) ?? doc.body;
@@ -333,9 +419,39 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
     banner.append(bannerText, restart);
     hint = doc.createElement("div");
     hint.className = "ermine-hint";
+    viewbar = doc.createElement("div");
+    viewbar.className = "ermine-viewbar";
+    viewbar.setAttribute("role", "toolbar");
+    viewbar.setAttribute("aria-label", "Preview view");
+    const control = (label: string, which: PanelView): HTMLButtonElement => {
+      const b = doc.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.addEventListener("click", () => setView(which));
+      return b;
+    };
+    showDoc = control("Document", "document");
+    showJson = control("JSON", "json");
+    viewbar.append(showDoc, showJson);
     area = doc.createElement("div");
     area.className = "ermine-document";
-    root.append(banner, hint, area);
+    json = doc.createElement("pre");
+    json.className = "ermine-json";
+    json.setAttribute("aria-label", "The answer as JSON");
+    root.append(banner, hint, viewbar, area, json);
+  };
+
+  /** WP-31: the viewer's choice.  Stored with the webview's `setState`, merged
+   *  into whatever else is stored there; posted to nobody.  It only redraws
+   *  what is SHOWN: the document is never re-rendered by a toggle. */
+  const setView = (which: PanelView): void => {
+    view = which;
+    try {
+      const old = api.getState?.();
+      const base = old !== null && typeof old === "object" ? old as Record<string, unknown> : {};
+      api.setState?.({ ...base, view });
+    } catch { /* the choice just is not remembered */ }
+    draw();
   };
 
   const draw = (): void => {
@@ -346,8 +462,30 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
     restart.hidden = p.banner?.action !== "restartServer";
     hint.hidden = p.hint === null;
     hint.textContent = p.hint ?? "";
-    area.hidden = !p.showDocument;
+    // WP-31: the toolbar shows whenever there is an answer to look at.  In the
+    // JSON view the document is HIDDEN (still rendered, and re-rendered on a
+    // new document, so switching back is instant) and the <pre> shows the
+    // answer as text -- textContent only, never markup.  The <pre> is not
+    // dimmed: it is the answer itself, an error included.
+    const answered = page.host.document !== null || page.host.error !== null;
+    viewbar.hidden = !answered;
+    showDoc.setAttribute("aria-pressed", String(view === "document"));
+    showJson.setAttribute("aria-pressed", String(view === "json"));
+    area.hidden = !p.showDocument || view === "json";
+    // hidden by the JSON view, not for want of a document: keep it laid out
+    area.classList.toggle("ermine-offstage", p.showDocument && view === "json");
     area.classList.toggle("ermine-dimmed", p.dimmed);
+    json.hidden = view !== "json" || !answered;
+    if (view === "json") {
+      // Rebuilt on EVERY accepted snapshot while JSON shows (stale, hint and
+      // stuck posts included): one stringify plus one string compare.  Intended
+      // as cheap enough -- Sales is 8 KB -- and deliberately uncached; a large
+      // document pays two full passes per post (WP-31 review N2).  Caching by
+      // `page.host.document` / `page.host.error` identity would remove it.
+      const text = jsonViewText(page.host);
+      // unchanged text is not re-set, so a selection survives a stale toggle
+      if (json.textContent !== text) json.textContent = text;
+    }
   };
 
   const renderDocument = async (): Promise<void> => {

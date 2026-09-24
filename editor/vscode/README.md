@@ -510,6 +510,23 @@ its tables after the rebuild, in VS Code 1.139.0 with the Vue Theme (*"It render
 now, the tables show up"*). It also re-rendered on a params save and on a
 `Sales.e` save. Which of the two reloaded the page was not recorded.
 
+**WP-31, added in the client bundle only (no new `.vsix`, no version bump; the
+extension is unchanged): a Document / JSON toggle in the panel.** The user asked
+for it on 2026-09-23: *"On the same panel I'd like an ability to see the JSON
+sent to the 'frontend' by Ermine."* A toolbar below the banner has two buttons,
+**Document** and **JSON**. JSON shows, as selectable monospace text, exactly
+`JSON.stringify(document, null, 2)` for a document, which is what the JSON tab
+shows. After a failed answer it shows the panel's error fields `{status,
+message, path, reason}`. That is not the tab's whole `{ok:false, ...}` answer,
+because the panel is not sent the raw answer (`client/README.md` lists the
+differences; forwarding it would be an extension change, Q28, not built).
+Switching never re-renders the document. The choice is remembered by the
+webview (`setState`) while the panel stays open, including across a bundle
+reload. It is never sent to the extension. A new panel, or a window reload,
+starts in Document, because no `WebviewPanelSerializer` is registered. To pick
+it up, run `npm run bundle` in `client/`. Playtest step E15 in
+`tracker/WP-7-MANUAL-CHECKLIST.md`.
+
 ### 0.1.14
 
 **The legacy writers in the panel** (WP-11, stage 4 of the panel). The page
