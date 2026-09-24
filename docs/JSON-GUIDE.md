@@ -897,17 +897,19 @@ a user record, a user relation, `UserInline`, `UserDeferred`, `UserTableProps`,
 the exporter's output with them byte for byte; `ERMINE_SCHEMA_FIXTURES=write`
 rewrites them instead (see §11).
 
-The client's zod is generated the same way, into ONE file: `client/scripts/generate.sh`
-makes the single `bin/ermine-schema --widgets Layout.Widgets Layout.Doc:Node=DocNode
-Layout.Doc:Tab=DocTab` call and writes `client/src/generated/widgets.ts` (every props
+The client's zod is generated the same way, into ONE file: `client/scripts/generate.js`
+(node, any platform, WP-33; `generate.sh` is now a one-line shim onto it) launches the
+JVM itself with what `bin/ermine-schema --widgets Layout.Widgets Layout.Doc:Node=DocNode
+Layout.Doc:Tab=DocTab` would run, and writes `client/src/generated/widgets.ts` (every props
 schema and type, `WidgetRegistry`, `WidgetName`, `WIDGET_PROP_SCHEMAS`,
 `UNSUPPORTED_WIDGETS`), headed by the sha256 of the generator's own Scala and of the
 body. There are no per-type files and no list of types in the script (WP-32 S2).
 Two checks keep it honest: `client/scripts/check-fresh.js`, the `generated` gate at
 the commit tier (no JVM, about two seconds: every header hash recomputed, every
 module under `Layout/Widgets/` listed, and every recursive declaration identical to
-zod's inference), and `client/scripts/check-generated.sh`, which regenerates into a
-temp file and diffs (one JVM; a manual check, in no gate). `client/README.md`
+zod's inference), and `client/scripts/check-generated.js` (`npm run check-generated`),
+which regenerates into a temp file and compares the bytes (one JVM; a manual check, in
+no gate). `client/README.md`
 ("Staleness and exactness") has the details.
 
 Note: `--zod -i` inlines every `$def` it reaches into each module it writes, so two
@@ -1779,12 +1781,17 @@ is not.
 ```sh
 cd client
 npm ci
-npm run generate          # src/generated/widgets.ts from ONE bin/ermine-schema --widgets call
+npm run generate          # src/generated/widgets.ts from ONE SchemaMain --widgets JVM (node; any platform)
 npm run check-fresh       # the `generated` gate (commit tier): header hashes + exactness, no JVM
-npm run check-generated   # manual: regenerate into a temp file and diff (one JVM)
+npm run check-generated   # manual: regenerate into a temp file and compare (one JVM)
 npm run typecheck         # tsc --noEmit, strict
 npm test                  # tsc, then node --test "dist/test/*.test.js"
 ```
+
+`generate` and `check-generated` are node scripts (WP-33): a JVM (`JAVA_HOME/bin/java`,
+else `java` on `PATH`) is all they need, plus `sbt` once to build the classpath cache
+`target/ermine-classpath`. The Windows half is unverified (nothing here has run on
+Windows yet).
 
 `npm test` is **130 tests, 130 pass, 0 skipped** with the bundle built
 (`npm run bundle`) and the corpus fixtures present (MEASURED at WP-32 S3,
@@ -1927,8 +1934,8 @@ is generated, and the compiler names whatever is missing.
    Heading). A relation field is `[..r]` when the request may defer it, `Inline r`
    when the widget cannot work without the rows; leave the row parameter free. The
    `WidgetName` term IS the registration: no list to edit anywhere.
-2. **Generate** — `npm run generate` in `client/` (`client/scripts/generate.sh`, one
-   `bin/ermine-schema --widgets` call, one JVM, about five seconds). It finds
+2. **Generate** — `npm run generate` in `client/` (`client/scripts/generate.js`, one
+   `SchemaMain --widgets` call, one JVM, about five seconds). It finds
    `fooName`, and `src/generated/widgets.ts` gains `FooProps`, `FooPropsSchema`,
    `foo: FooProps` in `WidgetRegistry` and its `WIDGET_PROP_SCHEMAS` entry. Commit
    the file; the `generated` gate (commit tier) refuses a stale or hand-edited one,
@@ -2071,8 +2078,8 @@ $ ERMINE_SCHEMA_FIXTURES=write sbt -batch 'core/testOnly *TestSchema'
 clean, which is a cheap way to check the gate itself.) The client's equivalent is
 `client/scripts/check-fresh.js`, the `generated` gate at the commit tier (no JVM:
 it recomputes the hashes in `src/generated/widgets.ts`'s header and checks every
-recursive declaration against zod's inference); `client/scripts/check-generated.sh`
-(regenerate and diff, one JVM) is a manual check in no gate.
+recursive declaration against zod's inference); `client/scripts/check-generated.js`
+(regenerate and compare, one JVM) is a manual check in no gate.
 
 ### Quarantines you may meet
 
@@ -2112,7 +2119,7 @@ the people who built it; all of it is a surprise to a new reader.
 | **NaN / ±Inf policy** | §3.1 | A non-finite `Double` is an ENCODE ERROR, not `null` and not a string. A row that contains one leaves its scan and fails the document. Nothing converts them for you. |
 | **`Int` has no bounds in the schema** | J2a #2 | The validator accepts what the decoder refuses: `Int` has no `minimum`/`maximum`, `Long` only a digit pattern, `Double`/`Float` no finite range. Adding them moves every committed fixture, so it was left for after the Stage 3 landings. |
 | **`Maybe Json` is non-injective** | J2a | `Just JNull` and `Nothing` both encode as `null`, and the decoder reads `null` as `Nothing`. Kept on purpose (a raw-JSON parameter was judged worth the loss); nested `Maybe (Maybe a)` is refused for the same reason. A record-style `Maybe` FIELD is still injective (absent / `null` / value). |
-| **No `x-ermine` drift hash** | §3.5, J3a #5 | The design's `{module, type, hash}` guard is not implemented. Fixture byte-equality and `check-generated.sh` play that role INSIDE this repository; a client shipped separately from the server has nothing to check against. |
+| **No `x-ermine` drift hash** | §3.5, J3a #5 | The design's `{module, type, hash}` guard is not implemented. Fixture byte-equality and `check-generated.js` play that role INSIDE this repository; a client shipped separately from the server has nothing to check against. |
 | **E11a and dateDiff quarantines** | GATE-POLICY | See §11. Neither is caused by the JSON work; both predate it. |
 | **2.11: a `Timestamp` column does not round-trip through SQLite** | BACKPORT.md | sqlite-jdbc 3.7.2 reads the TEXT literal the emitter writes as a long with a partial numeric parse, so `2009-02-13T23:31:30.123Z` comes back as `1970-01-01T00:00:02.009Z` — the YEAR read as milliseconds. `TestDoc` on 2.11 excludes `Timestamp` from its exact SQLite set for exactly this. 3.51 (Scala 3) parses it, which is why that branch never sees it. |
 | **An axis chart has ONE relation for all its series** | J3e | A choice, not a typing limit: a per-series `seriesRows : [..r]` is typeable and more general. Series over relations of different SHAPES would need an existential row. |

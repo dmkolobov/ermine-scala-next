@@ -11,8 +11,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "generate": "scripts/generate.sh",
-    "check-generated": "scripts/check-generated.sh",
+    "generate": "node scripts/generate.js",
+    "check-generated": "node scripts/check-generated.js",
     "check-fresh": "node scripts/check-fresh.js",
     "test": "npm run build && node --test \"dist/test/*.test.js\"",
     "test:bundle": "npm run bundle && node --test \"dist/test/*.test.js\"",

@@ -37,12 +37,24 @@ sorted by name and every row array follows that order; a `Long`, `Date`,
 ```sh
 cd client
 npm ci                     # node_modules is gitignored; package-lock.json is not
-npm run generate           # src/generated/widgets.ts: ONE bin/ermine-schema --widgets call (~5 s, needs java on PATH)
+npm run generate           # src/generated/widgets.ts: ONE SchemaMain --widgets JVM (~5 s)
 npm run check-fresh        # no JVM: header hashes + exactness probe (the `generated` gate)
-npm run check-generated    # regenerate into a temp file and diff (one JVM)
+npm run check-generated    # regenerate into a temp file and compare bytes (one JVM)
 npm run typecheck          # tsc --noEmit, strict
 npm run build && node --test "dist/test/*.test.js"
 ```
+
+The same commands work on any platform: since WP-33, `generate` and `check-generated`
+are node (`scripts/generate.js`, `scripts/check-generated.js`), with no bash on the
+path. They need a JVM, found as `JAVA_HOME/bin/java` when `JAVA_HOME` is set, else
+`java` on `PATH` (`java.exe` on Windows); they launch it themselves, doing what
+`bin/ermine-schema` does. `sbt` is needed only once, to build the classpath cache
+`target/ermine-classpath` (again whenever `build.sbt` is newer than it); on Windows
+that is `sbt.bat` or `sbt.cmd` on `PATH`. The Windows half is UNVERIFIED: nothing
+here has run on Windows yet (WP-17's checklist). `scripts/generate.sh` and
+`scripts/check-generated.sh` remain as one-line shims onto the node scripts for
+callers that name them; the generated file's first line and `check-fresh.js`'s
+message still say `generate.sh`, because the file must stay byte-identical.
 
 **One prerequisite that is not optional**: the suite needs a sibling `../ermine-writers`
 checkout, or `ERMINE_WRITERS` pointing at one. `(c-legacy)` compares this port against the
@@ -53,7 +65,7 @@ is long-standing, not new.
 With that checkout present, the command above is green. Eight of the tests skip, each
 naming what would make it run: three need FIXTURES the Scala side writes — property (b)'s
 200-document corpus, its negative half, and the end-to-end document — and five need the
-browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (100 tests: 97 passed, 3 skipped after S1; **112 tests: 109 passed, 3 skipped after WP-10 S2**; **114 tests: 111 passed, 3 skipped after WP-10 S3**; **115 tests: 112 passed, 3 skipped after WP-11**, with the bundle built, MEASURED 2026-09-23; **129 tests, 129 passed, 0 skipped after WP-32 S2** (with its review's `(d-prototype-names)`), bundle built and the corpus fixtures present, MEASURED 2026-09-23; **130 tests, 130 passed, 0 skipped after WP-32 S3** (`(d-no-schema)` pins the missing-schema message), MEASURED 2026-09-23)
+browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (100 tests: 97 passed, 3 skipped after S1; **112 tests: 109 passed, 3 skipped after WP-10 S2**; **114 tests: 111 passed, 3 skipped after WP-10 S3**; **115 tests: 112 passed, 3 skipped after WP-11**, with the bundle built, MEASURED 2026-09-23; **129 tests, 129 passed, 0 skipped after WP-32 S2** (with its review's `(d-prototype-names)`), bundle built and the corpus fixtures present, MEASURED 2026-09-23; **130 tests, 130 passed, 0 skipped after WP-32 S3** (`(d-no-schema)` pins the missing-schema message), MEASURED 2026-09-23; **143 tests, 143 passed, 0 skipped after WP-33** (`test/generator.test.ts`, 13, one of them a real JVM run that skips by name without java or a built classpath cache), MEASURED 2026-09-24)
 (MEASURED 2026-09-21 on node v24.20.0; the count this paragraph carried before WP-9 was
 33/3 and was stale by 29 passing tests). `npm run test:bundle` builds the bundle first and
 gives 87 passed, 3 skipped; writing the fixtures as well runs all 90:
@@ -269,7 +281,7 @@ should be committed instead is open, and belongs to WP-17 (closed-environment pa
 
 | File | What |
 |---|---|
-| `src/generated/widgets.ts` | ONE generated module (WP-32), written by `scripts/generate.sh` = `bin/ermine-schema --widgets Layout.Widgets Layout.Doc:Node=DocNode Layout.Doc:Tab=DocTab`. Never edited. Every props type and its zod (recursive ones DECLARED and annotated `z.ZodType<X>`, so the types are real, not `any`), `WidgetRegistry` (name -> props type), `WidgetName = keyof WidgetRegistry`, the typed `WIDGET_PROP_SCHEMAS`, `UNSUPPORTED_WIDGETS`, and `DocNode`/`DocTab`. Its header records the command, the sha256 of every `.e` file read and of the generator's own Scala. |
+| `src/generated/widgets.ts` | ONE generated module (WP-32), written by `scripts/generate.js` (WP-33; `generate.sh` is a shim onto it) = `bin/ermine-schema --widgets Layout.Widgets Layout.Doc:Node=DocNode Layout.Doc:Tab=DocTab`. Never edited. Every props type and its zod (recursive ones DECLARED and annotated `z.ZodType<X>`, so the types are real, not `any`), `WidgetRegistry` (name -> props type), `WidgetName = keyof WidgetRegistry`, the typed `WIDGET_PROP_SCHEMAS`, `UNSUPPORTED_WIDGETS`, and `DocNode`/`DocTab`. Its header records the command, the sha256 of every `.e` file read and of the generator's own Scala. |
 | `scripts/check-fresh.js` | the JVM-free checks on it, run by the `generated` (commit) and `client` (nightly) gates: see "Staleness and exactness" below. |
 | `src/relation.ts` | the relation wire types, `resolveRelation`, `resolveRelations` (a deep walk, so a widget added later resolves for free) and `httpFetchData`. |
 | `src/document.ts` | the envelope schema and `parseDocument` / `safeParseDocument`. |
@@ -384,7 +396,7 @@ Three edits, plus the generate step; tsc tells you the one you forgot.
    if you ever need to, give the dispatcher an explicit relation path instead of
    widening the test. `(g-relation-guard)` pins the boundary.
 
-2. **Generate.** `npm run generate` (`scripts/generate.sh`, one JVM, about five
+2. **Generate.** `npm run generate` (`scripts/generate.js`, one JVM, about five
    seconds). `src/generated/widgets.ts` now has `SparklineProps`,
    `SparklinePropsSchema`, `sparkline: SparklineProps` in `WidgetRegistry` and its
    `WIDGET_PROP_SCHEMAS` entry. Nothing to edit in the script. Commit the file.
@@ -404,10 +416,10 @@ no JVM and takes about two seconds:
   the generator read, 93 today) are recomputed over
   `core/src/main/resources/modules`; any `.e` under `Layout/Widgets/` missing from
   that list fails too, so a NEW widget module is caught before it is generated.
-- **(b) generator.** The `// generator sha256` lines `generate.sh` writes (the
+- **(b) generator.** The `// generator sha256` lines the generator writes (the
   sha256 of `json/{Schema,SchemaMain,Zod}.scala`) are recomputed, so a change to
   the generator itself makes the committed file stale although no `.e` moved.
-- **(b2) body.** The `// body sha256:` line `generate.sh` writes is recomputed over
+- **(b2) body.** The `// body sha256:` line the generator writes is recomputed over
   everything below it, so a hand edit of the generated text (a `.strict()` made
   `.passthrough()`) fails even though no input changed.
 - **(c) exactness.** For every recursive declaration (`export const X:
@@ -418,7 +430,8 @@ no JVM and takes about two seconds:
   key, which is why the identity check is there too.
 
 Each failure prints the offender and `regenerate: client/scripts/generate.sh`.
-`npm run check-generated` (regenerate and diff, one JVM) is the byte-for-byte check.
+`npm run check-generated` (regenerate and compare, one JVM; on a difference it prints
+the first differing line, not a full diff) is the byte-for-byte check.
 
 **A widget whose constructor scans** is two records and a function between them
 (stages J3g, J3i). The props above are the wire half; beside them the Ermine module
