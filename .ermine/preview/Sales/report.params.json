@@ -1,0 +1,6 @@
+{
+  "$schema": "./report.schema.json",
+  "fromDay": "2026-01-01",
+  "toDay": "2026-12-31",
+  "orderBy": "ByDay"
+}
