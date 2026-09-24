@@ -20,8 +20,8 @@
 // up/down/flat class from its sign.  `cards` is an `Inline r` in Ermine, so the
 // rows are always in the response and there is no deferred arm to handle.
 
-import type { ScorecardProps } from "../props";
-import type { InlineRelation, WireCell } from "../relation";
+import type { ScorecardProps } from "../generated/widgets";
+import type { InlineRelation, WireCell, Resolved } from "../relation";
 import { columnIndex } from "../relation";
 import { defaultFormatEnv, formatDisplay, type FormatEnv, type Formatted } from "../format";
 import type { Widget, WidgetContext } from "../dispatcher";
@@ -41,9 +41,9 @@ export function deltaDirection(raw: WireCell): "up" | "down" | "flat" {
   return raw > 0 ? "up" : "down";
 }
 
-export function scorecardWidget(env?: FormatEnv): Widget<ScorecardProps<InlineRelation>> {
+export function scorecardWidget(env?: FormatEnv): Widget<ScorecardProps> {
   return {
-    render(ctx: WidgetContext, props: ScorecardProps<InlineRelation>): void {
+    render(ctx: WidgetContext, props: Resolved<ScorecardProps>): void {
       const d = ctx.document;
       const fenv = env ?? defaultFormatEnv(d);
       const rel = props.cards;

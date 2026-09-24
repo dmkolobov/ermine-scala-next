@@ -40,8 +40,8 @@
 import type {
   AxisChartProps, CellFormat, ChartAxis, ChartMeta, ChartSeries, ChartVariant,
   DrilldownBarProps, LegendLocation, PieChartProps, ScalarType, StyleBoxProps,
-} from "./props";
-import type { InlineRelation, WireCell, WireColumn } from "./relation";
+} from "./generated/widgets";
+import type { InlineRelation, WireCell, WireColumn, Resolved } from "./relation";
 import { columnIndex } from "./relation";
 import { defaultFormatEnv, formatDisplay, type FormatEnv } from "./format";
 import { LEGACY_STYLE_NAMES, legacyFormatTuple, type LegacyFormatTuple } from "./legacy";
@@ -456,9 +456,9 @@ function requireFn<K extends keyof ChartWriter>(ctx: WidgetContext, name: K): No
 // ---------------------------------------------------------------- axisChart
 
 /** Registry entry for "axisChart". */
-export function axisChartWidget(): Widget<AxisChartProps<InlineRelation>> {
+export function axisChartWidget(): Widget<AxisChartProps> {
   return {
-    render(ctx: WidgetContext, props: AxisChartProps<InlineRelation>): void {
+    render(ctx: WidgetContext, props: Resolved<AxisChartProps>): void {
       const run = requireFn(ctx, "runTimeSeries");
       const id = ctx.uid();
       ctx.target.appendChild(chartSkeleton(ctx.document, id, "timeseries"));
@@ -479,9 +479,9 @@ export function axisChartWidget(): Widget<AxisChartProps<InlineRelation>> {
 /** Registry entry for "drilldownBar".  `runDrilldownBar` IS `runTimeSeries`, and
  *  the non-null parent/child pair is what makes it take its drilldown branch
  *  (`isDD`, :1728). */
-export function drilldownBarWidget(): Widget<DrilldownBarProps<InlineRelation>> {
+export function drilldownBarWidget(): Widget<DrilldownBarProps> {
   return {
-    render(ctx: WidgetContext, props: DrilldownBarProps<InlineRelation>): void {
+    render(ctx: WidgetContext, props: Resolved<DrilldownBarProps>): void {
       const run = requireFn(ctx, "runDrilldownBar");
       const id = `${ctx.uid()}_barchart`;
       ctx.target.appendChild(chartSkeleton(ctx.document, id, "dd_barchart"));
@@ -528,7 +528,7 @@ export function drilldownBarWidget(): Widget<DrilldownBarProps<InlineRelation>> 
  * benefit is that `Default` runs `string_unhtml`, so the label the legend
  * interpolates into HTML is escaped -- the same move J3d made for table cells.
  */
-export function pieRows(props: PieChartProps<InlineRelation>, env: FormatEnv): LegacyPieRow[] {
+export function pieRows(props: Resolved<PieChartProps>, env: FormatEnv): LegacyPieRow[] {
   const rel = props.pieRows;
   const labelAt = columnIndex(rel, props.pieLabelColumn);
   const labelFmt = formatDisplay(props.pieLabelFormat, env);
@@ -556,7 +556,7 @@ export function pieRows(props: PieChartProps<InlineRelation>, env: FormatEnv): L
   });
 }
 
-function pieArgs(props: PieChartProps<InlineRelation>, env: FormatEnv): RunPiechartArgs {
+function pieArgs(props: Resolved<PieChartProps>, env: FormatEnv): RunPiechartArgs {
   return {
     title: props.pieTitle,
     seriesName: props.seriesName,
@@ -574,9 +574,9 @@ function pieArgs(props: PieChartProps<InlineRelation>, env: FormatEnv): RunPiech
  *  the renderer (`runPiechartDrilldown` is the same function under another name,
  *  :2632) and the css the legacy wraps it in.  The `FormatEnv` is what the slice
  *  LABEL is formatted with, exactly as the style box's aggregate is. */
-export function pieChartWidget(drilldown: boolean, env?: FormatEnv): Widget<PieChartProps<InlineRelation>> {
+export function pieChartWidget(drilldown: boolean, env?: FormatEnv): Widget<PieChartProps> {
   return {
-    render(ctx: WidgetContext, props: PieChartProps<InlineRelation>): void {
+    render(ctx: WidgetContext, props: Resolved<PieChartProps>): void {
       const run = requireFn(ctx, drilldown ? "runPiechartDrilldown" : "runPiechart");
       const fenv = env ?? defaultFormatEnv(ctx.document);
       const id = `${ctx.uid()}_piechart`;
@@ -610,7 +610,7 @@ const RESERVED_CELL_KEYS = new Set(["xPosition", "yPosition", "styleBoxAggFormat
  * columns themselves, so today the widget only works when they happen to be
  * called that; renaming here makes any column name work.
  */
-export function styleBoxCells(props: StyleBoxProps<InlineRelation>, env: FormatEnv): StyleBoxCell[] {
+export function styleBoxCells(props: Resolved<StyleBoxProps>, env: FormatEnv): StyleBoxCell[] {
   const rel = props.styleBoxRows;
   const xAt = columnIndex(rel, props.xPositionColumn);
   const yAt = columnIndex(rel, props.yPositionColumn);
@@ -646,9 +646,9 @@ export function styleBoxCells(props: StyleBoxProps<InlineRelation>, env: FormatE
 }
 
 /** Registry entry for "styleBox". */
-export function styleBoxWidget(env?: FormatEnv): Widget<StyleBoxProps<InlineRelation>> {
+export function styleBoxWidget(env?: FormatEnv): Widget<StyleBoxProps> {
   return {
-    render(ctx: WidgetContext, props: StyleBoxProps<InlineRelation>): void {
+    render(ctx: WidgetContext, props: Resolved<StyleBoxProps>): void {
       const run = requireFn(ctx, "runStylebox");
       const fenv = env ?? defaultFormatEnv(ctx.document);
       const id = `${ctx.uid()}_stylebox`;

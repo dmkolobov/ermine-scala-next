@@ -3,9 +3,10 @@
 // validate its props with the GENERATED zod, resolve any relation inside them, and
 // hand the result to the renderer.
 //
-// Nothing here knows about a particular widget.  Adding one is a `data` type in
-// Ermine, an entry in client/scripts/generate.sh, one TypeScript component and one
-// registry line -- see client/README.md.
+// Nothing here knows about a particular widget.  Adding one is a props type and a
+// `WidgetName` value in a Layout/Widgets module, `client/scripts/generate.sh`, one
+// TypeScript component and one registry line (tsc names it if it is missing) -- see
+// client/README.md.
 //
 // A widget NEVER throws past the dispatcher: an unknown name, a props value the
 // schema refuses, a deferred relation that will not resolve and an exception from
@@ -13,10 +14,12 @@
 // and (for a validation failure) the zod path.  One broken widget must not take the
 // page with it.
 
+import type { z } from "zod";
 import type { ReportDocument } from "./document";
-import type { DocNode, DocTab } from "./props";
-import { WIDGET_PROP_SCHEMAS } from "./generated";
-import { resolveRelations, zodMessage, type FetchData } from "./relation";
+import {
+  WIDGET_PROP_SCHEMAS, type DocNode, type DocTab, type WidgetName, type WidgetRegistry,
+} from "./generated/widgets";
+import { resolveRelations, zodMessage, type FetchData, type Resolved } from "./relation";
 
 export interface RenderEnv {
   /** The Document DOM is built in.  Explicit, so the same code runs in jsdom. */
@@ -44,14 +47,25 @@ export interface WidgetContext {
   uid(): string;
 }
 
-/** A renderer.  It carries NO schema: its props are validated by the zod GENERATED
- *  from its `Layout.Widgets.*` module (`WIDGET_PROP_SCHEMAS`) or the widget is an
- *  error box -- never a hand-written check (Q25; client/README.md "Adding a widget"). */
-export interface Widget<P = unknown> {
-  render(ctx: WidgetContext, props: P): void | Promise<void>;
+/** A renderer for props type `P` (a `WidgetRegistry` entry).  It carries NO schema:
+ *  its props are validated by the zod GENERATED from its `Layout.Widgets.*` module
+ *  (`WIDGET_PROP_SCHEMAS`) or the widget is an error box -- never a hand-written
+ *  check (Q25; client/README.md "Adding a widget").  It is handed the props with
+ *  every relation resolved (`Resolved<P>`: inline, never deferred).
+ *
+ *  `render` is a PROPERTY of function type, not a method: under `strict` a
+ *  property's parameter is checked contravariantly, while a method's is bivariant
+ *  -- and bivariance would let a renderer for one props type sit under another
+ *  widget's name in `Registry`.  It may return void (every renderer but none today
+ *  is synchronous); the dispatcher awaits it either way. */
+export interface Widget<P> {
+  render: (ctx: WidgetContext, props: Resolved<P>) => void | Promise<void>;
 }
 
-export type Registry = Record<string, Widget<never>>;
+/** The renderer registry: exactly one renderer per generated widget name, each
+ *  for that name's generated props type (WP-32).  A missing name, an extra name
+ *  or a renderer for the wrong props type is a tsc error at `defaultRegistry`. */
+export type Registry = { [K in WidgetName]: Widget<WidgetRegistry[K]> };
 
 export interface RenderError {
   path: string;
@@ -214,39 +228,67 @@ async function renderWidget(
     return errorBox(d, name, `${message} (at ${path})`);
   };
 
-  const widget = registry[name];
+  // A name is a widget exactly when the generator found a `WidgetName` term for
+  // it.  Anything else -- a typo, `treeMap` (UNSUPPORTED_WIDGETS) -- is the
+  // registry's box; a registry a JS caller built with an extra key is told the
+  // schema is missing, as before.  Both lookups are OWN-property checks
+  // (`hasOwnProperty`), so `constructor`, `toString` or `__proto__` -- inherited
+  // from Object.prototype by every object literal -- are an unknown name, never
+  // "no props schema was generated" (S2 review N-3).
+  const own = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+  if (!own(WIDGET_PROP_SCHEMAS, name)) {
+    return own(registry, name)
+      ? fail(`no props schema was generated for it -- add it to client/scripts/generate.sh`)
+      : fail(`no renderer is registered under that name`);
+  }
+  const outcome = await dispatch(name as WidgetName, rawProps, registry, env, errors, path, uid);
+  if (typeof outcome === "string") return fail(outcome);
+  return outcome;
+}
+
+/** The typed half of `renderWidget`, generic in the widget's name so that its
+ *  renderer, its schema and its props are the SAME `K`'s: `registry[key]` is a
+ *  `Widget<WidgetRegistry[K]>`, the schema a `z.ZodType<WidgetRegistry[K]>`, and
+ *  the parsed, resolved props go to `render` with no cast.  Answers the host
+ *  element, or the message of the error box to draw instead. */
+async function dispatch<K extends WidgetName>(
+  key: K,
+  rawProps: unknown,
+  registry: Registry,
+  env: RenderEnv,
+  errors: RenderError[],
+  path: string,
+  uid: () => string,
+): Promise<Element | string> {
+  const d = env.document;
+  const widget: Widget<WidgetRegistry[K]> | undefined = registry[key];
   if (!widget) {
-    return fail(`no renderer is registered under that name`);
+    return `no renderer is registered under that name`;
   }
-
-  const schema = WIDGET_PROP_SCHEMAS[name];
-  if (!schema) {
-    return fail(`no props schema was generated for it -- add it to client/scripts/generate.sh`);
-  }
-
+  const schema: z.ZodType<WidgetRegistry[K]> = WIDGET_PROP_SCHEMAS[key];
   const parsed = schema.safeParse(rawProps);
   if (!parsed.success) {
-    return fail(`its props are invalid -- ${zodMessage(parsed.error)}`);
+    return `its props are invalid -- ${zodMessage(parsed.error)}`;
   }
 
-  let props: unknown;
+  let props: Resolved<WidgetRegistry[K]>;
   try {
     props = await resolveRelations(parsed.data, env.fetchData);
   } catch (e) {
-    return fail(`a deferred relation could not be resolved: ${(e as Error).message}`);
+    return `a deferred relation could not be resolved: ${(e as Error).message}`;
   }
 
   const host = d.createElement("div");
   host.className = "ermine-widget";
-  host.setAttribute("data-widget", name);
+  host.setAttribute("data-widget", key);
   const ctx: WidgetContext = { target: host, env, document: d, path, uid };
   try {
-    await widget.render(ctx, props as never);
+    await widget.render(ctx, props);
   } catch (e) {
     host.innerHTML = "";
     const message = `it threw while rendering: ${(e as Error).message}`;
-    errors.push({ path, widget: name, message });
-    host.appendChild(errorBox(d, name, `${message} (at ${path})`));
+    errors.push({ path, widget: key, message });
+    host.appendChild(errorBox(d, key, `${message} (at ${path})`));
   }
   return host;
 }

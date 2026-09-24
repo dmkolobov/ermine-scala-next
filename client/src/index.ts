@@ -27,7 +27,10 @@
 // `env.htmlwriter` and the HOST decides where it came from.  The name above is
 // documentation, and what WP-10's host page has to get right.
 
-export * from "./props";
+// The generated vocabulary (WP-32): every props type and schema, WidgetRegistry,
+// WidgetName, WIDGET_PROP_SCHEMAS, UNSUPPORTED_WIDGETS, DocNode/DocTab.  Written by
+// client/scripts/generate.sh from the Ermine declarations; nothing hand-written.
+export * from "./generated/widgets";
 export * from "./relation";
 export * from "./format";
 export * from "./document";
@@ -39,7 +42,6 @@ export { headlineWidget, HEADLINE_FIGURES } from "./widgets/headline";
 export { crosstabWidget, EMPTY_CELL, TOTAL_LABEL } from "./widgets/crosstab";
 export { headingWidget } from "./widgets/heading";
 export { textWidget } from "./widgets/text";
-export { WIDGET_PROP_SCHEMAS, UNSUPPORTED_WIDGETS, HeadingPropsSchema, TextPropsSchema } from "./generated";
 
 import type { Registry } from "./dispatcher";
 import type { FormatEnv } from "./format";
@@ -51,7 +53,7 @@ import { crosstabWidget } from "./widgets/crosstab";
 import { headingWidget } from "./widgets/heading";
 import { textWidget } from "./widgets/text";
 
-/** Every widget Stage 3 ships.
+/** Every widget Stage 3 ships: one renderer per generated widget name.
  *
  *  `treeMap` is NOT here on purpose.  It is the one reserved name with no
  *  renderer behind it at all -- `runTreeMap` is undefined in the ermine-writers
@@ -60,25 +62,26 @@ import { textWidget } from "./widgets/text";
  *  widget, which IS the "unsupported widget" behaviour.  `UNSUPPORTED_WIDGETS`
  *  names it; `test/charts.test.ts` `(x-treemap)` pins the box.
  *
- *  THE INVARIANT (Q25, 2026-09-23): every name registered here has a schema
- *  GENERATED from its `Layout.Widgets.*` module in `WIDGET_PROP_SCHEMAS`, and a
- *  renderer carries none of its own -- the client's widget vocabulary is the
- *  typed one, never bare runtime values matched by hand.  `heading` and `text`
- *  are `Layout.Widgets.Heading` and `Layout.Widgets.Text`.  `(w-generated-only)`
- *  pins the registry's names to exactly the generated ones. */
+ *  THE INVARIANT (Q25, 2026-09-23; typed by WP-32): the keys are exactly the
+ *  generated `WidgetName`s and each renderer is for that name's generated props
+ *  type -- `Registry` is `{ [K in WidgetName]: Widget<WidgetRegistry[K]> }`, so a
+ *  missing name, an extra name or a renderer for the wrong props type is a tsc
+ *  error on this object literal (no casts here, on purpose).  A renderer carries
+ *  no schema of its own.  `(w-generated-only)` pins the same at runtime and
+ *  `(g-tsc)` pins that tsc refuses the two wrong registrations. */
 export function defaultRegistry(env?: FormatEnv): Registry {
   return {
-    table: tableWidget(env) as Registry[string],
-    drilldownTable: drilldownTableWidget(env) as Registry[string],
-    scorecard: scorecardWidget(env) as Registry[string],
-    headline: headlineWidget(env) as Registry[string],
-    crosstab: crosstabWidget(env) as Registry[string],
-    axisChart: axisChartWidget() as Registry[string],
-    pieChart: pieChartWidget(false, env) as Registry[string],
-    drilldownPieChart: pieChartWidget(true, env) as Registry[string],
-    styleBox: styleBoxWidget(env) as Registry[string],
-    drilldownBar: drilldownBarWidget() as Registry[string],
-    heading: headingWidget() as Registry[string],
-    text: textWidget() as Registry[string],
+    table: tableWidget(env),
+    drilldownTable: drilldownTableWidget(env),
+    scorecard: scorecardWidget(env),
+    headline: headlineWidget(env),
+    crosstab: crosstabWidget(env),
+    axisChart: axisChartWidget(),
+    pieChart: pieChartWidget(false, env),
+    drilldownPieChart: pieChartWidget(true, env),
+    styleBox: styleBoxWidget(env),
+    drilldownBar: drilldownBarWidget(),
+    heading: headingWidget(),
+    text: textWidget(),
   };
 }

@@ -27,7 +27,7 @@
 // The five cases it does not implement, and the two flags it drops, follow the
 // SCALA renderer (HTMLWriter.htmlEval) instead; see each case below.
 
-import type { CellFormat, CellCondition, Threshold, RGB } from "./props";
+import type { CellFormat, CellCondition, Threshold, RGB } from "./generated/widgets";
 
 export type { CellFormat, CellCondition, Threshold, RGB };
 

@@ -11,7 +11,7 @@
 //
 //   <p class="ermine-text">every line item, whatever the date range</p>
 
-import type { TextProps } from "../props";
+import type { TextProps } from "../generated/widgets";
 import type { Widget, WidgetContext } from "../dispatcher";
 
 export function textWidget(): Widget<TextProps> {

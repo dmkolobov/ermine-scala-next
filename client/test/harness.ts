@@ -5,7 +5,7 @@
 
 import { JSDOM } from "jsdom";
 import fc from "fast-check";
-import type { CellFormat, CellCondition, Threshold, RGB } from "../src/props";
+import type { CellFormat, CellCondition, Threshold, RGB } from "../src/generated/widgets";
 import type { RunTabularArgs, HtmlWriter } from "../src/legacy";
 import type { RunPiechartArgs, RunStyleboxArgs, RunTimeSeriesArgs } from "../src/charts";
 import type { InlineRelation, WireCell } from "../src/relation";

@@ -32,6 +32,7 @@ import * as path from "path";
 import { JSDOM } from "jsdom";
 
 import * as client from "../src/index";
+import * as generated from "../src/generated/widgets";
 import * as host from "../src/host/index";
 import * as page from "../src/host/page";
 
@@ -154,6 +155,11 @@ test("(b-surface) window.ErmineClient exposes exactly what src/index.ts exports"
   const want = Object.keys(client).sort();
   assert.ok(want.length > 20, `sanity: src/index.ts exports ${want.length} names`);
   assert.deepStrictEqual(Object.keys(exposed.ErmineClient!).sort(), want);
+  // WP-32: the generated module IS the public vocabulary -- every schema, the
+  // registry map and UNSUPPORTED_WIDGETS -- re-exported whole, never re-listed
+  const gen = Object.keys(generated);
+  assert.ok(gen.includes("WIDGET_PROP_SCHEMAS") && gen.includes("UNSUPPORTED_WIDGETS"));
+  for (const k of gen) assert.ok(want.includes(k), `src/index.ts does not re-export the generated ${k}`);
   // and the two names §5's checklist actually names are callable
   assert.equal(typeof exposed.ErmineClient!["parseDocument"], "function");
   assert.equal(typeof exposed.ErmineClient!["render"], "function");

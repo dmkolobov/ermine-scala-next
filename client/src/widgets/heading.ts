@@ -27,7 +27,7 @@
 //
 // `total` has no CellFormat in the record, so it is printed as it arrives.
 
-import type { HeadingProps } from "../props";
+import type { HeadingProps } from "../generated/widgets";
 import type { Widget, WidgetContext } from "../dispatcher";
 
 export function headingWidget(): Widget<HeadingProps> {

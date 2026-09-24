@@ -10,8 +10,8 @@ import {
   evalCondition, colorHex,
 } from "../src/format";
 import { legacyFormatTuple, LEGACY_STYLE_NAMES } from "../src/legacy";
-import type { CellFormat } from "../src/props";
-import { CellFormatSchema } from "../src/generated";
+import type { CellFormat } from "../src/generated/widgets";
+import { CellFormatSchema } from "../src/generated/widgets";
 import { cellFormatArb, rawValuesArb, newDom } from "./harness";
 import { legacyAvailable, loadLegacyUtils, WRITERS_ROOT } from "./legacy-utils";
 

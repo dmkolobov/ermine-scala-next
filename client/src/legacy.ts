@@ -42,8 +42,8 @@
 import type {
   CellCondition, CellFormat, ColumnAlign, ColumnKind, ColumnSort,
   DrilldownTableProps, TableColumn, TableProps, Threshold,
-} from "./props";
-import type { InlineRelation, WireCell } from "./relation";
+} from "./generated/widgets";
+import type { InlineRelation, WireCell, Resolved } from "./relation";
 import { columnIndex } from "./relation";
 import { defaultFormatEnv, formatDisplay, type FormatEnv, type Formatted } from "./format";
 import type { Widget, WidgetContext } from "./dispatcher";
@@ -345,9 +345,9 @@ function requireHtmlWriter(ctx: WidgetContext): HtmlWriter {
 // -------------------------------------------------------------- the widgets
 
 /** Registry entry for "table". */
-export function tableWidget(env?: FormatEnv): Widget<TableProps<InlineRelation>> {
+export function tableWidget(env?: FormatEnv): Widget<TableProps> {
   return {
-    render(ctx: WidgetContext, props: TableProps<InlineRelation>): void {
+    render(ctx: WidgetContext, props: Resolved<TableProps>): void {
       const hw = requireHtmlWriter(ctx);
       const fenv = env ?? defaultFormatEnv(ctx.document);
       const id = `${ctx.uid()}_tabular`;
@@ -375,7 +375,7 @@ export function tableWidget(env?: FormatEnv): Widget<TableProps<InlineRelation>>
  *  `parentColumn` value matches no other row's `childColumn`; a cycle or a missing
  *  parent leaves its rows at the end, at depth 0, rather than looping. */
 export function drilldownRows(
-  props: DrilldownTableProps<InlineRelation>,
+  props: Resolved<DrilldownTableProps>,
   env: FormatEnv,
 ): LegacyTreeRow[] {
   const rel = props.ddRows;
@@ -415,9 +415,9 @@ export function drilldownRows(
 }
 
 /** Registry entry for "drilldownTable". */
-export function drilldownTableWidget(env?: FormatEnv): Widget<DrilldownTableProps<InlineRelation>> {
+export function drilldownTableWidget(env?: FormatEnv): Widget<DrilldownTableProps> {
   return {
-    render(ctx: WidgetContext, props: DrilldownTableProps<InlineRelation>): void {
+    render(ctx: WidgetContext, props: Resolved<DrilldownTableProps>): void {
       const hw = requireHtmlWriter(ctx);
       const fenv = env ?? defaultFormatEnv(ctx.document);
       const id = `${ctx.uid()}_tabular`;

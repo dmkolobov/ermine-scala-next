@@ -37,8 +37,9 @@ sorted by name and every row array follows that order; a `Long`, `Date`,
 ```sh
 cd client
 npm ci                     # node_modules is gitignored; package-lock.json is not
-npm run generate           # src/generated/ from bin/ermine-schema --zod
-npm run check-generated    # CI: regenerate into a temp dir and diff
+npm run generate           # src/generated/widgets.ts: ONE bin/ermine-schema --widgets call (~5 s, needs java on PATH)
+npm run check-fresh        # no JVM: header hashes + exactness probe (the `generated` gate)
+npm run check-generated    # regenerate into a temp file and diff (one JVM)
 npm run typecheck          # tsc --noEmit, strict
 npm run build && node --test "dist/test/*.test.js"
 ```
@@ -52,7 +53,7 @@ is long-standing, not new.
 With that checkout present, the command above is green. Eight of the tests skip, each
 naming what would make it run: three need FIXTURES the Scala side writes — property (b)'s
 200-document corpus, its negative half, and the end-to-end document — and five need the
-browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (100 tests: 97 passed, 3 skipped after S1; **112 tests: 109 passed, 3 skipped after WP-10 S2**; **114 tests: 111 passed, 3 skipped after WP-10 S3**; **115 tests: 112 passed, 3 skipped after WP-11**, with the bundle built, MEASURED 2026-09-23)
+browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (100 tests: 97 passed, 3 skipped after S1; **112 tests: 109 passed, 3 skipped after WP-10 S2**; **114 tests: 111 passed, 3 skipped after WP-10 S3**; **115 tests: 112 passed, 3 skipped after WP-11**, with the bundle built, MEASURED 2026-09-23; **128 tests, 128 passed, 0 skipped after WP-32 S2**, bundle built and the corpus fixtures present, MEASURED 2026-09-23)
 (MEASURED 2026-09-21 on node v24.20.0; the count this paragraph carried before WP-9 was
 33/3 and was stale by 29 passing tests). `npm run test:bundle` builds the bundle first and
 gives 87 passed, 3 skipped; writing the fixtures as well runs all 90:
@@ -268,8 +269,8 @@ should be committed instead is open, and belongs to WP-17 (closed-environment pa
 
 | File | What |
 |---|---|
-| `src/generated/` | zod, written by `scripts/generate.sh` from `bin/ermine-schema --zod`. Never edited. `index.ts` also holds `WIDGET_PROP_SCHEMAS`, the registry name -> schema map. |
-| `src/props.ts` | the TypeScript types mirroring the Ermine declarations. Hand-written, because `z.infer` of a recursive generated schema is `any`; `test/props.test.ts` pins them against the generated zod. |
+| `src/generated/widgets.ts` | ONE generated module (WP-32), written by `scripts/generate.sh` = `bin/ermine-schema --widgets Layout.Widgets Layout.Doc:Node=DocNode Layout.Doc:Tab=DocTab`. Never edited. Every props type and its zod (recursive ones DECLARED and annotated `z.ZodType<X>`, so the types are real, not `any`), `WidgetRegistry` (name -> props type), `WidgetName = keyof WidgetRegistry`, the typed `WIDGET_PROP_SCHEMAS`, `UNSUPPORTED_WIDGETS`, and `DocNode`/`DocTab`. Its header records the command, the sha256 of every `.e` file read and of the generator's own Scala. |
+| `scripts/check-fresh.js` | the JVM-free checks on it, run by the `generated` (commit) and `client` (nightly) gates: see "Staleness and exactness" below. |
 | `src/relation.ts` | the relation wire types, `resolveRelation`, `resolveRelations` (a deep walk, so a widget added later resolves for free) and `httpFetchData`. |
 | `src/document.ts` | the envelope schema and `parseDocument` / `safeParseDocument`. |
 | `src/format.ts` | the port of `formatDisplay`, total over `CellFormat`. |
@@ -279,7 +280,7 @@ should be committed instead is open, and belongs to WP-17 (closed-environment pa
 | `src/widgets/scorecard.ts` | the `scorecard` widget, plain DOM: cards from an `Inline` relation. |
 | `src/widgets/headline.ts` | the `headline` widget, plain DOM: a title, a scope and three figures. Its props carry NO relation -- the Ermine constructor `headlineOf` scanned one server-side (J3g). |
 | `src/widgets/crosstab.ts` | the `crosstab` widget, plain DOM: a `<table>` of row labels x column labels with totals. Its props carry a MATRIX, not a relation -- `crosstabOf` scanned one server-side and the column set IS the data (J3i) -- so it does not go through the table adapter. A `null` cell is a pair no row had and shows as an em dash. |
-| `src/index.ts` | the public surface and `defaultRegistry()`. |
+| `src/index.ts` | the public surface (the generated module re-exported whole) and `defaultRegistry()`, typed `Registry`. |
 | `src/host/` | the preview panel's PRESENTATION reducer — `applyMessage`, `presentation`, `initialHostState` — bundled as `ermine-host.js`. It decides what the panel SHOWS and nothing else: every decision (is this answer current, should we re-render, did the wedge clear) stays in the extension's `preview-core.js`, so the two reducers cannot disagree. `page.ts` (WP-10) is the webview page built on it: the snapshot fold, `pageStep` (delivery only: snapshot envelopes, a rising `seq`, re-render only when the document changed) and `boot`, the DOM, with WP-31's Document / JSON toggle (`jsonViewText`, `restoredView`). |
 
 ## Formatting a cell
@@ -320,14 +321,18 @@ typed widget schemas in the typescript rather than matching runtime ermine value
 fallibly"*): a widget's props are validated by the zod GENERATED from its
 `Layout.Widgets.*` module, or the widget does not exist.** There is no
 hand-written schema path: `Widget` has no `schema` field, the dispatcher looks the
-name up in the generated `WIDGET_PROP_SCHEMAS` only, and a registered name without
-an entry there draws an error box. `test/widgets.test.ts` `(w-generated-only)` pins
-that the registry's names are exactly the generated ones and that no renderer
-carries a schema of its own. A report that hands a widget a bare runtime value --
+name up in the generated `WIDGET_PROP_SCHEMAS` only, and a name without an entry
+there draws an error box. Since WP-32 the registry is TYPED by the generated
+module: `Registry = { [K in WidgetName]: Widget<WidgetRegistry[K]> }`, so a
+missing name, an extra name or a renderer for another widget's props is a tsc
+error at `defaultRegistry()` (`test/generated.test.ts` `(g-tsc)` pins all three),
+and `(w-generated-only)` checks the same equality at runtime. A renderer's
+`render` receives `Resolved<P>`: the generated props type with every deferred
+relation arm removed, since the dispatcher resolves relations first. A report that hands a widget a bare runtime value --
 `rawWidget` over a report-local record, a bare string, a bare relation -- gets an
 error box, by design.
 
-Three edits, plus the generate step.
+Three edits, plus the generate step; tsc tells you the one you forgot.
 
 1. **Ermine.** A new module under `core/src/main/resources/modules/Layout/Widgets/`
    — one module PER WIDGET, because Ermine field selectors are module-global and
@@ -359,11 +364,13 @@ Three edits, plus the generate step.
    schema of that name, so a `rawWidget` whose value does not have the typed shape
    is an error box.
 
-   Then `export Layout.Widgets.Sparkline` from `Layout/Widgets.e` (unless a field
-   name is one another widget module already owns: `Layout.Widgets.Heading` is
-   not re-exported for that reason -- through the umbrella its `title` would
-   silently shadow Scorecard's -- and is imported by name) and add its name to
-   `widgetNames` there. A relation field
+   The generator FINDS the widget by that `WidgetName` term: it scans
+   `Layout.Widgets` and every module under `Layout/Widgets/`, so nothing lists it.
+   `export Layout.Widgets.Sparkline` from `Layout/Widgets.e` for report authors
+   (unless a field name is one another widget module already owns:
+   `Layout.Widgets.Heading` is not re-exported for that reason -- through the
+   umbrella its `title` would silently shadow Scorecard's -- and is imported by
+   name). A relation field
    is `[..r]` when the request may defer it, `Inline r` when the widget cannot work
    without the rows. The row parameter stays FREE: one schema per widget, whatever
    relation it is used with.
@@ -375,15 +382,43 @@ Three edits, plus the generate step.
    ordinary props record cannot be mistaken for one (`TableColumn` already has a field
    called `kind`). Do not declare a props record that reproduces a whole relation arm;
    if you ever need to, give the dispatcher an explicit relation path instead of
-   widening the test. `(p-relation-guard)` pins the boundary.
+   widening the test. `(g-relation-guard)` pins the boundary.
 
-2. **Generate.** Add `"Layout.Widgets.Sparkline:SparklineProps:sparkline:SparklinePropsSchema"`
-   to the `types` array in `scripts/generate.sh`, add the registry line to
-   `WIDGET_PROP_SCHEMAS` in the same script, and run `npm run generate`.
+2. **Generate.** `npm run generate` (`scripts/generate.sh`, one JVM, about five
+   seconds). `src/generated/widgets.ts` now has `SparklineProps`,
+   `SparklinePropsSchema`, `sparkline: SparklineProps` in `WidgetRegistry` and its
+   `WIDGET_PROP_SCHEMAS` entry. Nothing to edit in the script. Commit the file.
 
-3. **TypeScript.** Mirror the props in `src/props.ts`, write the component
-   (`src/widgets/sparkline.ts`) as a `Widget<SparklineProps>`, and add one line to
-   `defaultRegistry()` in `src/index.ts`.
+3. **TypeScript.** Write the renderer (`src/widgets/sparkline.ts`) as a
+   `Widget<SparklineProps>` importing the type from `../generated/widgets`; its
+   `render(ctx, props)` gets `Resolved<SparklineProps>` (`sparkPoints` already
+   inline). Then register it: `npm run typecheck` fails at `defaultRegistry()` with
+   `Property 'sparkline' is missing in type ... but required in type 'Registry'`
+   until the line `sparkline: sparklineWidget(),` is there. Done.
+
+**Staleness and exactness.** `scripts/check-fresh.js` (the `generated` gate at the
+commit tier, and the first step of the `client` gate; `npm run check-fresh`) needs
+no JVM and takes about two seconds:
+
+- **(a) sources.** The header's `// sha256 <hex> <path>` lines (every `.e` file
+  the generator read, 93 today) are recomputed over
+  `core/src/main/resources/modules`; any `.e` under `Layout/Widgets/` missing from
+  that list fails too, so a NEW widget module is caught before it is generated.
+- **(b) generator.** The `// generator sha256` lines `generate.sh` writes (the
+  sha256 of `json/{Schema,SchemaMain,Zod}.scala`) are recomputed, so a change to
+  the generator itself makes the committed file stale although no `.e` moved.
+- **(b2) body.** The `// body sha256:` line `generate.sh` writes is recomputed over
+  everything below it, so a hand edit of the generated text (a `.strict()` made
+  `.passthrough()`) fails even though no input changed.
+- **(c) exactness.** For every recursive declaration (`export const X:
+  z.ZodType<X> = E;`) the declared `X` must equal zod's inference of `E`,
+  assignable both ways AND identical to tsc. The annotation alone only proves
+  zod's output assignable to `X`: a WIDENED `X` (an extra arm, a key made
+  optional) passes tsc, and mutual assignability alone passes an extra optional
+  key, which is why the identity check is there too.
+
+Each failure prints the offender and `regenerate: client/scripts/generate.sh`.
+`npm run check-generated` (regenerate and diff, one JVM) is the byte-for-byte check.
 
 **A widget whose constructor scans** is two records and a function between them
 (stages J3g, J3i). The props above are the wire half; beside them the Ermine module
@@ -403,8 +438,8 @@ are the distinct values of a data column, which no query can name in advance.
 One naming rule follows from the Ermine side: field selectors are global and
 `Layout/Widgets.e` re-exports every widget module into one scope, so a field name two
 widget modules both want has to be prefixed (`headlineTitle` because the scorecard owns
-`title`, `crosstabRowLabels` because the style box owns `rowLabels`). The generated zod
-and `src/props.ts` carry whatever Ermine settled on.
+`title`, `crosstabRowLabels` because the style box owns `rowLabels`). The generated
+module carries whatever Ermine settled on.
 
 The dispatcher needs nothing: it looks the schema up by name, validates, resolves
 every relation anywhere in the props, and calls `render`.
@@ -424,8 +459,8 @@ the dispatcher's error box naming it. `UNSUPPORTED_WIDGETS` says so in code;
 `heading` and `text` are registered too, and since Q25 (2026-09-23) they are typed
 like the rest: `Layout.Widgets.Heading` (`HeadingProps {title, sortColumn, matched,
 total}`, constructor `heading`) and `Layout.Widgets.Text` (`TextProps {body}`,
-constructor `plainText`), each with a `generate.sh` entry and generated zod
-(`src/generated/heading.ts`, `text.ts`). Q24 (d) had first registered them with
+constructor `plainText`), each found by the generator's scan and generated into
+`src/generated/widgets.ts`. Q24 (d) had first registered them with
 hand-written schemas through a `Widget.schema` override; Q25 deleted that override
 and the `(w-own-schema)` allowance with it. The client's `text` is PLAIN text:
 the Ermine-side `Layout.Report.text` (a legacy Report builder, not a registry name)

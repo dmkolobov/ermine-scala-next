@@ -102,6 +102,18 @@ test("(d-unknown) an unregistered widget renders an error box and does not throw
   assert.match(box?.textContent ?? "", /axisChart/);
 });
 
+test("(d-prototype-names) `constructor`, `toString`, `__proto__` are unknown names: the registry's box, never the missing-schema one", async () => {
+  // S2 review N-3: both lookups are own-property checks, so a name every object
+  // literal inherits from Object.prototype is simply not a widget
+  for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+    const { document, target } = newDom();
+    const result = await render(target, parseDocument(doc({ tag: "Widget", name, props: {} })),
+      defaultRegistry(), env(document));
+    assert.deepStrictEqual(result.errors.map((e) => e.message), ["no renderer is registered under that name"], name);
+    assert.equal(target.querySelectorAll(".ermine-widget-error").length, 1, name);
+  }
+});
+
 test("(d-invalid) invalid props render an error box naming the widget and the zod path", async () => {
   const { document, target } = newDom();
   const broken = { ...tableProps, columns: [{ ...tableProps.columns[0], align: "AlignSideways" }] };
@@ -116,7 +128,7 @@ test("(d-throws) a renderer that throws is contained", async () => {
   const { document, target } = newDom();
   const registry: Registry = {
     ...defaultRegistry(),
-    scorecard: { render(): void { throw new Error("boom"); } } as Registry[string],
+    scorecard: { render(): void { throw new Error("boom"); } },
   };
   const result = await render(target, parseDocument(doc({ tag: "Widget", name: "scorecard", props: scorecardProps })),
     registry, env(document));

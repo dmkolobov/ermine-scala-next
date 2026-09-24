@@ -138,7 +138,27 @@ gate_extension() {
   [[ $rc == 0 && -n $t && $t == "$p" && ${f:-1} == 0 ]]
 }
 
-gate_def client nightly 1200 "client/: npm test (tsc, then node --test: the host reducer, the panel page, the widgets; the bundle tests SKIP unless built)"
+gate_def generated commit 120 "client/src/generated/widgets.ts: .e + generator sha256 vs the header, and every recursive declaration EQUAL to zod's inference (node + tsc, no JVM)"
+# WP-32 S2.  `node client/scripts/check-fresh.js`: (a) every `// sha256` source line bin/ermine-schema
+# wrote is recomputed over core/src/main/resources/modules, and every Layout/Widgets module must be
+# listed; (b) every `// generator sha256` line client/scripts/generate.sh wrote (json/{Schema,SchemaMain,
+# Zod}.scala) is recomputed; (c) the both-direction exactness probe (the S1 review's eq-probe) over every
+# `export const X: z.ZodType<X> = E;`, typechecked with the client's tsc -- the annotation alone lets a
+# WIDENED declaration through.  About two seconds.  Straight at COMMIT (the `extension` precedent): it
+# is what keeps a stale or widened generated file from being committed, and it needs no JVM.
+# UNAVAILABLE (3) without node or client/node_modules (tsc and zod are not vendored, WP-17).
+# client/scripts/check-generated.sh (regenerate + diff, one JVM) stays a manual check.
+GATE_NOSCOPE[generated]="scripts/mutate.py's operators are Scala-shaped; the checks' reverse mutants (a hash edited, a declaration widened) are run on copies per stage (scratch-widget-preview/wp32-s2)"
+gate_generated() {
+  command -v node > /dev/null || { echo "SUMMARY no node on PATH"; return 3; }
+  local line rc
+  line=$(node client/scripts/check-fresh.js 2>&1); rc=$?
+  echo "$line"
+  echo "SUMMARY ${line#generated: }"
+  return $rc
+}
+
+gate_def client nightly 1200 "client/: the generated-file checks, then npm test (tsc, then node --test: the host reducer, the panel page, the widgets; the bundle tests SKIP unless built)"
 # WP-10 S3.  Enters at NIGHTLY per docs/gate-policy.md ("a new gate enters at nightly and moves up on
 # evidence").  UNAVAILABLE (3), never FAIL, where client/node_modules is absent: the closure (zod,
 # typescript, jsdom, fast-check, webpack) is not vendored (WP-17), so a checkout without `npm install`
@@ -150,6 +170,13 @@ GATE_NOSCOPE[client]="scripts/mutate.py's operators are Scala-shaped; the client
 gate_client() {
   command -v npm > /dev/null || { echo "SUMMARY no npm on PATH"; return 3; }
   [[ -d client/node_modules ]] || { echo "SUMMARY no client/node_modules (run npm install in client/ where the closure is available)"; return 3; }
+  # WP-32 S2: the `generated` gate's checks first (sources, generator key, exactness probe); a stale
+  # or widened generated file FAILS here, naming the offender, before any test runs
+  local fresh frc
+  fresh=$(node client/scripts/check-fresh.js 2>&1); frc=$?
+  echo "$fresh"
+  if [[ $frc == 3 ]]; then echo "SUMMARY generated-file check unavailable: ${fresh#generated: }"; return 3; fi
+  if [[ $frc != 0 ]]; then echo "SUMMARY generated-file check failed: ${fresh#generated: }"; return 1; fi
   ( cd client && npm test ); local rc=$?
   local t p f s
   t=$(grep -oE '^ℹ tests [0-9]+' "$GATE_LOG" | tail -1 | grep -oE '[0-9]+$')

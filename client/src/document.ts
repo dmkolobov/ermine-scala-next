@@ -8,8 +8,8 @@
 // carrying one is refused here rather than silently ignored.
 
 import { z } from "zod";
-import { DocNodeSchema } from "./generated";
-import type { DocNode } from "./props";
+import { DocNodeSchema } from "./generated/widgets";
+import type { DocNode } from "./generated/widgets";
 import { zodMessage } from "./relation";
 
 export const DOCUMENT_VERSION = 1;

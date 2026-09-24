@@ -32,7 +32,7 @@
 // zero -- and it shows as an em dash, the same one `scorecard.ts` uses for a
 // missing column.
 
-import type { CrosstabProps } from "../props";
+import type { CrosstabProps } from "../generated/widgets";
 import { defaultFormatEnv, formatDisplay, type FormatEnv, type Formatted } from "../format";
 import type { Widget, WidgetContext } from "../dispatcher";
 

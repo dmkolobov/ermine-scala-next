@@ -12356,7 +12356,7 @@ test("glue pins (WP-10 S3) disposal -- the watcher goes with the panel and with 
   void src;
 });
 
-test("gate_client (WP-10 S3): UNAVAILABLE (3) without client/node_modules, FAIL (1) on a red suite, PASS (0) with the counts -- one SUMMARY line", (t) => {
+test("gate_client (WP-10 S3; WP-32 S2): UNAVAILABLE (3) without client/node_modules, FAIL (1) on a stale generated file or a red suite, PASS (0) with the counts -- one SUMMARY line", (t) => {
   const cp = require("node:child_process");
   const fsMod = require("node:fs");
   const os = require("node:os");
@@ -12366,7 +12366,12 @@ test("gate_client (WP-10 S3): UNAVAILABLE (3) without client/node_modules, FAIL 
   const tmp = fsMod.mkdtempSync(path.join(os.tmpdir(), "gate-client-"));
   try {
     fsMod.mkdirSync(path.join(tmp, "client"));
+    fsMod.mkdirSync(path.join(tmp, "client", "scripts"));
     fsMod.mkdirSync(path.join(tmp, "bin"));
+    // WP-32 S2: gate_client runs client/scripts/check-fresh.js (real node) before npm test
+    const fresh = (line, rc) => fsMod.writeFileSync(path.join(tmp, "client", "scripts", "check-fresh.js"),
+      "console.log(" + JSON.stringify("generated: " + line) + "); process.exit(" + rc + ");\n");
+    fresh("fresh and exact: stub", 0);
     const run = (npmOut, npmRc) => {
       fsMod.writeFileSync(path.join(tmp, "bin", "npm"),
         "#!/bin/sh\nprintf '%s\\n' " + npmOut.map((l) => "'" + l + "'").join(" ") + "\nexit " + npmRc + "\n", { mode: 0o755 });
@@ -12392,6 +12397,10 @@ test("gate_client (WP-10 S3): UNAVAILABLE (3) without client/node_modules, FAIL 
     const noCounts = run(["error TS2322: nope"], 2);
     assert.strictEqual(noCounts.rc, 1);
     assert.match(noCounts.summaries[0] || "", /no test counts/);
+    // a stale generated file FAILS before npm test runs, whatever npm would say
+    fresh("STALE: Layout/Widgets/Text.e changed since generation -- regenerate: client/scripts/generate.sh", 1);
+    const stale = run(green, 0);
+    assert.deepStrictEqual(stale, { rc: 1, summaries: ["SUMMARY generated-file check failed: STALE: Layout/Widgets/Text.e changed since generation -- regenerate: client/scripts/generate.sh"] });
   } finally {
     fsMod.rmSync(tmp, { recursive: true, force: true });
   }

@@ -12,7 +12,7 @@ import fc from "fast-check";
 
 import { render } from "../src/dispatcher";
 import { defaultRegistry } from "../src/index";
-import { UNSUPPORTED_WIDGETS } from "../src/generated";
+import { UNSUPPORTED_WIDGETS, WIDGET_PROP_SCHEMAS } from "../src/generated/widgets";
 import { legacyFormatTuple, LEGACY_STYLE_NAMES } from "../src/legacy";
 import {
   TUPLE_LOSS, axisValue, cssColor, legacyAxis, legacyMeta, legacyScalarType,
@@ -22,8 +22,8 @@ import { defaultFormatEnv, formatDisplay } from "../src/format";
 import type {
   AxisChartProps, CellFormat, ChartMeta, ChartSeries, DrilldownBarProps,
   PieChartProps, StyleBoxProps,
-} from "../src/props";
-import type { InlineRelation } from "../src/relation";
+} from "../src/generated/widgets";
+import type { InlineRelation, Resolved } from "../src/relation";
 import { cellFormatArb, inlineRelation, newDom, rawValuesArb, refusingFetch, stubHtmlWriter } from "./harness";
 import { legacyAvailable, loadLegacyUtils, WRITERS_ROOT } from "./legacy-utils";
 
@@ -226,7 +226,7 @@ test("(x-color) a colour cell is #rrggbb or null, never anything else", () => {
 // ---------------------------------------------------------------- axisChart
 
 test("(x-axis) the runTimeSeries argument object, meta and series, cell by cell", async () => {
-  const props: AxisChartProps<InlineRelation> = {
+  const props: Resolved<AxisChartProps> = {
     chartMeta: META, chartSeries: [SERIES], chartRows: REL,
   };
   const { target, hw, errors } = await renderWidget("axisChart", props);
@@ -326,7 +326,7 @@ test("(x-scalartype) a compound scalar type is {name:'compound', types:[...]}", 
 // -------------------------------------------------------------- drilldownBar
 
 test("(x-bar) runDrilldownBar: child at index 4, parent at index 5, both cols non-null", async () => {
-  const props: DrilldownBarProps<InlineRelation> = {
+  const props: Resolved<DrilldownBarProps> = {
     barMeta: META,
     barSeries: { ...SERIES, extraColumns: [], extraFormats: [] },
     barParentColumn: "parent",
@@ -352,7 +352,7 @@ test("(x-bar) runDrilldownBar: child at index 4, parent at index 5, both cols no
 // ----------------------------------------------------------------- pieChart
 
 test("(x-pie) runPiechart: [label, |value|, colour] rows and the legend options", async () => {
-  const props: PieChartProps<InlineRelation> = {
+  const props: Resolved<PieChartProps> = {
     pieTitle: "Share", seriesName: "Revenue",
     pieLabelColumn: "region", pieValueColumn: "revenue", pieColorColumn: "colour",
     // NOT Default on purpose.  The label reaches the legend, the tooltip and the
@@ -436,7 +436,7 @@ test("(x-pie-label) the slice label is formatted, and a Date label column is a S
 });
 
 test("(x-pie-dd) drilldownPieChart adds the child and parent positions", async () => {
-  const props: PieChartProps<InlineRelation> = {
+  const props: Resolved<PieChartProps> = {
     pieTitle: "", seriesName: "s",
     pieLabelColumn: "region", pieValueColumn: "revenue", pieColorColumn: "colour",
     pieChildColumn: "child", pieParentColumn: "parent",
@@ -472,7 +472,7 @@ const SB_REL: InlineRelation = inlineRelation(
   [[1.5, 0, 0], [2.5, 0, 0], [7, 1, 2], [9, 5, 5]],
 );
 
-const SB: StyleBoxProps<InlineRelation> = {
+const SB: Resolved<StyleBoxProps> = {
   xTitle: "Value", yTitle: "Growth",
   aggColumn: "sbAmount", aggTitle: "Amount",
   aggFormat: { tag: "Round", color: false, negParens: false, places: 1 },
@@ -544,7 +544,7 @@ test("(x-stylebox-legacy) the legacy applies formatDisplay to aFormat itself", (
 test("(x-treemap) treeMap is registered as UNSUPPORTED: no renderer, an error box", async () => {
   assert.deepStrictEqual([...UNSUPPORTED_WIDGETS], ["treeMap"]);
   const registry = defaultRegistry();
-  assert.equal(registry["treeMap"], undefined, "treeMap must NOT be in the registry");
+  assert.equal((registry as Record<string, unknown>)["treeMap"], undefined, "treeMap must NOT be in the registry");
   // ... but its schema is not generated either, so the message is the registry's
   const { document, target } = newDom();
   const result = await render(target, mkDoc("treeMap", {}) as never, registry, {
@@ -555,10 +555,9 @@ test("(x-treemap) treeMap is registered as UNSUPPORTED: no renderer, an error bo
   const box = target.querySelector(".ermine-widget-error");
   assert.ok(box, "no error box");
   assert.equal(box?.getAttribute("data-widget"), "treeMap");
-  // every OTHER reserved name does render
-  for (const n of ["table", "drilldownTable", "scorecard", "axisChart", "pieChart",
-                   "drilldownPieChart", "styleBox", "drilldownBar"]) {
-    assert.ok(registry[n], `${n} is not registered`);
+  // every GENERATED name does render (derived, never listed here: WP-32)
+  for (const n of Object.keys(WIDGET_PROP_SCHEMAS)) {
+    assert.ok((registry as Record<string, unknown>)[n], `${n} is not registered`);
   }
 });
 

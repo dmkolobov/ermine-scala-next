@@ -25,7 +25,8 @@ import { axisValue, TUPLE_LOSS, TUPLE_STYLE_NAMES } from "../src/charts";
 import type {
   AxisChartProps, CellFormat, ChartSeries, DrilldownBarProps, PieChartProps,
   StyleBoxProps, TableColumn,
-} from "../src/props";
+} from "../src/generated/widgets";
+import { WIDGET_PROP_SCHEMAS } from "../src/generated/widgets";
 import { newDom, stubHtmlWriter, type StubWriter } from "./harness";
 import { mutateOnce } from "./mutate";
 
@@ -301,7 +302,7 @@ test("(b) the whole corpus parses, dispatches and reaches runTabular with legal 
           kinds.add(n.props.cards.kind);
           formatTags.add((n.props.cardFormat as CellFormat).tag);
         } else if (n.name === "axisChart") {
-          const p = n.props as AxisChartProps<any>;
+          const p = n.props as AxisChartProps;
           const rel = resolve(p.chartRows);
           const { args } = hw.timeSeries[chartCall.ts++] as { args: any };
           assertMeta(args.meta, `${stem}: axisChart meta`);
@@ -314,7 +315,7 @@ test("(b) the whole corpus parses, dispatches and reaches runTabular with legal 
           });
           kinds.add(p.chartRows.kind as string);
         } else if (n.name === "drilldownBar") {
-          const p = n.props as DrilldownBarProps<any>;
+          const p = n.props as DrilldownBarProps;
           const rel = resolve(p.barRows);
           const { args } = hw.drilldownBars[chartCall.bar++] as { args: any };
           assertMeta(args.meta, `${stem}: drilldownBar meta`);
@@ -327,7 +328,7 @@ test("(b) the whole corpus parses, dispatches and reaches runTabular with legal 
             [p.barChildColumn, p.barParentColumn], `${stem}: drilldownBar series`);
           kinds.add(p.barRows.kind as string);
         } else if (n.name === "pieChart" || n.name === "drilldownPieChart") {
-          const p = n.props as PieChartProps<any>;
+          const p = n.props as PieChartProps;
           const rel = resolve(p.pieRows);
           const { args } = (n.name === "pieChart"
             ? hw.pies[chartCall.pie++]
@@ -367,7 +368,7 @@ test("(b) the whole corpus parses, dispatches and reaches runTabular with legal 
           pieSlices += args.relation.length;
           kinds.add(p.pieRows.kind as string);
         } else if (n.name === "styleBox") {
-          const p = n.props as StyleBoxProps<any>;
+          const p = n.props as StyleBoxProps;
           const rel = resolve(p.styleBoxRows);
           const { args } = hw.styleBoxes[chartCall.sb++] as { args: any };
           assertTuple(args.aFormat, `${stem}: styleBox aFormat`);
@@ -408,15 +409,16 @@ test("(b) the whole corpus parses, dispatches and reaches runTabular with legal 
     walk(doc.root);
   }
 
-  // DERIVED from the registry (Q25 round 1b), so a widget registered later cannot
-  // be silently missing from this pin: every registered name must occur, minus the
-  // two the WidgetCorpus generator does not draw (Layout.Widgets.Heading/Text,
-  // which no generated case uses).  The literal list this replaced had gone stale
-  // at crosstab/headline (J3g/J3i) and failed whenever target/widget-corpus existed.
-  const NOT_IN_CORPUS = new Set(["heading", "text"]);
+  // DERIVED from the GENERATED module (Q25 round 1b; WP-32), so a widget added in
+  // Ermine cannot be silently missing from this pin: every generated WidgetName must
+  // occur, minus the two the WidgetCorpus generator does not draw
+  // (Layout.Widgets.Heading/Text, which no generated case uses).  The literal list
+  // this replaced had gone stale at crosstab/headline (J3g/J3i) and failed whenever
+  // target/widget-corpus existed; (g-no-name-lists) refuses a literal list again.
+  const NOT_IN_CORPUS = new Set<string>(["heading", "text"]);
   assert.deepStrictEqual([...widgetNames].sort(),
-    Object.keys(defaultRegistry()).filter((n) => !NOT_IN_CORPUS.has(n)).sort(),
-    "every registered widget must occur in the corpus, and nothing else may");
+    Object.keys(WIDGET_PROP_SCHEMAS).filter((n) => !NOT_IN_CORPUS.has(n)).sort(),
+    "every generated widget must occur in the corpus, and nothing else may");
   assert.deepStrictEqual([...kinds].sort(), ["deferred", "inline"]);
   assert.ok(tokensResolved > 0, "no deferred relation was ever resolved");
   // A vacuity floor near the measured count.  MEASURED 929 on the default corpus

@@ -9,8 +9,9 @@ import { defaultRegistry } from "../src/index";
 import { legacyFormat, legacyFormatTuple, tableSkeleton, drilldownRows, tabularCell, NULL_DISPLAY } from "../src/legacy";
 import { defaultFormatEnv, formatDisplay } from "../src/format";
 import { newDom, stubHtmlWriter, inlineRelation } from "./harness";
-import type { CellFormat } from "../src/props";
-import { WIDGET_PROP_SCHEMAS } from "../src/generated";
+import type { CellFormat } from "../src/generated/widgets";
+import { WIDGET_PROP_SCHEMAS, type WidgetName } from "../src/generated/widgets";
+import type { Registry } from "../src/dispatcher";
 import { refuseDeferred } from "../src/host/page";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -443,17 +444,23 @@ test("(w-heading-text-invalid) malformed props -- a bare runtime value among the
   }
 });
 
-test("(w-generated-only) every registered name has a GENERATED schema, and no renderer carries one of its own", () => {
-  // Q25 (2026-09-23): the client's widget vocabulary is the typed one.  A name in
-  // the registry without an entry in the generated WIDGET_PROP_SCHEMAS -- or a
-  // renderer that brings its own `schema` -- fails here, by name.
-  const reg = defaultRegistry() as Record<string, object>;
+test("(w-generated-only) the registry's keys ARE the generated WidgetName keys, and no renderer carries a schema of its own", () => {
+  // Q25 (2026-09-23), typed by WP-32: `Registry` is `{ [K in WidgetName]:
+  // Widget<WidgetRegistry[K]> }`, so tsc already refuses a missing or extra key
+  // at `defaultRegistry` ((g-tsc) pins that).  This is the same equality at
+  // RUNTIME, structurally: no name is written here, both sides are read off the
+  // modules, and a renderer that brings its own `schema` fails by name.
+  const reg: Record<string, object> = defaultRegistry();
+  const generated = Object.keys(WIDGET_PROP_SCHEMAS).sort();
+  assert.ok(generated.length > 0, "the generated module declares no widget");
+  assert.deepStrictEqual(Object.keys(reg).sort(), generated);
   for (const [name, w] of Object.entries(reg)) {
-    assert.ok(WIDGET_PROP_SCHEMAS[name] !== undefined, `${name} is registered with no generated schema`);
+    assert.equal(typeof (w as { render?: unknown }).render, "function", `${name}'s renderer has no render`);
     assert.ok(!("schema" in w), `${name}'s renderer carries a schema of its own`);
   }
-  assert.deepStrictEqual(Object.keys(reg).sort(), Object.keys(WIDGET_PROP_SCHEMAS).sort());
-  assert.ok(reg["heading"] && reg["text"], "heading and text are registered");
+  // a type-level echo of the same: every generated name indexes the registry
+  const _everyName: { [K in WidgetName]: Registry[K] } = defaultRegistry();
+  void _everyName;
 });
 
 test("(w-sales-panel) the captured typed Sales document with the panel's refusing fetchData: every widget draws, no box", async () => {

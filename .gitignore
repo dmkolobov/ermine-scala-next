@@ -8,6 +8,9 @@ project/project/
 target/ermine-classpath
 client/node_modules/
 client/dist/
+# scratch directories check-fresh.js and test/generated.test.ts (g-tsc) make and delete; left only by a killed run
+client/.probe-*/
+client/.tsc-probe-*/
 .gate-cache/
 .mutation-runs/
 

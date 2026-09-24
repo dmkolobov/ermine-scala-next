@@ -15,7 +15,8 @@
 // generated zod describes one relation position inside one prop type, while this is
 // the vocabulary every widget shares.  src/generated is still the authority -- the
 // dispatcher validates props with it before anything here runs, and
-// test/wire.test.ts pins these declarations against the generated schema.
+// test/generated.test.ts `(g-wire)` pins these declarations against the generated
+// schema, at runtime and (mutual assignability) at compile time.
 
 import { z } from "zod";
 
@@ -139,25 +140,36 @@ export async function resolveRelation(rel: WireRelation, fetchData: FetchData): 
   return inline;
 }
 
+/** A props type AFTER `resolveRelations`: the same type with every deferred
+ *  relation arm removed, so each relation position is the inline arm.  The
+ *  generated props types (src/generated/widgets.ts) carry the WIRE relation, a
+ *  bare relation being `inline | deferred`; a renderer is handed
+ *  `Resolved<WidgetRegistry[K]>` (dispatcher.ts `Widget`), never a deferred one.
+ *  Structural, like `resolveRelations`: a widget added later needs nothing here. */
+export type Resolved<T> =
+  T extends { kind: "deferred"; token: string; expires: string } ? never
+  : T extends object ? { [K in keyof T]: Resolved<T[K]> }
+  : T;
+
 /** Deep-walks a props value and replaces every deferred relation in it with the
  *  inline one its token resolves to.  Structural, so a widget added later needs no
  *  change here and J3e's chart props resolve for free. */
-export async function resolveRelations<T>(props: T, fetchData: FetchData): Promise<T> {
+export async function resolveRelations<T>(props: T, fetchData: FetchData): Promise<Resolved<T>> {
   if (Array.isArray(props)) {
     const out = await Promise.all(props.map((v) => resolveRelations(v, fetchData)));
-    return out as unknown as T;
+    return out as unknown as Resolved<T>;
   }
   if (props !== null && typeof props === "object") {
     if (isWireRelation(props)) {
-      return (await resolveRelation(props, fetchData)) as unknown as T;
+      return (await resolveRelation(props, fetchData)) as unknown as Resolved<T>;
     }
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(props as Record<string, unknown>)) {
       out[k] = await resolveRelations(v, fetchData);
     }
-    return out as unknown as T;
+    return out as unknown as Resolved<T>;
   }
-  return props;
+  return props as Resolved<T>;
 }
 
 /** Index of a column by name, or -1. */

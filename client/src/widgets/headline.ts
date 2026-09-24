@@ -20,7 +20,7 @@
 // way a table cell does; `rowCount` is a count, not a measurement, so it is
 // printed as it arrives.
 
-import type { HeadlineProps } from "../props";
+import type { HeadlineProps } from "../generated/widgets";
 import { defaultFormatEnv, formatDisplay, type FormatEnv, type Formatted } from "../format";
 import type { Widget, WidgetContext } from "../dispatcher";
 
