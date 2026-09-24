@@ -1006,6 +1006,15 @@ const openedParamsFiles = new Set();
  * to say "ask again".
  */
 let firstPickTried = new Set();
+/**
+ * WP-34: THE PICKS THE SERVER HAS SAID TAKE NO PARAMETERS (`report : Node`,
+ * `report : Fetch Node`), learned from a first pick's `ermine/schema` answer.
+ * Such a pick renders with no params file and is never told to write one:
+ * `core.holdsParamsNotice` reads this. Forgotten with `firstPickTried`, so a
+ * report that gains a parameter is asked about again after a pick change,
+ * a restart or a recovery.
+ */
+let noParametersPicks = new Set();
 /** What we have already SAID about this pick's schema, once per reason. */
 let schemaNotices = new Set();
 /**
@@ -1032,6 +1041,7 @@ let revealNextRender = false;
 
 function forgetSchemaAttempts() {
   firstPickTried = new Set();
+  noParametersPicks = new Set();
   schemaNotices = new Set();
 }
 
@@ -1355,6 +1365,12 @@ async function firstPickSchemaAndWrite(attempt, paths) {
                      core.schemaProblemNotice(outcome.problem, paths.paramsPath));
     return core.firstPickResult({});
   }
+  // WP-34: a report with NO parameters. No skeleton, no schema file, no
+  // `.gitignore`, no document opened -- the render goes with `{}`.
+  if (outcome.noParameters) {
+    schemaNoticeOnce(attempt.pick, "no-parameters", core.noParametersNotice(attempt.label));
+    return core.firstPickResult({ noParameters: true });
+  }
   // ALWAYS THE SERVER'S FRESH ANSWER, NEVER THE FILE WE WROTE (the S1
   // review's D-1 obligation): `schemaFileFor` mints a root-level COPY of a
   // `$defs` entry that also describes a nested position, and a copy tracks
@@ -1431,6 +1447,11 @@ async function refreshSchemaFile(attempt, paths, why) {
   if (outcome.problem) {
     schemaNoticeOnce(attempt.pick, "refresh-" + outcome.problem.reason,
                      "could not refresh " + paths.schemaPath + ": " + outcome.problem.message);
+    return;
+  }
+  // WP-34: the report takes no parameters, so there is no schema to write.
+  if (outcome.noParameters) {
+    schemaNoticeOnce(attempt.pick, "refresh-no-parameters", core.noParametersNotice(attempt.label));
     return;
   }
   // **M-3 APPLIES HERE ABOVE ALL**: this is the ONE write reachable from an
@@ -2101,7 +2122,13 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
   }
 
   // Said only now, so nothing ever describes a report the user has left.
-  if (prepared.notice) paramsNoticeOnce(sentPick, prepared.notice.reason, prepared.notice.line);
+  // WP-34: EXCEPT the "no params file" line while it may be false -- for a
+  // report that takes no parameters it is advice to write a file the runner
+  // refuses. `core.holdsParamsNotice` decides; a held line is said below,
+  // once the first-pick branch knows, or never.
+  const heldNotice = core.holdsParamsNotice(prepared, firstPickTried.has(attempt.key),
+                                            noParametersPicks.has(attempt.key));
+  if (prepared.notice && !heldNotice) paramsNoticeOnce(sentPick, prepared.notice.reason, prepared.notice.line);
   if (prepared.read) {
     // A file that was read is a file that is there: forget that we once said
     // it was missing, so a LATER deletion is announced again.
@@ -2189,6 +2216,9 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
     firstPickTried.add(attempt.key);
     log(`preview: render ${mine} is yielding to the parameter schema (${order.why})`);
     const written = await firstPickSchemaAndWrite(attempt, prepared.paths);
+    // WP-34: the server said this report takes NO parameters. Nothing was
+    // written and nothing will be; this render goes with `{}`, below.
+    if (written.noParameters) noParametersPicks.add(attempt.key);
     if (written.wrote) {
       // **THIS RENDER IS SCHEDULED, NOT LEFT TO THE WATCHER (the S3 review's
       // M-4), AND IT CARRIES THIS RENDER'S OWN TRIGGER.**
@@ -2243,6 +2273,10 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
     // the `!!client` above reads as `no-client`. Both abandon.
   }
 
+  // WP-34: the held "no params file" line, now that it is known to be true.
+  if (heldNotice && !noParametersPicks.has(attempt.key)) {
+    paramsNoticeOnce(sentPick, prepared.notice.reason, prepared.notice.line);
+  }
   lastParamsSent = prepared.params;
   // M1: the latch the `Stopped` handler reads, cleared only on a settled
   // result below. It carries the params too, so a wedge is marked with what
@@ -3225,6 +3259,8 @@ async function writeSkeletonNow(attempt, paths, replace, existing) {
     return core.skeletonCommandResult({ abandoned: true });
   }
   if (outcome.problem) return say(outcome.problem.reason, outcome.problem.message);
+  // WP-34: nothing to write for a report that takes no parameters.
+  if (outcome.noParameters) return say("no-parameters", core.noParametersNotice(attempt.label));
   // ALWAYS THE SERVER'S FRESH ANSWER (the S1 review's D-1 obligation), and
   // the plan that carries the explicit-overwrite mode -- which writes
   // nothing without the permission `applyWritePlan` is given below.

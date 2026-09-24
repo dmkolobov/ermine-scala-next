@@ -514,7 +514,9 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     val head = "module %s where\n\nimport Builtin\nimport Int\nimport Json\nimport List\nimport Layout.Doc\n\n"
     val cases = List(
       ("RgPoly",   "report : a -> Node\nreport _ = rawWidget \"w\" 1\n",            "polymorphic"),
-      ("RgNotFn",  "report : Node\nreport = rawWidget \"w\" 1\n",                   "not"),
+      // WP-34: a non-function that is not a Node is not a report, and the
+      // refusal names the three shapes a report may have
+      ("RgNotFn",  "report : Int\nreport = 3\n",                                   "or a function to one, not Int"),
       ("RgWrongR", "report : Int -> Int\nreport n = n\n",                        "Layout.Doc.Node"),
       ("RgBadP",   "report : (Int -> Int) -> Node\nreport _ = rawWidget \"w\" 1\n", "function"),
       // J3f: a fetching report must still end in a Node
@@ -526,6 +528,49 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
       acc && ((st ?= 400) :| (m + " gave " + st + ": " + text)) &&
         (msg.contains(want) :| (m + ": message does not name " + want + ": " + msg))
     }
+  }
+
+  property("(b3z) WP-34: a Node or a Fetch Node is a report with NO parameters: {} or no params renders, anything else is a 400 at $.params") = secure {
+    def at(module: String, body: String): (Int, Option[String], String, String) = {
+      val (st, text) = render(runner, module, body)
+      val e = parsed(text).field("error").getOrElse(Json.jNull)
+      (st, e.field("path").flatMap(_.string), e.field("message").flatMap(_.string).getOrElse(""), text)
+    }
+    // the playtest's own fixture (F2): `report : Node`, unchanged
+    val sr = "Doc.SalesReport"
+    val withEmpty = at(sr, "{\"" + Request.Params + "\":{}}")
+    val without   = at(sr, "{}")
+    val withNull  = at(sr, "{\"" + Request.Params + "\":null}")
+    val withKey   = at(sr, "{\"" + Request.Params + "\":{\"fromDay\":\"2026-01-05\"}}")
+    val withInt   = at(sr, "{\"" + Request.Params + "\":3}")
+    val schema    = runner.paramSchema(sr, "report")
+    // a zero-parameter FETCH report: the value is the first step, not applied
+    val f = freshModule("RgZeroFetch")
+    writeModule(f, "module " + f + " where\n\nimport Builtin\nimport Int\nimport Json\nimport List\n" +
+                   "import Layout.Doc\nimport Layout.Fetch\n\nreport : Fetch Node\nreport = done (rawWidget \"w\" 3401)\n")
+    val fetched = at(f, "{}")
+    val fetchedKey = at(f, "{\"" + Request.Params + "\":{\"a\":1}}")
+    def ok(r: (Int, Option[String], String, String), what: String): Prop =
+      ((r._1 ?= 200) :| (what + " gave " + r._1 + ": " + r._4.take(300)))
+    def refused(r: (Int, Option[String], String, String), what: String, key: String): Prop =
+      ((r._1 ?= 400) :| (what + " gave " + r._1 + ": " + r._4.take(300))) &&
+        ((r._2 ?= Some("$." + Request.Params)) :| (what + " reported " + r._2)) &&
+        (r._3.contains("takes no parameters") :| (what + ": the message does not say so: " + r._3)) &&
+        (r._3.contains(key) :| (what + ": the message does not name " + key + ": " + r._3))
+    ok(withEmpty, "SalesReport with {}") && ok(without, "SalesReport with no params") &&
+      ok(withNull, "SalesReport with params null") &&
+      List("scorecard", "table", "axisChart", "pieChart").foldLeft(proved: Prop) { (acc, w) =>
+        acc && (withEmpty._4.contains("\"" + w + "\"") :| ("the document has no " + w + ": " + withEmpty._4.take(300)))
+      } &&
+      ((without._4 ?= withEmpty._4) :| "no params and {} rendered different documents") &&
+      refused(withKey, "SalesReport with a key", "fromDay") &&
+      (withKey._3.contains(sr + ".report") :| ("the refusal does not name the report: " + withKey._3)) &&
+      refused(withInt, "SalesReport with 3", "3") &&
+      ((schema.right.toOption.map(_.nospaces) ?= Some("{\"parameters\":false}")) :|
+        ("paramSchema of a zero-parameter report: " + schema.fold(_.body, _.nospaces))) &&
+      ok(fetched, "a zero-parameter Fetch Node") &&
+      (fetched._4.contains("3401") :| fetched._4.take(300)) &&
+      refused(fetchedKey, "a zero-parameter Fetch Node with a key", "\"a\"")
   }
 
   property("(b4) a report that throws is a 500, and the runner still serves the next request") = secure {

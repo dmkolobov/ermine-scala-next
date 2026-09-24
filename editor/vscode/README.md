@@ -57,8 +57,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.15.vsix
-code --install-extension ermine-lang-0.1.15.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.16.vsix
+code --install-extension ermine-lang-0.1.16.vsix
 ```
 
 `npm run package` does the same. Upgrading is the same command with the new
@@ -114,11 +114,10 @@ workspace symbol picker.
 
 ## Preview
 
-A **report** is a top-level binding whose type is `Params -> Node` or
-`Params -> Fetch Node`. The binding picker also offers a zero-parameter
-binding (`report : Node`), but the server refuses it at render with a 400,
-*"… is not a report: a report must be a function Params -> Node, not Node"*
-(playtest finding F2, see **0.1.15**). The preview renders one, on the
+A **report** is a top-level binding whose type is `Node`, `Params -> Node`,
+`Fetch Node` or `Params -> Fetch Node`. A `Node` or a `Fetch Node` is a report
+with **no parameters** (since 0.1.16, Q27): it renders with no params file, and
+the preview writes none for it. The preview renders one, on the
 server, in a second session of its own, and re-renders it when a file it
 depends on is saved — with no JVM restart and no build.
 
@@ -225,7 +224,8 @@ changing it restarts the server.
 ## Params files
 
 A report that takes parameters reads them from an ordinary file in your
-workspace:
+workspace (a report with no parameters, `report : Node`, has no params file
+and none is written for it; see **0.1.16**):
 
 ```
 <workspace folder>/.ermine/preview/<Module>/<binding>.params.json
@@ -446,6 +446,48 @@ a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
 
+### 0.1.16
+
+**F2 fixed (Q27, the user's decision): a report with no parameters previews.**
+Picking `core/src/test/resources/modules/Doc/SalesReport.e` → `report` (`report
+: Node`) used to answer 400 *"… is not a report: a report must be a function
+Params -> Node, not Node"*. The runner now treats a binding typed `Node` or
+`Fetch Node` as a report with no parameters: it is rendered as it is, with
+nothing applied to it. `SalesReport.e` is unchanged and draws its scorecard,
+table, bar chart and pie chart.
+
+- **No params file.** On the first pick the server's `ermine/schema` answers
+  `{"parameters": false}` instead of a JSON Schema, and the extension writes
+  nothing: no `<binding>.params.json`, no `<binding>.schema.json`, no
+  `.gitignore`, and no document is opened. The render goes with `{}`. The
+  output channel says *"… takes no parameters, so no params file is written
+  and it renders with none."* once, and the *"no params file at … Write one
+  there"* line is no longer said for such a report.
+- **Parameters are refused, not ignored.** A zero-parameter report accepts
+  `{}` or no `params` key; anything else is a 400 at `$.params`,
+  *"Doc.SalesReport.report takes no parameters; send {} or leave "params" out
+  (it was sent the key "fromDay")"*. A hand-made params file for it therefore
+  shows the refusal in the tab rather than a document that ignored it.
+- **Write Params Skeleton** on such a report says there is nothing to write.
+- A binding that is not a function and not a `Node` or `Fetch Node` is still
+  refused, now with *"… is not a report: a report is a Layout.Doc.Node, a
+  Layout.Fetch.Fetch Layout.Doc.Node, or a function to one, not Int"*.
+
+The extension changed (`preview-core.js`, `extension.js`), so this is a new
+`.vsix`; the server must be rebuilt too (`sbt core/compile core/copyResources`).
+**Install 0.1.16; the playtest checklist requires it.** An older extension
+(0.1.15) against the new server reads the marker as a schema and, on the first
+pick of such a report, writes THREE files: `.ermine/preview/.gitignore`,
+`<binding>.schema.json` holding the marker, and a `<binding>.params.json` of
+`null`, and it says the report "takes a `Json`". The render still succeeds,
+because `null` is accepted. Delete `.ermine/preview/<Module>/` after upgrading.
+
+A pick the preview has learned takes no parameters stays that way until you
+pick it again, or the language server restarts or recovers. If you give the
+report a parameter meanwhile, renders send `{}` and answer a 400 naming the
+missing field; re-pick the report (or run **Write Params Skeleton**, which asks
+the server afresh) to get its params file.
+
 ### 0.1.15
 
 The first two findings of the first real playtest (2026-09-23, VS Code with
@@ -469,7 +511,7 @@ https://*.vscode-cdn.net 'unsafe-eval'; style-src 'self'
 https://*.vscode-cdn.net 'unsafe-inline'; img-src 'self'
 https://*.vscode-cdn.net data:;` (pinned by a test).
 
-**F2, recorded, not fixed: a zero-parameter report is refused.** Picking
+**F2, recorded, not fixed here (fixed in 0.1.16): a zero-parameter report is refused.** Picking
 `core/src/test/resources/modules/Doc/SalesReport.e` → `report` (`report :
 Node`) answers 400 *"Doc.SalesReport.report is not a report: a report must be
 a function Params -> Node, not Node"*. The picker offers bare `Node` bindings on

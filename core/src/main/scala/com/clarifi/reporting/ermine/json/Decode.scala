@@ -116,10 +116,17 @@ object Decode {
     compile(ty).right.flatMap(_.apply(j))
 
   /** Split a report's type scheme `P -> R` (aliases expanded), for the
-    * runner: refuses a scheme that quantifies or mentions a type variable,
-    * and a type that is not a function.  Neither half is checked further;
-    * `P` goes to `entry`/`decode`, `R` is the runner's business. */
-  def reportSignature(ty: Type)(implicit s: SessionEnv): Either[Error, (Type, Type)] = {
+    * runner: refuses a scheme that quantifies or mentions a type variable.
+    * Neither half is checked further; `P` goes to `entry`/`decode`, `R` is
+    * the runner's business.
+    *
+    * WP-34 (Q27 option (i), decided 2026-09-24): a type that is NOT a
+    * function is a report with NO parameters, and answers `(None, t)`: the
+    * binding's value is the result itself and nothing is applied to it.
+    * Whether `t` is a `Node` or a `Fetch Node` is still the runner's
+    * business (`Runner.resultKind`), exactly as the codomain of a function
+    * is. */
+  def reportSignature(ty: Type)(implicit s: SessionEnv): Either[Error, (Option[Type], Type)] = {
     val c = new Compiler(s)
     val t = c.resolve(ty)
     t match {
@@ -133,8 +140,8 @@ object Decode {
                           (if (vs.length == 1) " " else "s ") +
                           vs.map(v => v.name.map(_.string).getOrElse("_")).mkString(", ")))
         else unfurl(t) match {
-          case (Arrow(_), p :: r :: Nil) => Right((c.resolve(p), c.resolve(r)))
-          case _ => Left(Error("$", "a report must be a function Params -> Node, not " + Schema.renderType(t)))
+          case (Arrow(_), p :: r :: Nil) => Right((Some(c.resolve(p)), c.resolve(r)))
+          case _                         => Right((None, t))
         }
     }
   }

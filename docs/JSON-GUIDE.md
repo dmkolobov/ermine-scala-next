@@ -1270,18 +1270,33 @@ Then one `vflow` of four widgets over that single relation:
 It lives under `modules/` rather than `doc/` because that is the directory the
 module loader searches on the classpath.
 
-**One honest correction.** The design note says `bin/ermine-serve` would answer
-`POST /report/Doc.SalesReport`. It does not, because the binding is
-`report : Node`, not a function:
+**A report with no parameters (WP-34, Q27 option (i), 2026-09-24).** The binding
+is `report : Node`, not a function, and that is a report: **a report is a `Node`,
+a `Fetch Node`, or a function `Params -> Node` / `Params -> Fetch Node`.** A
+`Node` or a `Fetch Node` takes NO parameters -- the runner applies it to
+nothing, its value is the document (or the first `Fetch` step). Its `params` is
+`{}` or absent; anything else is a 400 at `$.params`, because a parameter the
+report would silently ignore looks like it means something and does not:
 
 ```
 $ curl -s -w ' [%{http_code}]' localhost:8081/report/Doc.SalesReport -d '{}'
-{"error":{"path":"$","message":"Doc.SalesReport.report is not a report: a report must be a function Params -> Node, not Node"}} [400]
+{"version":1,"settings":{},"root":{"tag":"VFlow","children":[{"tag":"Widget","name":"scorecard",...},
+  {"tag":"Widget","name":"table",...},{"tag":"Widget","name":"axisChart",...},{"tag":"Widget","name":"pieChart",...}]}} [200]
+$ curl -s -w ' [%{http_code}]' localhost:8081/report/Doc.SalesReport -d '{"params":{"fromDay":"2026-01-05"}}'
+{"error":{"path":"$.params","message":"Doc.SalesReport.report takes no parameters; send {} or leave \"params\" out (it was sent the key \"fromDay\")"}} [400]
 ```
 
-The module is exercised through `sbt 'core/Test/runMain com.clarifi.reporting.SalesReportDoc <file>'`
-instead, which writes the document through `Write.doc` on a SQLite connection.
-Give it a `Params` argument if you want to serve it.
+(The document above is abbreviated. Both answers are `Runner`'s, MEASURED
+through the language server's `ermine/render` on 2026-09-24 and pinned by
+`TestRunner`'s `(b3z)`; `bin/ermine-serve` wraps the same `Runner` and was not
+itself run for this example.) Before WP-34 this was a 400, *"… is not a report:
+a report must be a function Params -> Node, not Node"*. A non-function that is
+not a `Node` or a `Fetch Node` is still refused: *"… is not a report: a report
+is a Layout.Doc.Node, a Layout.Fetch.Fetch Layout.Doc.Node, or a function to
+one, not Int"*.
+
+The module is also exercised through `sbt 'core/Test/runMain com.clarifi.reporting.SalesReportDoc <file>'`,
+which writes the document through `Write.doc` on a SQLite connection.
 
 ### A servable widget report
 
@@ -2126,7 +2141,7 @@ the people who built it; all of it is a surprise to a new reader.
 | **`Bubble`'s z value reads the COLOUR slot** | J3e #4 | Faithful to the legacy's own confusion (`hcutil.series` reads `sd[2]` = `row[3]`); a Bubble chart with a `colorColumn` sizes its bubbles by a colour string. |
 | **Modules never unload** | J3c #3 | A module a request names stays for the process's life and a working report is cached forever. A REFUSAL is not cached, so fixing a broken module and retrying works. |
 | **No CORS, no compression, sequential deferred fetches** | J3c, J3d #9 | Same-origin or proxy; a large inline document goes out uncompressed; the dispatcher resolves deferred relations one round trip at a time. |
-| **`Doc/SalesReport.e` is not servable** | measured here | Its binding is `report : Node`, not `Params -> Node`, so `POST /report/Doc.SalesReport` is a 400 (§8). The design note implies otherwise. |
+| ~~**`Doc/SalesReport.e` is not servable**~~ **FIXED by WP-34** | measured here | Its binding is `report : Node`; since WP-34 (Q27 option (i)) a `Node` or `Fetch Node` is a report with no parameters, so `POST /report/Doc.SalesReport` with `{}` renders (§8). |
 | **Log configuration** | measured here | `res/conf/log4j.prp` is absent, AND the log4j 1.2 API is a bridge over log4j 2, so the file is ignored without `-Dlog4j1.compatibility=true` (§9). |
 
 Two bugs OUTSIDE the JSON code that this work found and fixed, worth knowing

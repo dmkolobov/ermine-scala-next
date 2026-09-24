@@ -497,11 +497,12 @@ object TestDecode extends Properties("Ermine JSON Decode") {
     // the Json type takes anything, as `parse` would
     val anyDoc = "{\"a\": [1, 2.5, \"s\", true, null, {}]}"
     assert(same(ok("Json", anyDoc), Session.eval("maybe jnull id (parse \"" + anyDoc.replace("\"", "\\\"") + "\")", imps)._2).isEmpty)
-    // reportSignature splits P -> R and refuses the rest
-    assert(Decode.reportSignature(ty("Int -> String")).isRight)
-    assert(Decode.reportSignature(ty("Int")).isLeft)
+    // reportSignature splits P -> R; a non-function is a report with NO
+    // parameters (WP-34), whose result type the runner checks
+    assert(Decode.reportSignature(ty("Int -> String")).right.map(_._1.isDefined) == Right(true))
+    assert(Decode.reportSignature(ty("Int")).right.map(pr => (pr._1, Schema.renderType(pr._2))) == Right((None, "Int")))
     val (p, r) = Decode.reportSignature(Session.eval("[] : List Rep", imps)._1 match { case AppT(_, e) => e; case o => o })
-      .fold(e => sys.error(e.report), identity)
+      .fold(e => sys.error(e.report), pr => (pr._1.getOrElse(sys.error("no parameter type")), pr._2))
     assert(Schema.renderType(p) == "{..(|sfInt|)}" && Schema.renderType(r) == "List Int", p.toString + " / " + r)
     assert(Decode.reportSignature(Session.eval("polyRep", imps)._1).isLeft)
   }

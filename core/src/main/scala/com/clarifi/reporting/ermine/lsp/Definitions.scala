@@ -391,10 +391,13 @@ object Definitions {
     * list rather than erroring the whole request.
     *
     * IT IS A CANDIDATE LIST, as §3.2 says: "at most one `->`" admits a
-    * zero-argument `x : Node`, which `Runner` refuses at render with a 400
-    * naming the reason ("a report must be a function Params -> Node").  The
-    * picker offering one more binding than the runner will take is the safe
-    * direction; offering one FEWER would hide a real report. */
+    * zero-argument `x : Node`, and since WP-34 (Q27 option (i), 2026-09-24)
+    * the runner renders it as a report with NO parameters -- the picker and
+    * the runner now agree about it.  What the list still over-offers is a
+    * binding the runner refuses for another reason (a polymorphic signature,
+    * a parameter type with no JSON reading), each a 400 naming the reason.
+    * The picker offering one more binding than the runner will take is the
+    * safe direction; offering one FEWER would hide a real report. */
   private def isReportType(t: Type)(implicit su: scalaparsers.Supply): Boolean =
     try Runner.resultKind(codomain(t)).isDefined ||
         Runner.resultKind(codomain(t.nf)).isDefined

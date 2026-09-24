@@ -3717,13 +3717,18 @@ function shouldRefreshSchema(answer, trigger) {
  */
 function schemaOutcome(over) {
   const o = over && typeof over === "object" ? over : {};
-  const out = { schema: null, problem: null, abandoned: null };
+  const out = { schema: null, problem: null, abandoned: null, noParameters: false };
   if (o.abandoned !== undefined && o.abandoned !== null) {
     out.abandoned = o.abandoned;
     return out;
   }
   if (o.problem !== undefined && o.problem !== null) {
     out.problem = o.problem && o.problem.problem ? o.problem.problem : o.problem;
+    return out;
+  }
+  // WP-34: the report takes NO parameters, so there is no schema and no file.
+  if (o.noParameters === true) {
+    out.noParameters = true;
     return out;
   }
   if (isPlainObject(o.schema)) {
@@ -3768,7 +3773,66 @@ function schemaAnswerOutcome(answer) {
     return schemaOutcome({ problem: problem("error",
       "The language server could not work out the parameter schema: " + why) });
   }
+  if (isNoParametersAnswer(answer)) return schemaOutcome({ noParameters: true });
   return schemaOutcome({ schema: answer });
+}
+
+/**
+ * WP-34 (Q27 option (i)): IS THIS `ermine/schema` ANSWER "THIS REPORT TAKES
+ * NO PARAMETERS"?
+ *
+ * A binding typed `Node` or `Fetch Node` is a report with no parameters: the
+ * runner renders it with `{}` or with no `params` at all and refuses any
+ * key. Its schema answer is the marker `{"parameters": false}`
+ * (`json/Runner.scala`'s `Runner.NoParameters`) and NOT a JSON Schema
+ * document -- not even the schema of `{}` -- so that no path in this file can
+ * write a params skeleton or a `<binding>.schema.json` from it: a params file
+ * for a report that takes nothing is a file that looks like it means
+ * something and does not.
+ *
+ * EXACTLY the marker: one key, the literal `false`. The exporter never emits
+ * a root `parameters` keyword, so a real schema cannot be mistaken for it;
+ * anything else is read as a schema, as before.
+ */
+function isNoParametersAnswer(answer) {
+  return isPlainObject(answer) && answer.parameters === false && Object.keys(answer).length === 1;
+}
+
+/** The one line said when a first pick learns that its report takes no
+  * parameters: what the preview is doing INSTEAD of writing a file. */
+function noParametersNotice(label) {
+  return printable(label) + " takes no parameters, so no params file is written and it renders with none.";
+}
+
+/**
+ * WP-34: IS THE "no params file" NOTICE HELD BACK FROM THIS RENDER'S READ?
+ *
+ * `prepareParams` says "no params file at ... Write one there to give this
+ * report its parameters" whenever the file is missing -- which, for a report
+ * that takes NO parameters, is advice to write a file the runner would
+ * refuse. So the notice waits for what the server says:
+ *
+ *   - the pick is KNOWN to take no parameters      -> held, and never said;
+ *   - the first-pick branch is about to ask         -> held until its
+ *     (no file, a params path, not tried yet)          answer, and said then
+ *                                                      only if the answer was
+ *                                                      NOT "no parameters";
+ *   - anything else (a file, a refusal, tried)      -> said now, as before.
+ *
+ * The second arm's condition is `schemaOrder`'s own, asked of the SAME
+ * function the branch asks, so the two cannot disagree about which renders
+ * yield to the schema.
+ *
+ * @param {object} prepared `preparedParams`'s answer
+ * @param {boolean} tried `firstPickTried.has(attempt.key)`
+ * @param {boolean} knownNoParameters `noParametersPicks.has(attempt.key)`
+ */
+function holdsParamsNotice(prepared, tried, knownNoParameters) {
+  const p = prepared && typeof prepared === "object" ? prepared : {};
+  if (!p.notice || p.notice.reason !== PREPARED_MISSING) return false;
+  if (knownNoParameters === true) return true;
+  if (tried === true) return false;
+  return schemaOrder(p.paths, true).first === "schema";
 }
 
 /** A JSON-RPC error or a transport rejection, in the SAME shape, so both
@@ -4951,7 +5015,8 @@ function schemaAbandoned(verdict) {
  */
 function firstPickResult(over) {
   const o = over && typeof over === "object" ? over : {};
-  return { wrote: o.wrote === true, raced: o.raced === true, abandoned: o.abandoned === true };
+  return { wrote: o.wrote === true, raced: o.raced === true, abandoned: o.abandoned === true,
+           noParameters: o.noParameters === true };
 }
 
 /** `writeIfDifferent`'s answer, for the same reason. */
@@ -6084,6 +6149,10 @@ module.exports = {
   mayUseSchemaAnswer,
   schemaFileNeedsWrite,
   paramsWritePlan,
+  // WP-34: a report with no parameters.
+  isNoParametersAnswer,
+  noParametersNotice,
+  holdsParamsNotice,
   paramsWrittenNotice,
   schemaProblemNotice,
   schemaNoticeKey,

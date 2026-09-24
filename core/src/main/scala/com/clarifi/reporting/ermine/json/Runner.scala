@@ -467,6 +467,8 @@ final class Runner(val cfg: RunnerConfig) {
   /** ONE PATH (J3g), ONE LOOP (J3h).  A report is `Params -> Fetch Node`; a
     * report typed `Params -> Node` is read as `done` of its value, so the
     * difference is in the FIRST STEP'S VALUE, not in the report's type.
+    * WP-34: a report with NO parameters (`Node`, `Fetch Node`) is the same
+    * loop with nothing applied -- its value is the first step's value.
     *
     * Decode, then take that first step -- apply the report to its parameters
     * and force the result -- under `evalLock` and BEFORE `cfg.run.run` opens a
@@ -485,8 +487,14 @@ final class Runner(val cfg: RunnerConfig) {
     report(module, binding).right.flatMap { rep =>
       val wcfg = WriteConfig(default = req.default, strategy = req.strategy,
                              threshold = req.threshold, clock = cfg.clock)
-      decode(rep, req).right.flatMap { v =>
-        evalStep(rep, () => Runtime.swhnf(rep.fn).apply1(v), 1, wcfg).right.flatMap(ss => drive(ss, out, wcfg))
+      decode(rep, req).right.flatMap { arg =>
+        // WP-34: a report with NO parameters is not applied to anything --
+        // its value IS the `Node` or the `Fetch Node` (`Report.decoder`).
+        val first: () => Runtime = arg match {
+          case Some(v) => () => Runtime.swhnf(rep.fn).apply1(v)
+          case None    => () => rep.fn
+        }
+        evalStep(rep, first, 1, wcfg).right.flatMap(ss => drive(ss, out, wcfg))
       }
     }
 
@@ -540,9 +548,17 @@ final class Runner(val cfg: RunnerConfig) {
   def paramSchema(module: String, binding: String): Either[RunError, Json] =
     evalLock.synchronized {
       report(module, binding).right.flatMap { rep =>
-        Schema.exportType(rep.paramTy, module)(env).left.map { e =>
-          Failed("the parameter type " + Schema.renderType(rep.paramTy) + " of " + module + "." +
-                 binding + " has no JSON schema: " + e.message, Some(e.path))
+        rep.paramTy match {
+          // WP-34: a report with no parameters has no parameter type to
+          // export, and says so in a shape no schema document has
+          // (`Runner.NoParameters`), so a client cannot mistake it for one
+          // and write a params skeleton from it.
+          case None     => Right(Runner.NoParameters)
+          case Some(pt) =>
+            Schema.exportType(pt, module)(env).left.map { e =>
+              Failed("the parameter type " + Schema.renderType(pt) + " of " + module + "." +
+                     binding + " has no JSON schema: " + e.message, Some(e.path))
+            }
         }
       }
     }
@@ -855,7 +871,21 @@ final class Runner(val cfg: RunnerConfig) {
               }
             evaluated.right.flatMap { case (ty, fn) =>
               Decode.reportSignature(ty).left.map(e => signatureRefusal(module, binding, e.message)).right.flatMap {
-                case (paramTy, resultTy) =>
+                // WP-34 (Q27 option (i)): not a function -- a report with NO
+                // parameters when it is a `Node` or a `Fetch Node`, and
+                // otherwise not a report, with the three shapes a report may
+                // have named.
+                case (None, resultTy) =>
+                  resultKind(resultTy) match {
+                    case None =>
+                      Left(signatureRefusal(module, binding,
+                                            "a report is a " + NodeModule + ".Node, a " +
+                                            FetchModule + ".Fetch " + NodeModule + ".Node, or a function " +
+                                            "to one, not " + Schema.renderType(resultTy)))
+                    case Some(_) =>
+                      Right(new Report(module, binding, None, resultTy, None, fn))
+                  }
+                case (Some(paramTy), resultTy) =>
                   resultKind(resultTy) match {
                     case None =>
                       Left(signatureRefusal(module, binding,
@@ -867,7 +897,7 @@ final class Runner(val cfg: RunnerConfig) {
                         BadRequest("$." + Request.Params,
                                    "the parameter type " + Schema.renderType(paramTy) +
                                    " of " + module + "." + binding + " has no JSON reading: " + e.report)
-                      }.right.map(d => new Report(module, binding, paramTy, resultTy, d, fn))
+                      }.right.map(d => new Report(module, binding, Some(paramTy), resultTy, Some(d), fn))
                   }
               }
             }
@@ -878,8 +908,23 @@ final class Runner(val cfg: RunnerConfig) {
   private def signatureRefusal(module: String, binding: String, why: String): RunError =
     BadRequest("$", module + "." + binding + " is not a report: " + why)
 
-  private def decode(rep: Report, req: Request): Either[RunError, Runtime] =
-    rep.decoder(req.params).left.map(e => BadRequest("$." + Request.Params + e.path.substring(1), e.message))
+  /** The argument the report is applied to, or `None` for a report with no
+    * parameters (WP-34), which accepts exactly an absent `params` (read as
+    * `null`, `Request.parse`) or the empty object `{}`: anything else is a
+    * 400 at `$.params` naming that the report takes none, because a value
+    * the report would silently ignore is a params file that looks like it
+    * means something and does not. */
+  private def decode(rep: Report, req: Request): Either[RunError, Option[Runtime]] =
+    rep.decoder match {
+      case Some(d) =>
+        d(req.params).left.map(e => BadRequest("$." + Request.Params + e.path.substring(1), e.message))
+                     .right.map(Some(_))
+      case None =>
+        if (Runner.noParams(req.params)) Right(None)
+        else Left(BadRequest("$." + Request.Params,
+                             rep.module + "." + rep.binding + " takes no parameters; send {} or leave \"" +
+                             Request.Params + "\" out" + Runner.noParamsGot(req.params)))
+    }
 
   /** Run a step stream on ONE connection (J3h): the pure path's document
     * steps, or the `Call` the first evaluation step asked for and everything
@@ -975,11 +1020,14 @@ final class Runner(val cfg: RunnerConfig) {
       Data(ConsCon, Array(Prim(r.map { case (c, v) => (c, Runtime.fromPrimExpr(v)) }), acc))
     }
 
+  /** `paramTy` and `decoder` are `None` together for a report with no
+    * parameters (WP-34): `fn` is then the `Node` or `Fetch Node` itself and
+    * `render` applies it to nothing. */
   private final class Report(val module: String,
                              val binding: String,
-                             val paramTy: Type,
+                             val paramTy: Option[Type],
                              val resultTy: Type,
-                             val decoder: Decode.Decoder,
+                             val decoder: Option[Decode.Decoder],
                              val fn: Runtime)
 }
 
@@ -1004,6 +1052,29 @@ object Runner {
     * One lock, therefore, not one per instance: a second runner (a second
     * tenant, or a test fixture) is serialised against the first. */
   private[json] val evalLock = new Object
+
+  /** WP-34: `paramSchema`'s answer for a report with NO parameters
+    * (`report : Node`, `report : Fetch Node`).  NOT a JSON Schema document
+    * -- not the schema of `{}` either -- on purpose: every document the
+    * exporter emits is something a client may write a params skeleton from,
+    * and a report that takes nothing has no params file to write.  The
+    * editor reads the marker (`preview-core.js`'s `schemaAnswerOutcome`)
+    * and renders with no params file and no notice about one
+    * (JSON-WIDGET-PLAYGROUND §4, `ermine/schema`). */
+  val NoParameters: Json = Json.obj("parameters" -> Json.jBool(false))
+
+  /** What a report with no parameters accepts as its `params`: absent
+    * (`Request.parse` reads that as `null`) or the empty object. */
+  private[json] def noParams(j: Json): Boolean =
+    j.isNull || (j.isObject && j.objectFieldsOrEmpty.isEmpty)
+
+  /** The tail of the refusal: the keys that were sent, or the value's kind. */
+  private[json] def noParamsGot(j: Json): String =
+    if (j.isObject) {
+      val ks = j.objectFieldsOrEmpty
+      " (it was sent the key" + (if (ks.length == 1) " " else "s ") + ks.take(5).map("\"" + _ + "\"").mkString(", ") +
+        (if (ks.length > 5) ", ..." else "") + ")"
+    } else " (it was sent " + j.nospaces.take(60) + ")"
 
   /** How many failed-to-load modules a `Runner` remembers (Q4, see
     * `pendingLoad`).  Small on purpose: the set exists so that ONE broken

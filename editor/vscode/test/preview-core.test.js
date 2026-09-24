@@ -6866,6 +6866,10 @@ function firstPickModel(opts) {
   };
   m.notices = [];
   m.firstPickTried = new Set();
+  // WP-34: the glue's `noParametersPicks`, and the `paramsNoticeOnce` lines
+  // (reasons only) this model says, where the glue says them.
+  m.noParametersPicks = new Set();
+  m.paramsNotices = [];
   m.revealNextRender = false;
   m.reveals = [];
   m.today = TODAY;
@@ -6886,6 +6890,8 @@ function firstPickModel(opts) {
     // used to wrap the rejection itself and mint `{abandoned: still}` as a
     // literal, which is M-1's class with the sign reversed.
     if (reply && reply.__reject) return core.schemaRequestFailure(reply.err);
+    // WP-34's reverse mutant: the marker read as a schema, as 0.1.15 did.
+    if (o.mutantNoParamsAsSchema) return core.schemaOutcome({ schema: reply });
     const still = o.mutantNoSchemaGap
       ? { send: true }
       : core.mayUseSchemaAnswer(
@@ -6951,6 +6957,11 @@ function firstPickModel(opts) {
       return core.firstPickResult({ abandoned: true });
     }
     if (outcome.problem) { notice(outcome.problem.reason, outcome.problem.message); return core.firstPickResult({}); }
+    // WP-34: a report with NO parameters -- nothing written, nothing opened.
+    if (outcome.noParameters) {
+      notice("no-parameters", core.noParametersNotice(attempt.label));
+      return core.firstPickResult({ noParameters: true });
+    }
     // THE FRESH ANSWER, ALWAYS (the S1 review's D-1 obligation). The mutant
     // feeds the file back off the disk instead.
     const source = o.mutantStaleSchema && m.disk.read(paths.schemaPath) !== null
@@ -7020,6 +7031,11 @@ function firstPickModel(opts) {
       if (mine === m.generation) m.renderInFlight = false;
       return;
     }
+    // WP-34: the "no params file" line is HELD while it may be false.
+    const heldNotice = o.mutantNeverHoldNotice
+      ? false
+      : core.holdsParamsNotice(prepared, m.firstPickTried.has(attempt.key), m.noParametersPicks.has(attempt.key));
+    if (prepared.notice && !heldNotice) m.paramsNotices.push(prepared.notice.reason);
     if (prepared.refusal) {
       const refusal = core.paramsRefusalAnswer(prepared.refusal, prepared.path, mine);
       m.lastAnswer = refusal;
@@ -7046,6 +7062,7 @@ function firstPickModel(opts) {
     if (order.first === "schema" && !m.firstPickTried.has(attempt.key)) {
       m.firstPickTried.add(attempt.key);
       const written = await m.firstPickSchemaAndWrite(attempt, prepared.paths);
+      if (written.noParameters) m.noParametersPicks.add(attempt.key);
       if (written.wrote) {
         // M-4: the render is SCHEDULED, carrying THIS render's own trigger,
         // instead of being left to an event nobody has ever seen fire.
@@ -7066,6 +7083,7 @@ function firstPickModel(opts) {
       }
     }
 
+    if (heldNotice && !m.noParametersPicks.has(attempt.key)) m.paramsNotices.push(prepared.notice.reason);
     m.lastParamsSent = prepared.params;
     m.inFlight = { generation: mine, pick: sentPick, params: prepared.params };
     m.sent.push(core.renderRequest(attempt, prepared.params));
@@ -7092,6 +7110,10 @@ function firstPickModel(opts) {
     if (outcome.problem) {
       notice("refresh-" + outcome.problem.reason,
              "could not refresh " + paths.schemaPath + ": " + outcome.problem.message);
+      return;
+    }
+    if (outcome.noParameters) {
+      notice("refresh-no-parameters", core.noParametersNotice(attempt.label));
       return;
     }
     if (!o.mutantNoSymlinkCheck) {
@@ -8183,13 +8205,14 @@ test("S3 M-1: the other three glue shapes are minted once too", () => {
     assert.strictEqual(typeof out.existed, "boolean");
   }
   assert.deepStrictEqual(core.schemaAbandoned({ reason: "pick-changed", why: "x" }),
-                         { schema: null, problem: null, abandoned: { reason: "pick-changed", why: "x" } });
+                         { schema: null, problem: null, abandoned: { reason: "pick-changed", why: "x" },
+                           noParameters: false });
   assert.strictEqual(core.schemaAbandoned(undefined).abandoned.reason, "pick-cleared");
   // D-1's builder audit: the two shapes that were still raw literals on BOTH
   // sides, which is M-1's class once more.
-  assert.deepStrictEqual(core.firstPickResult({}), { wrote: false, raced: false, abandoned: false });
+  assert.deepStrictEqual(core.firstPickResult({}), { wrote: false, raced: false, abandoned: false, noParameters: false });
   assert.deepStrictEqual(core.firstPickResult({ wrote: true, raced: true }),
-                         { wrote: true, raced: true, abandoned: false });
+                         { wrote: true, raced: true, abandoned: false, noParameters: false });
   for (const junk of [undefined, null, 7, { wrote: "yes" }]) {
     const out = core.firstPickResult(junk);
     assert.strictEqual(typeof out.wrote, "boolean", JSON.stringify(junk));
@@ -9340,6 +9363,11 @@ function commandModel(opts) {
       return core.skeletonCommandResult({ abandoned: true });
     }
     if (outcome.problem) return say(outcome.problem.reason, outcome.problem.message);
+    // WP-34, the glue's arm (`extension.js` `writeSkeletonNow`). The mutant
+    // is the arm deleted (the review's R5).
+    if (outcome.noParameters && !o.mutantNoCommandNoParamsArm) {
+      return say("no-parameters", core.noParametersNotice(attempt.label));
+    }
     const plan = core.skeletonCommandPlan(paths, outcome.schema, m.today, replace === true);
     if (plan.problem) return say(plan.problem.reason, plan.problem.message);
     if (!o.mutantNoSymlinkCheck) {
@@ -12791,4 +12819,221 @@ test("model = glue (WP-11): the model's view builder passes EXACTLY the glue's f
     if (Object.prototype.hasOwnProperty.call(LEGIT, line)) assert.strictEqual(mm[n], LEGIT[line], "field " + key(line));
     else assert.strictEqual(mm[n].replace(/\bm\./g, ""), line, "field " + key(line) + ": the model's value is not the glue's");
   });
+});
+
+// ------------------------------------------- WP-34: a report with no parameters
+//
+// Q27 option (i), decided 2026-09-24: a binding typed `Node` or `Fetch Node`
+// is a report with NO parameters. The runner renders it with `{}` or with no
+// `params` and refuses any key; `ermine/schema` answers the marker
+// `{"parameters": false}` (`json/Runner.scala`'s `Runner.NoParameters`),
+// MEASURED from one bin/ermine-lsp boot on `Doc/SalesReport.e` (WP-34's
+// IMPL-REPORT). The extension writes NOTHING for it and says no "no params
+// file" line about it.
+
+const NO_PARAMETERS = { parameters: false };
+const SALES_REPORT_PICK = core.makePick(
+  "file:///w/doc/SalesReport.e", "/w/doc/SalesReport.e", "report", "Doc.SalesReport", ["/w/doc"]);
+
+test("WP-34: the marker is read as 'no parameters', and ONLY the exact marker", () => {
+  const out = core.schemaAnswerOutcome(NO_PARAMETERS);
+  assert.deepStrictEqual(out, { schema: null, problem: null, abandoned: null, noParameters: true });
+  assert.strictEqual(core.isNoParametersAnswer(NO_PARAMETERS), true);
+  // a real schema, even one that happens to mention the word, is a schema
+  for (const schema of [SALES_SCHEMA, { parameters: false, type: "object" }, { parameters: "false" },
+                        { parameters: true }, { type: "object", properties: {}, additionalProperties: false }]) {
+    assert.strictEqual(core.isNoParametersAnswer(schema), false, JSON.stringify(schema));
+    const o = core.schemaAnswerOutcome(schema);
+    assert.strictEqual(o.noParameters, false, JSON.stringify(schema));
+    assert.deepStrictEqual(o.schema, schema);
+  }
+  // an error beside it is still an error: the failure shape wins
+  assert.strictEqual(core.schemaAnswerOutcome({ error: "boom", parameters: false }).problem.reason, "error");
+  for (const junk of [null, undefined, 7, [], "x"]) assert.strictEqual(core.isNoParametersAnswer(junk), false);
+  assert.match(core.noParametersNotice("Doc.SalesReport.report"),
+               /^Doc\.SalesReport\.report takes no parameters, so no params file is written/);
+});
+
+test("WP-34: the 'no params file' line is held exactly while the schema may say 'no parameters'", () => {
+  const paths = core.paramsPaths(SALES_REPORT_PICK, "/w");
+  assert.ok(paths && !paths.problem, JSON.stringify(paths));
+  const missing = core.preparedParams(paths, { kind: core.PREPARED_MISSING });
+  const read = core.preparedParams(paths, { kind: core.PREPARED_READ, params: {}, warnings: [] });
+  const noPath = core.preparedParams({ problem: { reason: "outside", message: "x" } },
+                                     { kind: core.PREPARED_PATH_PROBLEM });
+  // [prepared, tried, knownNoParameters] -> held?
+  const table = [
+    [missing, false, false, true],    // the first-pick branch is about to ask
+    [missing, true,  false, false],   // it asked and the answer was not the marker
+    [missing, true,  true,  true],    // known: never said
+    [missing, false, true,  true],
+    [read,    false, false, false],   // no notice at all
+    [read,    false, true,  false],
+    [noPath,  false, false, false],   // a path problem's notice is said as before
+    [noPath,  false, true,  false],
+  ];
+  for (const [p, tried, known, want] of table) {
+    assert.strictEqual(core.holdsParamsNotice(p, tried, known), want,
+                       JSON.stringify([p.notice && p.notice.reason, tried, known]));
+  }
+  // the second arm is `schemaOrder`'s own condition
+  assert.strictEqual(core.schemaOrder(missing.paths, true).first, "schema");
+  for (const junk of [undefined, null, 7, {}]) assert.strictEqual(core.holdsParamsNotice(junk, false, false), false);
+});
+
+/** A first pick of `Doc.SalesReport.report` through the S3 model, answered
+  * with the marker; the render that follows is answered ok. */
+async function zeroParamFirstPick(opts) {
+  const m = firstPickModel(opts);
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  m.answerSchema(0, NO_PARAMETERS);
+  await flush();
+  return m;
+}
+
+test("WP-34 ASYNC: the first pick of a zero-parameter report writes NOTHING and renders with {}", async () => {
+  const m = await zeroParamFirstPick();
+  assert.strictEqual(m.schemas.length, 1, "one ermine/schema");
+  assert.strictEqual(m.disk.files.size, 0, "no params file, no schema file, no .gitignore");
+  assert.deepStrictEqual(m.disk.creates, []);
+  assert.deepStrictEqual(m.disk.writes, []);
+  assert.deepStrictEqual(m.opened, [], "no params document is opened");
+  assert.deepStrictEqual(m.notices.map((n) => n.reason), ["no-parameters"]);
+  assert.deepStrictEqual(m.paramsNotices, [], "and NO 'no params file ... write one' line");
+  assert.strictEqual(m.scheduled.length, 0, "nothing was written, so nothing is scheduled");
+  assert.strictEqual(m.sent.length, 1, "THIS render goes, with the inline {}");
+  assert.deepStrictEqual(m.sent[0].params, {});
+  assert.strictEqual(m.reveals[0].reveal, true, "and the tab the pick asked for is revealed");
+  m.answerWith(0, { ok: true, generation: m.generation, document: { version: 1, root: {} } });
+  await flush();
+
+  // A later render (a save): no second schema, still no line, still `{}`.
+  m.renderNow("invalidated", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.readMissing(1);
+  await flush();
+  assert.strictEqual(m.schemas.length, 1, "it is not asked again");
+  assert.deepStrictEqual(m.paramsNotices, [], "and the line is never said for it");
+  assert.strictEqual(m.sent.length, 2);
+  assert.deepStrictEqual(m.sent[1].params, {});
+});
+
+test("WP-34 ASYNC: a report WITH parameters whose schema fails still hears the 'no params file' line, once", async () => {
+  const m = firstPickModel();
+  m.renderNow("the report was picked", true, core.TRIGGER_EXPLICIT);
+  await flush();
+  m.readMissing(0);
+  await flush();
+  assert.deepStrictEqual(m.paramsNotices, [], "held while the schema is asked");
+  m.answerSchema(0, { error: "boom" });
+  await flush();
+  assert.deepStrictEqual(m.paramsNotices, ["missing"], "said once the answer is known not to be the marker");
+  assert.strictEqual(m.sent.length, 1);
+  m.answerWith(0, { ok: true, generation: m.generation, document: {} });
+  await flush();
+  m.renderNow("invalidated", false, core.TRIGGER_INVALIDATED);
+  await flush();
+  m.readMissing(1);
+  await flush();
+  assert.deepStrictEqual(m.paramsNotices, ["missing", "missing"],
+                         "and at the read of every later render, as before (the glue's once-per-pick dedupe is " +
+                         "paramsNoticeOnce's)");
+});
+
+test("WP-34 ASYNC: the D8 refresh of a zero-parameter report with a hand-made params file writes no schema file", async () => {
+  const disk = diskModel({ files: [["/w/.ermine/preview/Sales/report.params.json", "{}"]] });
+  const m = firstPickModel({ disk });
+  const attempt = core.renderAttempt(m.generation, m.picked, m.clientEpoch, m.stopCount, 0);
+  const done = m.refreshSchemaFile(attempt, SALES_PATHS, "test");
+  await flush();
+  m.answerSchema(0, NO_PARAMETERS);
+  await done;
+  assert.deepStrictEqual(disk.writes, [], "no <binding>.schema.json from the marker");
+  assert.strictEqual(disk.read("/w/.ermine/preview/Sales/report.schema.json"), null);
+  assert.deepStrictEqual(m.notices.map((n) => n.reason), ["refresh-no-parameters"]);
+});
+
+test("WP-34 MUTANT: reading the marker as a schema (0.1.15's behaviour) writes a params skeleton", async () => {
+  const m = await zeroParamFirstPick({ mutantNoParamsAsSchema: true });
+  assert.ok(m.disk.creates.length > 0,
+            "the mutant must write something, or the WP-34 test above is vacuous: " + JSON.stringify(m.disk.creates));
+  assert.ok(m.disk.creates.some((p) => /report\.params\.json$/.test(p)), JSON.stringify(m.disk.creates));
+});
+
+test("WP-34 MUTANT: never holding the line says 'write a params file' about a report that takes none", async () => {
+  const m = await zeroParamFirstPick({ mutantNeverHoldNotice: true });
+  assert.deepStrictEqual(m.paramsNotices, ["missing"], "the mutant says the false line");
+});
+
+test("glue pins (WP-34): every ermine/schema consumer handles the marker, and the line is held", () => {
+  const fsMod = require("node:fs");
+  const src = codeOf(fsMod.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8"));
+  const pin = (what, fix) =>
+    "source pin (test/preview-core.test.js): extension.js changed shape — " + what +
+    ". If you meant it, update this pin; the behaviour it protects is " + fix;
+  const body = (from, to) => src.slice(src.indexOf(from), src.indexOf(to, src.indexOf(from) + 1));
+  const first = body("async function firstPickSchemaAndWrite(", "async function refreshSchemaFile(");
+  const refresh = body("async function refreshSchemaFile(", "async function refreshSchemaFor(");
+  const command = body("async function writeSkeletonNow(", "\nasync function ");
+  const why = "WP-34: a report with no parameters gets no params file, no schema file and no skeleton";
+  for (const [name, text] of [["firstPickSchemaAndWrite", first], ["refreshSchemaFile", refresh],
+                              ["writeSkeletonNow", command]]) {
+    const at = text.indexOf("if (outcome.noParameters)");
+    const problem = text.indexOf("if (outcome.problem)");
+    assert.ok(at > 0 && problem > 0 && at > problem, pin(name + " no longer returns on outcome.noParameters, " +
+                                                     "right after the problem arm", why));
+    assert.ok(at < text.indexOf("outcome.schema") || text.indexOf("outcome.schema") < 0,
+              pin(name + " reads outcome.schema before the noParameters arm", why));
+  }
+  assert.ok(/return core\.firstPickResult\(\{ noParameters: true \}\);/.test(first),
+            pin("the first pick does not report noParameters to renderNow", why));
+  const renderBody = src.slice(src.indexOf("async function renderNow("), src.indexOf("async function showAnswer("));
+  const held = renderBody.indexOf("const heldNotice = core.holdsParamsNotice(prepared, firstPickTried.has(attempt.key),");
+  const said = renderBody.indexOf("if (prepared.notice && !heldNotice) paramsNoticeOnce(");
+  const learn = renderBody.indexOf("if (written.noParameters) noParametersPicks.add(attempt.key);");
+  const late = renderBody.indexOf("if (heldNotice && !noParametersPicks.has(attempt.key)) {");
+  const latch = renderBody.indexOf("inFlightRender = {");
+  assert.ok(held > 0 && said > held && learn > said && late > learn && late < latch,
+            pin("renderNow's held 'no params file' line is not held, learned and said in that order before the wire",
+                "WP-34: no advice to write a params file for a report that takes none"));
+  assert.ok(/noParametersPicks = new Set\(\);\s*schemaNotices = new Set\(\);/.test(
+              body("function forgetSchemaAttempts(", "\n}")),
+            pin("forgetSchemaAttempts no longer forgets noParametersPicks",
+                "that a report which GAINS a parameter is asked about again"));
+});
+
+test("WP-34 ASYNC (review M1): Write Params Skeleton on a zero-parameter report writes NOTHING and says so", async () => {
+  const run1 = async (opts, withFile) => {
+    const disk = withFile ? diskModel({ files: [[PARAMS_PATH, COMMITTED]] }) : diskModel();
+    const m = commandModel(Object.assign({ disk }, opts));
+    const run = m.writeParamsSkeleton();
+    await flush();
+    if (withFile) { m.answerModal(0, core.SKELETON_REPLACE); await flush(); }
+    m.answerSchema(0, NO_PARAMETERS);
+    const result = await run;
+    return { m, disk, result };
+  };
+  for (const withFile of [false, true]) {
+    const what = withFile ? "with a params file" : "with no params file";
+    const { m, disk, result } = await run1({}, withFile);
+    assert.strictEqual(result.wrote, false, what);
+    assert.strictEqual(result.problem.reason, "no-parameters", what);
+    assert.strictEqual(result.problem.message, core.noParametersNotice(m.picked ? core.renderAttempt(
+      m.generation, m.picked, m.clientEpoch, m.stopCount, 0).label : ""), what);
+    assert.match(result.problem.message, /takes no parameters/, what);
+    assert.deepStrictEqual(disk.writes, [], what + ": nothing written");
+    assert.deepStrictEqual(disk.creates, [], what + ": nothing created");
+    if (withFile) assert.strictEqual(disk.read(PARAMS_PATH), COMMITTED, what);
+    assert.deepStrictEqual(m.opened, [], what + ": nothing opened");
+    assert.deepStrictEqual(m.scheduled, [], what + ": nothing scheduled");
+    assert.strictEqual(m.messages.length, 1, what + ": said once");
+  }
+  // the mutant (the arm deleted) says the false "not a JSON object" sentence
+  const mut = await run1({ mutantNoCommandNoParamsArm: true }, false);
+  assert.notStrictEqual(mut.result.problem && mut.result.problem.reason, "no-parameters",
+                        "the mutant must be visible to this test");
+  assert.ok(!/takes no parameters/.test(mut.m.messages.join(" ")), mut.m.messages.join(" "));
 });
