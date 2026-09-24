@@ -1,6 +1,6 @@
 # J3b as built: the document types and the document writer
 
-Branch `json-doc`, worktree `~/research/ermine/ermine-scala-wt-json-doc`, off `json-s3-base` a7e8e050. Uncommitted. 2026-09-16, 05:57-06:46 built, 07:07-07:25 the two review fixes (about 70 min of the 5 h budget). (Report text written by the implementer agent, saved to this path by the orchestrator: the agent's harness blocked writing `.md` files.)
+Branch `json-doc`, worktree `~/research/ermine/ermine-scala-wt-json-doc`, off `json-s3-base` a5a53da4. Uncommitted. 2026-09-16, 05:57-06:46 built, 07:07-07:25 the two review fixes (about 70 min of the 5 h budget). (Report text written by the implementer agent, saved to this path by the orchestrator: the agent's harness blocked writing `.md` files.)
 
 ## Files built
 
@@ -70,13 +70,13 @@ data Tab  = Tab { label : String, content : Node }
 
 ## Landing-gate fix: the LSP symbol tree of a record-style `data`
 
-The landing's full `core/test` on bf832e46 falsified `Renamer 3.2a.6.4 corpus:
+The landing's full `core/test` on 0a558d68 falsified `Renamer 3.2a.6.4 corpus:
 siblings are sorted, and no two of them straddle` with 7 straddling pairs, all
 in `Layout/Doc.e`: `'Widget' Rng(31,13,32,11)` straddles `'name' Rng(31,22,31,27)`
 and `'props' Rng(31,37,31,43)`, and the same for VFlow/children, Grid/cells,
 Tabbed/tabs.
 
-**Root cause** (Stage 1a, commit 07975c76, `lsp/Symbols.scala`): a record-style
+**Root cause** (Stage 1a, commit 36eaf0dc, `lsp/Symbols.scala`): a record-style
 constructor's field selectors were emitted as **siblings** of the constructor,
 under the data symbol — while a constructor's span runs to the start of the next
 constructor, so it *contains* its own fields' spans. Overlapping-but-not-equal

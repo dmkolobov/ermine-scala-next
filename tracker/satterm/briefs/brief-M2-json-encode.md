@@ -1,6 +1,6 @@
 # brief-M2 — merge `scala3-migration` (with subsume-termination) into `json-encode`, lift the B1 gate (Opus implementer, 2 h; reviewer 1 h)
 
-Worktree `~/research/ermine/ermine-scala-wt-json`, branch `json-encode` (tip 2afeb426 at the time of writing). Read
+Worktree `~/research/ermine/ermine-scala-wt-json`, branch `json-encode` (tip e64c0b87 at the time of writing). Read
 `tracker/satterm/briefs/brief-S-common.md` on `scala3-migration` (main checkout `~/research/ermine/ermine-scala`) for
 toolchain and rules, then `tracker/satterm/SUBSUME-PLAN.md` (closing sequence) and `SUBSUME-STAGE2.md`. Report:
 `tracker/satterm/SUBSUME-M2.md` in the json worktree (create it; the orchestrator pre-creates it if you cannot).
@@ -13,9 +13,9 @@ pushed. One full `core/test` on the receiving branch before it counts as done.
 ## What you do
 
 1. `git merge scala3-migration` in the json worktree. Known divergence on the programme's files (`git diff --stat
-   478a369c json-encode -- ...`): `Subst.scala` (10 lines changed on json-encode; S0's instrumentation is +157/−2
+   5557ba39 json-encode -- ...`): `Subst.scala` (10 lines changed on json-encode; S0's instrumentation is +157/−2
    near :365 and :648 — resolve by keeping BOTH sides' intent, and say exactly what json-encode's five-line change
-   was), `TestDateAndScan.scala` (+12 on json-encode: the `-Dermine.test.dateDiffReject` gate, commit dd9e0316),
+   was), `TestDateAndScan.scala` (+12 on json-encode: the `-Dermine.test.dateDiffReject` gate, commit 3374deaf),
    `tracker/tools/lsp-client.py` (+22 on json-encode; S2 adds RowUnsat checks). Resolve every conflict; list each
    with the resolution in the report. Doc conflicts under `tracker/` too.
 2. **Lift the B1 gate**: with S2's `rejects` combinator the refutation property runs once (~10 s), so remove the
@@ -28,7 +28,7 @@ pushed. One full `core/test` on the receiving branch before it counts as done.
    (720/720/720); `corpus-run.sh --batch` verdicts (json-encode's own baseline is 89/79/0 over 168 — confirm from
    its tracker if it differs); `repl-smoke.sh`, `lsp-smoke.sh` (expect S2's 578 plus whatever json-encode's own
    LSP cases add — record before/after on json-encode); `client/scripts/check-corpus.sh` (json-encode's own gate,
-   60/60 at 2afeb426); then ONE full `core/test` in the background (json-encode baseline 1196/1196 at 5d0a2614 with
+   60/60 at e64c0b87); then ONE full `core/test` in the background (json-encode baseline 1196/1196 at 84af8a10 with
    the quarantines) — record count and wall clock (S2 expects a large saving).
 4. Commit ONLY after the reviewer's LAND: the orchestrator commits. Leave the merge uncommitted? No — a merge in
    progress cannot be left across a review: complete the merge commit yourself (`git commit` with the default merge

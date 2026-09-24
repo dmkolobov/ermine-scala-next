@@ -25,7 +25,7 @@ no minted identity at all.  The largest available win needs no identity scheme.
 
 ### 0.1 The numbers that constrain everything
 
-BASELINE OF RECORD (PERF-ROADMAP, P1, commit 5d17377, this machine):
+BASELINE OF RECORD (PERF-ROADMAP, P1, commit 6763245, this machine):
 
 | segment                          | median   | share of round trip |
 |----------------------------------|----------|---------------------|

@@ -731,7 +731,7 @@ signatures in 7 files**, and at the byte level **13 of 129 `.ei` (70 lines)** pl
 `browse.txt` lines**; `groups.txt` is byte-identical.
 
 **Which, and why each is intended.**  Two classes, both from adoptions COMMITTED after the
-baseline was recorded in `1a18b78` (2026-08-31):
+baseline was recorded in `7ebcbfa` (2026-08-31):
 
 * `Relation/Scan.ei :: sumBy'` — F3 (`775a20f`, 2026-09-08) deleted a vacuous `r <- (h, t)`
   from the WRITTEN signature in `Relation/Scan.e` by hand.  The baseline still carried it.

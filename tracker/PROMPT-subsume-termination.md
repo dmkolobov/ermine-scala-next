@@ -6,7 +6,7 @@ it owns, commits reviewed green stages, and keeps the handoff log; every proof, 
 measurement and every line of Scala is written by an Opus agent and reviewed by a
 different Opus agent. The orchestrator never proves, never implements, never reviews.
 
-Branch `scala3-migration` (tip 478a369c). Programme branch `subsume-termination`, worktree
+Branch `scala3-migration` (tip 5557ba39). Programme branch `subsume-termination`, worktree
 `~/research/ermine/ermine-scala-wt-subsume`; stage branches off it, one worktree each
 (`ermine-scala-wt-subsume-<stage>`). Not a JSON item: the JSON Stage 2/3 programme
 (branch `json-encode`, 2026-09-16) only exposed it.
@@ -114,7 +114,7 @@ bad = combine_Op (dateDiff_Op days (col_Op startDate) (col_Op endDate)) gap peop
 REFUSE `bad`. Its twin with `spans : [ name, startDate, endDate ]` checks and passes.
 
 - Run alone — `sbt 'core/testOnly com.clarifi.reporting.TestDateAndScan'` — on
-  scala3-migration 478a369c (this tree), json-encode 3eba80f8 and json-runner 85d95531,
+  scala3-migration 5557ba39 (this tree), json-encode 17cdcbd1 and json-runner 1ed1d60c,
   the property **never returns**: 11 of 12 properties finish; one thread stays RUNNABLE
   at 100%+ CPU, GC idle, for as long as anyone waited (28 CPU-minutes seen), always in
   these frames (jstack, three JVMs, identical):
@@ -134,7 +134,7 @@ REFUSE `bad`. Its twin with `spans : [ name, startDate, endDate ]` checks and pa
   2026-09-16 once two new suites ran before it in the JVM. The only difference is the
   `Supply` ids the solver draws, i.e. the order its search takes.
 - On `json-encode` the property is gated behind `-Dermine.test.dateDiffReject=true`
-  (commit dd9e0316; GATE-POLICY.md; TICKET-editor-and-solver-followups.md item 12). On
+  (commit 3374deaf; GATE-POLICY.md; TICKET-editor-and-solver-followups.md item 12). On
   THIS branch it is not gated, which is what the reproduction wants.
 - The row-sound decision procedure already carries a budget (`Constraints.scala:1236-1242`,
   `-Dermine.rowSound.budget`, default 200,000 nodes, exhaustion counted in

@@ -1,6 +1,6 @@
 # J3g: `Fetch Node` as the report type (branch `json-unify`, worktree `ermine-scala-wt-json-unify`)
 
-Base `json-encode` babac791. Nothing committed; the tree is dirty for review (15 files changed,
+Base `json-encode` 9fa3f89f. Nothing committed; the tree is dirty for review (15 files changed,
 4 new; `git diff --stat`: 723 insertions, 151 deletions).
 
 A scan no longer has to be hoisted above its layout. `modules/Layout/Fetch.e` gained the lifts and

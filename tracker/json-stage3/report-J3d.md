@@ -3,7 +3,7 @@
 (Report text written by the implementer agent, saved to this path by the orchestrator: the agent's harness blocked writing `.md` files.)
 
 
-Branch `json-client`, worktree `~/research/ermine/ermine-scala-wt-json-client`, off 6f0e3d8b (json-encode f8a789d1 [J3a] merged with json-doc bf832e46 [J3b]). Uncommitted. 2026-09-16, ~5 h of the 6 h budget, plus the four review fixes
+Branch `json-client`, worktree `~/research/ermine/ermine-scala-wt-json-client`, off f7a7bfdb (json-encode d21f304f [J3a] merged with json-doc 0a558d68 [J3b]). Uncommitted. 2026-09-16, ~5 h of the 6 h budget, plus the four review fixes
 (`review-J3d.md`, FIX-THEN-LAND) — see "Review fixes applied" at the end.
 
 ## Files built

@@ -4,7 +4,7 @@ Programme prompt: `tracker/PROMPT-subsume-termination.md` (read it first; Part B
 Orchestrator: Fable (plans, briefs, merges, gates, commits, logs — never proves, implements or reviews).
 Every sub-agent is Opus. Started 2026-09-16.
 
-Base: `scala3-migration` 478a369c. Programme branch `subsume-termination`, worktree
+Base: `scala3-migration` 5557ba39. Programme branch `subsume-termination`, worktree
 `~/research/ermine/ermine-scala-wt-subsume`. Stage branches `subsume-<stage>` off the programme branch, one
 worktree each: `~/research/ermine/ermine-scala-wt-subsume-<stage>`.
 
@@ -37,8 +37,8 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
 ## Handoff log (append after every event; a new orchestrator resumes from here)
 
 - 2026-09-16 (start): read PROMPT-subsume-termination.md, GATE-POLICY.md, memory notes (gate policy, autonomous
-  mode, JSON Stage 3 lesson: no `nohup`). Branch `subsume-termination` created at 478a369c, worktree
-  `ermine-scala-wt-subsume`. `tracker/lean` is byte-identical between 478a369c and `json-wrappers`, so the built
+  mode, JSON Stage 3 lesson: no `nohup`). Branch `subsume-termination` created at 5557ba39, worktree
+  `ermine-scala-wt-subsume`. `tracker/lean` is byte-identical between 5557ba39 and `json-wrappers`, so the built
   `.lake` (2.0 G, mathlib v4.33.1 + Rowpartition + looptrace) from `ermine-scala-wt-json-wrappers/tracker/lean/.lake`
   is copied into the S1a/S1b worktrees to seed their builds. Machine: 12 cores, 15 G RAM (~10 G available),
   13 G disk free — three lanes concurrently are affordable, a fourth `.lake` copy is not without cleanup.
@@ -46,7 +46,7 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   extracts the type variable's KIND annotation (`Kind.scala:135` is the same pattern for `V[A]`), and
   `Kind.scala:65` gives `VarK(v).vars = Vars(v)` — so, as read, the kind-variable walk follows no binding at all.
   Part B's H2 wording ("follows a variable's binding") is therefore questioned in brief-S0/S1a; the agents settle it.
-- 2026-09-16 ~afternoon: docs commit 1813172a on `subsume-termination`; stage branches `subsume-s0`/`s1a`/`s1b`
+- 2026-09-16 ~afternoon: docs commit 939d7055 on `subsume-termination`; stage branches `subsume-s0`/`s1a`/`s1b`
   and worktrees created at it; `.lake` copied into s1a and s1b (no-op `lake build` 871 jobs confirms the cache;
   disk now 8.2 G free). Three Opus agents launched concurrently: S0 implementer (3 h), S1a prover (4 h),
   S1b prover (4 h). Scratch dirs `~/research/ermine/scratch-subsume/{s0,s1a,s1b}`. Reviewers launch per stage on
@@ -96,17 +96,17 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   wording, blow-up site (:313-318), README looptrace row corrected; report §8 = reviewer's signed answer. S1b
   reviewer re-checking. S0 still running.
 - 2026-09-16 ~18:45: S1a LANDED. Review re-check LAND (§7 of the review; two report-only nits fixed by the
-  orchestrator at landing). Stage commit 228fb504 on `subsume-s1a`, merge c806dbea, `subsume-termination`
-  fast-forwarded to c806dbea. Landing gate on the merged tree (scratch-subsume/orch/s1a-landing-tier0.log):
+  orchestrator at landing). Stage commit 01104ba2 on `subsume-s1a`, merge 6f7bafe1, `subsume-termination`
+  fast-forwarded to 6f7bafe1. Landing gate on the merged tree (scratch-subsume/orch/s1a-landing-tier0.log):
   lake build 872 jobs, Audit 4936 / 0. No Scala and no executable Lean changed, so the Scala Tier 0 items are
-  unaffected by construction (the programme worktree compile at 478a369c+docs: exit 0). Title question, walk
+  unaffected by construction (the programme worktree compile at 5557ba39+docs: exit 0). Title question, walk
   only: YES.
 - 2026-09-16 ~19:10: S1b LANDED. Review re-check LAND (two cosmetic residuals fixed by the orchestrator at
   landing: §7 cross-references; EnvBound.lean docstring now says RunSupOkP is undischarged at the shipped
-  DEFAULTS since the default policy is smallcanon). Stage commit 4a04ad00 on `subsume-s1b`, merge with
+  DEFAULTS since the default policy is smallcanon). Stage commit 6d9a810c on `subsume-s1b`, merge with
   `subsume-termination` clean, fast-forwarded. Landing gate on the merged tree
   (scratch-subsume/orch/s1b-landing-tier0.log): lake build 874 jobs, Audit 4995 / 0 (= S1a's 4936 + S1b's 59),
-  Loop/Main.lean import closure contains none of the new modules. Programme tree now = 478a369c + docs + S1a + S1b.
+  Loop/Main.lean import closure contains none of the new modules. Programme tree now = 5557ba39 + docs + S1a + S1b.
   Title question so far: walk YES (S1a); loop BOUNDED at shipped defaults, rest of Subst.solve YES, post-solve
   PARTIAL (S1b). OPEN items carried: `runSP_*` soundness family still assumes rowSoundBare = false; no
   termination theorem under -Dermine.dequeuePolicy=shipped. Waiting on S0 to brief S2.
@@ -133,7 +133,7 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   implementer. Reviewer's signed answer: YES as a measurement; not signed: any :648 share, "terminates" as a
   theorem (that is S1a/S1b's), "no input can diverge" (fixture env never swept over id bases; base-16 boot 2×
   outlier). Recommended next stage: a harness stage, not Part C's S2, and no S3.
-- 2026-09-16 ~20:25: brief-S2 REWRITTEN (3fe4e8c3) as the harness stage: `proved` refutation combinator at
+- 2026-09-16 ~20:25: brief-S2 REWRITTEN (e4e73e95) as the harness stage: `proved` refutation combinator at
   TestErmine.scala:220-223 (24 `no(` sites in 5 files), B1 deadline pin, small unsat generator + twins, LSP smoke
   case, Tier 0 + one full core/test; NO compiler change. Licence: S1a + S1b landed, S0 headline confirmed by
   review. Branch `subsume-s2`, worktree `wt-subsume-s2`; S2 implementer launched (Opus, 4 h) in parallel with
@@ -151,14 +151,14 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   the timed region (~0.03 %) NOTED, not applied (a code change). Landing in progress: stage commit on
   `subsume-s0`, merge, the six §0.2 replacement sentences applied to the landed S1A report and both Lean reviews
   as a doc commit, then Tier 0 + Tier 1 gates on the merged tree (Subst.scala changed) run by a gate agent.
-- 2026-09-16 ~23:20: S0 LANDED. Stage commit bef7e7a7, §0.2 corrections 00abe6e6, merge d30cf94b, gate
+- 2026-09-16 ~23:20: S0 LANDED. Stage commit 0640a2c6, §0.2 corrections 8f5ed923, merge 01851f49, gate
   section commit on top; `subsume-termination` fast-forwarded. Landing gates (gate agent, logs
   scratch-subsume/gates-s0/): compile rc=0; TestLoopTrace with the model binary 720/720/720 (controls 46, 58);
   corpus 89/79/0 over 168, per-file verdict+message listing byte-identical to S0's baseline; repl-smoke 66/66;
   lsp-smoke 573 (the prompt's 577 is the post-S2 target, pre-change tree also 573); looptrace-corpus 18 groups
   3,210,869 segments all agree, 0 skip/hashdiff/eqdiff/fuel; trace-ab boot 54,209 and Wide 116,420 IDENTICAL
   after worktree-path normalisation (same-build control noise floor 0); ei-diff --snapshot 274/274 identical,
-  3523 bindings identical; g1-validate 9/9. Programme tree = 478a369c + docs + S1a + S1b + S0. Disk 7.0 G.
+  3523 bindings identical; g1-validate 9/9. Programme tree = 5557ba39 + docs + S1a + S1b + S0. Disk 7.0 G.
   S2 (harness stage) implementer still running; S3 not needed.
 
 ## Closing sequence (the user, 2026-09-16 late evening) — starts after S2's review and fixes land
@@ -167,7 +167,7 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
 2. Merge `subsume-termination` into `scala3-migration` (main checkout `ermine-scala`); one full `core/test`
    on the receiving branch before it counts as done.
 3. Merge `scala3-migration` into `json-encode` (worktree `ermine-scala-wt-json`); full `core/test` there; then
-   lift the `-Dermine.test.dateDiffReject` gate (commit dd9e0316) since the property is fast once S2's
+   lift the `-Dermine.test.dateDiffReject` gate (commit 3374deaf) since the property is fast once S2's
    combinator is in.
 4. 2.11 line: port the Scala pieces (S0 instrumentation, S2 harness fix, pins, smoke case) by hand onto
    `backport-2.11` (worktree `ermine-scala-wt-backport`) in the 2.11-and-3 dialect, the way the JSON stages
@@ -199,8 +199,8 @@ Unanswered. Filled in per stage below (yes / no / bounded), then in the final re
   compile, B1 suite alone at default N, TestRowRefusals, TestLoopTrace with the binary, corpus --batch, smokes),
   commit, fast-forward; then the closing sequence (M1 ff into scala3-migration + full core/test; M2 brief; P211 brief).
 - 2026-09-17 ~01:25: S2 REVIEW re-check = LAND (§6 of the review; residual R-1 cross-reference fixed by the
-  orchestrator at landing). Stage commit b69b13de on `subsume-s2` (+ a follow-up restoring
-  tracker/repl-classpath.txt, staged by mistake), merge 2ab2b3c4 with `subsume-termination` clean. Tier 0 gate
+  orchestrator at landing). Stage commit dcd367de on `subsume-s2` (+ a follow-up restoring
+  tracker/repl-classpath.txt, staged by mistake), merge 1e403ff3 with `subsume-termination` clean. Tier 0 gate
   agent running on the merged tree (S0 instrumentation + S2 harness together). On GREEN: fast-forward, then the
-  closing sequence: M1 = fast-forward `scala3-migration` (still at the base 478a369c) + one full core/test in the
+  closing sequence: M1 = fast-forward `scala3-migration` (still at the base 5557ba39) + one full core/test in the
   main checkout; M2 (brief-M2-json-encode.md) and P211 (brief-P211-port.md) launched in parallel.

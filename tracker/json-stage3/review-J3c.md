@@ -1,7 +1,7 @@
 # Review of J3c (the document runner), independent
 
 Reviewer: an agent that did not write the stage. Worktree `~/research/ermine/ermine-scala-wt-json-runner`,
-branch `json-runner`, base `03676cbe`. Reviewed: `git diff 03676cbe` plus the untracked
+branch `json-runner`, base `c7e73c7d`. Reviewed: `git diff c7e73c7d` plus the untracked
 `json/{Runner,Server,ServeMain}.scala`, `bin/ermine-serve`, `core/src/test/resources/doc/Sales.e`,
 `scalacheck-binding/.../TestRunner.scala`, `tracker/json-stage3/report-J3c.md`. About 1 h 40.
 
@@ -332,14 +332,14 @@ re-run I did myself (103/103).
 
 ---
 
-# Follow-up: the uncommitted delta on a407aa0c (2026-09-16)
+# Follow-up: the uncommitted delta on 2eee426f (2026-09-16)
 
-Scope: `git diff` at tip `a407aa0c` — `Server.scala` (+6/-2, daemon workers),
+Scope: `git diff` at tip `2eee426f` — `Server.scala` (+6/-2, daemon workers),
 `TestRunner.scala` (+95/-25, `withServer` per property, ported `http`/`httpHead`, new (iso)),
 `report-J3c.md` (+49, the wedge investigation). ~25 min. The four required fixes from the
 main review are in the tree (`Runner.evalLock` at `Runner.scala:287`, the plan's per-status
 `path` table, the two `withDriver` comments, 16 properties in §3.7d), and the extra
-`(c-routes)` pins in `a407aa0c` take up suggestions (c) and (g) — the non-ASCII
+`(c-routes)` pins in `2eee426f` take up suggestions (c) and (g) — the non-ASCII
 `settingsNote` with an explicit "the response is pure ASCII, so the pin is vacuous" guard,
 and HEAD's `Content-Length`. Good.
 

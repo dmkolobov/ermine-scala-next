@@ -40,7 +40,7 @@ ADVANCE / FIX-THEN-ADVANCE (list the exact edits) / BLOCK (why, and what a fix r
    explicit (signed) let bindings, so a let-bound signature never reaches the checker, and
    `let g : Int -> Int; g x = x in g "hello"` LOADS while the `where` twin is rejected. Confirm by reading
    `Lower.scala` and by running P7/P8. Then answer: was this true of the FUSED pipeline before the LSP
-   Stage-1 rewrite deleted it (commit 3ad2623 removed the fused term grammar; `git show 3ad2623^:...` the
+   Stage-1 rewrite deleted it (commit 856ee7d removed the fused term grammar; `git show 856ee7d^:...` the
    old `Term`/`LocalBlocks` parser, or the G1 goldens under `tracker/g1-*`) -- i.e. is this a REGRESSION
    of the new pipeline or upstream behaviour? Does the fused pipeline's `Let` carry explicit bindings (the
    `Let(pos, implicits, explicits, body)` shape has an `explicits` slot -- who filled it before)? Is the

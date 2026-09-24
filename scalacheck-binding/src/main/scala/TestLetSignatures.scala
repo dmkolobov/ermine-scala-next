@@ -11,7 +11,7 @@ import scalaparsers.Death
   * case built `Let(pos, implicits, Nil, body)` because `Lower.bindings`
   * was typed `(List[ImplicitBinding], List[Nothing])` and its signature
   * case was `case _: SSigStatement => ()  // 4.1` -- a staged stub from
-  * 91c0d52 that became the only module path when 80df1eb retired the
+  * 284afe1 that became the only module path when faa5769 retired the
   * fused pipeline (whose `let` production filled BOTH halves of `Let`).
   * So a let-bound signature could neither restrict nor widen and the
   * compiler did not say so: `let g : Int -> Int; g q = q in g "hello"`

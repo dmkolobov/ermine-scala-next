@@ -1,6 +1,6 @@
 # J3i: the crosstab, and the Fetch widget shape (branch `json-crosstab`, worktree `ermine-scala-wt-json-unify`)
 
-Base `json-encode` 3cae9678. Nothing committed; the tree is dirty for review.
+Base `json-encode` 22b99671. Nothing committed; the tree is dirty for review.
 
 `Layout.Widgets.Crosstab` is the widget a query cannot produce: a relation's row type is fixed at
 compile time, so a table whose COLUMNS are the distinct values of a data column has to be built
@@ -96,7 +96,7 @@ The full `core/test` was NOT run (the brief forbids it). `tracker/repl-classpath
 final run's key names the tree as it stood before this report file was given its last two rows;
 nothing else changed after it.
 
-## The 6.2c catalogue (as commit 58c52fbb did)
+## The 6.2c catalogue (as commit b1226e9c did)
 
 The pr-tier sweep pins the SET of local binding heads whose hover changes in content, and a new
 stdlib module with a `let` under a row constraint moves it. Nine entries moved: the eight `let`

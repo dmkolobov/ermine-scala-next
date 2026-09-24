@@ -1,6 +1,6 @@
 # Gate audit
 
-Written 2026-09-17 on branch `gate-audit` at `836eb61f`, the `json-encode` tip. The policy built on it is
+Written 2026-09-17 on branch `gate-audit` at `a7b7db6f`, the `json-encode` tip. The policy built on it is
 `docs/gate-policy.md`.
 
 **Summary.**
@@ -27,7 +27,7 @@ Reproduce the ranking with `python3 docs/gate-audit-data/rank.py`. Every input i
 
 ### 1.1 Cost: wall clock per run
 
-The costs were measured in a fresh worktree of `836eb61f` with `docs/gate-audit-data/measure.sh`. Each gate
+The costs were measured in a fresh worktree of `a7b7db6f` with `docs/gate-audit-data/measure.sh`. Each gate
 ran serially, never alongside another measured gate, and the 1-minute load average was recorded at the
 start and end of each run (`measurements.tsv`). The machine also carried the user's idle LSP server and
 JSON server throughout, which is its normal state.
@@ -58,8 +58,8 @@ This is an estimate. An aborted run counts as a full run, and runs the user star
 
 Two read-only agents searched `git log --all` (1,160 commits: 2015-2019 upstream, 2026 this programme),
 `tracker/**/*.md` and both 2.11 branches' reports, and classified every evidence item. I checked 16 of
-their roughly 60 cited commits and quotes against the repository myself (c895bf2e, 7a4254d7, 80df1eba,
-4943c72c, 65c037c1, 3a2dd069, ac74137a, 3665e06b, 1ca4df9f, faf6e285, afa7c613, 3be37bf9, and four
+their roughly 60 cited commits and quotes against the repository myself (fb3537ca, 5ba81767, faa5769e,
+ba6429c0, 8f16f913, 2a7efaeb, 49e63cc7, 14b93738, c777cbd6, 52f8df40, 4c18fa5c, 93c9d1bb, and four
 tracker quotes); all 16 matched. The other rows are as the agents reported them. Their full reports, with a
 verbatim quote and source for every row, are `docs/gate-audit-data/history-scripts.md` and
 `history-suites.md`.
@@ -74,16 +74,16 @@ The classes:
   check was written in the same change as its fix, the most common case: 15 suites).
 
 **Score** = REAL-DEFECT + GATE-DEFECT, each weighted 1 when sure and 0.5 when the agents marked it UNSURE
-(`catches.tsv`). Only the 2026 window is scored. The one 2015 catch, `TestRTag` in `c895bf2e`, is listed but
+(`catches.tsv`). Only the 2026 window is scored. The one 2015 catch, `TestRTag` in `fb3537ca`, is listed but
 has no run count to divide by.
 
 **One correction to the agents' tally.** They credited `perf-bench` with one UNSURE catch (the 7.1a mark
-cost, `d010678f`). Their own row says `perf-bench.sh` *refused* that run and a hand-written replica took
+cost, `fc2ce4a5`). Their own row says `perf-bench.sh` *refused* that run and a hand-written replica took
 the measurement, so it is scored 0 here.
 
 ## 2. Findings verified today, not taken from the record
 
-These were reproduced on `836eb61f` during this audit. Every one is load-bearing for the policy.
+These were reproduced on `a7b7db6f` during this audit. Every one is load-bearing for the policy.
 
 ### 2.1 `TestLoopTrace` reports PASS when it skipped
 
@@ -116,7 +116,7 @@ agreement.
 - The refusal text is never compared at all.
 
 Determinism check: the S2 landing's corpus run (2026-09-16) and my Tier 0 run today are two runs of the
-same build, `d278c900`. After normalising checkout paths they differ in **0 of 168** modules, verdicts
+same build, `37fc823f`. After normalising checkout paths they differ in **0 of 168** modules, verdicts
 and refusal text both. A per-module expected file is therefore a safe comparison.
 
 ### 2.4 Five suites never run
@@ -129,16 +129,16 @@ discovers 48 suite classes, not the 53 `Properties` objects the source contains.
 
 It refused today with `FAIL: another ermine JVM is running: 1199553 ... lsp.Main`, which was the user's
 language server. Its record has five SELF-DEFECTs, two of them preflight refusals of runs that should have gone ahead
-(`8bdf06e3`, "refused the run silently, printing no median rather than an error"; LSP4-7.0-READ.md:104,
+(`b265bbf5`, "refused the run silently, printing no median rather than an error"; LSP4-7.0-READ.md:104,
 "it refused every run"), and no recorded movement ("10.98 / 11.03 / 10.94 / 10.98 s, UNMOVED",
 LOOP-MODEL-HANDOFF.md:1054).
 
 ### 2.6 `TestJson."nesting past the depth where nf overflows still encodes"` is environment-dependent
 
-- **Red twice today on `836eb61f`,** both times with `java.lang.StackOverflowError`: once in the full run
+- **Red twice today on `a7b7db6f`,** both times with `java.lang.StackOverflowError`: once in the full run
   (1-minute load 2.9 to 6.9) and once inside the per-suite session.
-- **Same code was green before.** `836eb61f` differs from `ac2606a0` only under `docs/`, and on
-  `ac2606a0` the M2 landing recorded `Passed: Total 1199, Failed 0, Errors 0`
+- **Same code was green before.** `a7b7db6f` differs from `36c2dcf9` only under `docs/`, and on
+  `36c2dcf9` the M2 landing recorded `Passed: Total 1199, Failed 0, Errors 0`
   (tracker/satterm/SUBSUME-M2.md:157).
 - **Why it flips.** The property's own comment says argonaut's printer "bounds the *rendered* depth at a
   few thousand levels on the default stack", and it renders 2,000. So identical code gives both answers
@@ -288,7 +288,7 @@ defect in the code it claims to guard, which the record cannot show for a gate t
 
 The record above says what a gate HAS caught. This says what it CAN catch: `scripts/mutate-and-verify.sh`
 injects one mutant per bug class into each gate's declared scope and demands the gate go red. Commit
-`b0ffb5db`, seed 1, 24 mutants; the run log is `docs/gate-audit-data/mutation-2026-09-17.log`.
+`af863292`, seed 1, 24 mutants; the run log is `docs/gate-audit-data/mutation-2026-09-17.log`.
 
 | gate | caught | survived | what survived |
 |---|---:|---:|---|
@@ -327,10 +327,10 @@ injects one mutant per bug class into each gate's declared scope and demands the
 
 **Three defects the harness found in the checking machinery itself**, all fixed in the commits named:
 
-1. **A racy lock** (`7e8012dd`): two concurrent gate runs in one worktree both proceeded, deleted each
+1. **A racy lock** (`085ca58a`): two concurrent gate runs in one worktree both proceeded, deleted each
    other's `.ei` files and swapped `tracker/repl-classpath.txt` twice, producing a FAIL ("84 .ei files,
    expected 129") that had nothing to do with the code under test.
-2. **A content key that missed an edit** (`b0ffb5db`): the key came from a copy of the git index, whose
+2. **A content key that missed an edit** (`af863292`): the key came from a copy of the git index, whose
    stat data hid a same-size edit made within the same mtime second. A mutant got HEAD's key and a
    CACHED-PASS for code that never ran.
 3. **A false red in the corpus gate** (this commit): its path normaliser only recognised checkouts named

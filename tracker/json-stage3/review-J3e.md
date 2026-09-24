@@ -1,6 +1,6 @@
 # Review of J3e (chart and style-box prop types, the client adapters, treeMap as unsupported)
 
-Independent review of the uncommitted diff on `json-charts` against `c5f92b2d` (J3d), plus the
+Independent review of the uncommitted diff on `json-charts` against `5b0cc4ee` (J3d), plus the
 untracked files. Reviewer did not write the stage. Read in order: `brief-J-common.md`,
 `JSON-STAGE3-PLAN.md`, `brief-J3e-charts.md`, `report-J3d.md`, `report-J3e.md`,
 `brief-review.md`. Legacy read-only at `~/research/ermine/ermine-writers`.

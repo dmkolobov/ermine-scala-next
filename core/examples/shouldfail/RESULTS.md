@@ -265,7 +265,7 @@ modules load again exactly as they did at S0 -- the escape hatch, pinned in
 ## 2026-09-11: error class 7, LET SIGNATURE (LET-1)
 
 Five new negatives pin a REGRESSION the corpus could not see: between 2026-08-31
-(`80df1eb`, the commit that made the split pipeline the only module path) and 2026-09-11,
+(`faa5769`, the commit that made the split pipeline the only module path) and 2026-09-11,
 the renamer's lowering of a `let` block DISCARDED every signature in it, so a `let`-bound
 signature reached neither the type checker nor the editor.  **At `a15a97e` every one of
 these five modules LOADED** -- that is the regression, and it is why they exist.  A `where`

@@ -632,16 +632,16 @@ never consulted.
 ### The `let` drop is a REGRESSION of the new pipeline
 
 The FUSED pipeline handled let signatures. Its `let` production
-(`parsing/TermParsers.scala:224-243` at `9ad5909^`) ran `gatherBindings(bs)` then
+(`parsing/TermParsers.scala:224-243` at `d8a98a6^`) ran `gatherBindings(bs)` then
 `checkBindings` and yielded
 `Let(letLoc, rewriteShadowed(sh, p.extract._1), rewriteShadowed(sh, p.extract._2), body)`
 -- **both** halves into `Let(pos, implicits, explicits, body)`; that is who filled
 `explicits`. The replacement was written EMPTY: the `Lower.bindings` stub above was
-introduced in **91c0d52** ("Stage 3.4a: surface-to-core lowering with the tnodes
+introduced in **284afe1** ("Stage 3.4a: surface-to-core lowering with the tnodes
 differential", 2026-08-30), whose promised item 4.1 never came; it became reachable behind
-`-Dermine.pipeline=new` in **db16d0b** (Stage 4.1c); and it became the ONLY module path
-when **80df1eb** ("Post-G1 D3 part 2: fused module path retired", 2026-08-31) deleted the
-fused branch from `Session.dep`. The fused term grammar itself was deleted in **9ad5909**.
+`-Dermine.pipeline=new` in **b8f06ae** (Stage 4.1c); and it became the ONLY module path
+when **faa5769** ("Post-G1 D3 part 2: fused module path retired", 2026-08-31) deleted the
+fused branch from `Session.dep`. The fused term grammar itself was deleted in **d8a98a6**.
 A `where` on a TOP-LEVEL equation is unaffected because it goes
 `NewPipeline.collectBlock` -> `lowerLet` -> `pairSigs` (NewPipeline.scala:346, 504-507,
 367-376), which pairs by shared `V` -- but `lowerLet` has that one call site, which is why

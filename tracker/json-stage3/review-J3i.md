@@ -1,6 +1,6 @@
 # Review of J3i: the crosstab and the Fetch widget shape (branch `json-crosstab`, worktree `ermine-scala-wt-json-unify`)
 
-Reviewed: the uncommitted diff against `json-encode` 3cae9678 plus the untracked files
+Reviewed: the uncommitted diff against `json-encode` 22b99671 plus the untracked files
 (`Crosstab.e`, `FetchCrosstab.e`, `client/src/widgets/crosstab.ts`, `client/src/generated/crosstab.ts`).
 Independent reviewer; nothing of the stage was edited except two mutations and one fix probe, each
 reverted and verified byte-identical (`review-j3i-mutations.log`, `review-j3i-foldl-probe.log`:

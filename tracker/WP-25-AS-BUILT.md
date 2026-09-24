@@ -3,7 +3,7 @@
 > **FOLDED INTO `tracker/JSON-WIDGET-PLAYGROUND.md` ON 2026-09-21** (§10's edits, plus §11's new `TestScrub` row and §14's new WP-28): **that document is the authority from here on**; this file is kept as the ticket's own record.
 
 Branch `wp25-scrub`, worktree `ermine-scala-wt-wp6-perfA`, forked from
-`widget-preview` at `f8fb9de7`.  Nothing committed, nothing pushed, no
+`widget-preview` at `dc30cc50`.  Nothing committed, nothing pushed, no
 `scripts/gate.sh` run.  This file is a **new** tracker note on purpose:
 `tracker/JSON-WIDGET-PLAYGROUND.md` is being edited by other agents, and the
 amendments below are listed in §10 for whoever merges.
@@ -228,7 +228,7 @@ different questions, and §10 item 1 says so for the merge.
 **MEASURED**, `scratchpad/wp25-timing2.log`: one process, one 130-module
 `Prelude`+`Layout` session, the two columns **interleaved** and each run
 twice with the lower taken, so a load spike shows as noise in both.  "before"
-is the scrub as it stands at `f8fb9de7`, replicated in the probe.
+is the scrub as it stands at `dc30cc50`, replicated in the probe.
 
 | scrub of | before | after | unloads by |
 |---|---|---|---|
@@ -382,7 +382,7 @@ affected.  **Re-scope WP-26 to the staleness half and strike its "and then a
 ## 10. Fold into the main tracker at merge
 
 **Cited by TEXT ANCHOR only (review N10): `widget-preview` has moved to
-`d3c4ee11` and will move again, so any line number here would be stale by
+`0aeb0afd` and will move again, so any line number here would be stale by
 the time this is merged.**
 
 1. `tracker/JSON-WIDGET-PLAYGROUND.md` §14 **WP-25** — the row containing

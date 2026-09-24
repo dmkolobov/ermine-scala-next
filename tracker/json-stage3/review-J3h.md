@@ -1,7 +1,7 @@
-# Review of J3h: one step interpreter (branch `json-unify`, base 5e37cced)
+# Review of J3h: one step interpreter (branch `json-unify`, base 910f288b)
 
 Reviewer: independent (did not write the stage). Reviewed the uncommitted diff against
-5e37cced (8 tracked files) plus the untracked `json/Interp.scala` and `report-J3h.md`.
+910f288b (8 tracked files) plus the untracked `json/Interp.scala` and `report-J3h.md`.
 Logs I wrote are under `tracker/json-stage3/logs/review-j3h-*.log`. Time: about 1 h 15 min.
 
 ## Verdict summary
@@ -35,7 +35,7 @@ Behaviourally equivalent; see fix 2.
 ## 2. Byte identity
 
 - The wire arms `inlined`, `deferred`, `columns`, `logged`, `failure`, `attempt`, `delay` were
-  diffed against `git show 5e37cced:.../Write.scala`: identical except two continuation-line
+  diffed against `git show 910f288b:.../Write.scala`: identical except two continuation-line
   indents and a separator comment (`diff` of the two extracted blocks, 87 vs 89 lines).
 - Threshold semantics: `Write.resolve` is unchanged; `Write.steps` applies it once per relation
   exactly as the old `one` did (`Deferred` -> `Token`, else `Splice(data, threshold)`); so a bare

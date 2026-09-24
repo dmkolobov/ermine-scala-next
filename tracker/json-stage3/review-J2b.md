@@ -1,6 +1,6 @@
 # Review of J2b (`Spread Json`; the `Json a` constraint as design only)
 
-Independent review, branch `json-spread`, worktree `~/research/ermine/ermine-scala-wt-json-spread`, uncommitted diff against `d2177ca5` plus four untracked files. 2026-09-16, within the 2 h budget.
+Independent review, branch `json-spread`, worktree `~/research/ermine/ermine-scala-wt-json-spread`, uncommitted diff against `3f6d97d8` plus four untracked files. 2026-09-16, within the 2 h budget.
 
 ## What I re-ran
 

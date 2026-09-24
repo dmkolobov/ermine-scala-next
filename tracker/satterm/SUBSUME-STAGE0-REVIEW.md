@@ -327,7 +327,7 @@ sampler.log` adds the blunt version: **0 of 12 samples had any frame at `Type.sc
 the line Part B says the thread is "always" in.
 
 What the report should also say, and does not: Part B's dumps were taken on other trees
-(`json-encode 3eba80f8`, `json-runner 85d95531`) and are not in `<s>/`, so the honest claim is
+(`json-encode 17cdcbd1`, `json-runner 1ed1d60c`) and are not in `<s>/`, so the honest claim is
 **"not reproduced here"**, not "did not happen". With ~1/12 of samples landing in the walk, three
 independent single dumps all landing there is ~0.06 % — so the earlier evidence was most likely
 a small, correlated sample (one dump per JVM, or several within one walk), not a contradiction

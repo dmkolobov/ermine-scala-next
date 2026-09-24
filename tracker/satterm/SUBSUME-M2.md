@@ -9,10 +9,10 @@ Every log path below is under `<m>` = `/home/dmitry/research/ermine/scratch-subs
 
 | | |
 |---|---|
-| receiving branch before | `json-encode` **2afeb426** ("JSON Stage 2/3 plan: the closing handoff entry") |
-| merged in | `scala3-migration` **d278c900** ("Merge branch 'subsume-termination' into subsume-s2") — S0 + S1a + S1b + S2 |
-| merge base | **478a369c** (the programme's base; `json-encode`'s last common ancestor) |
-| **merge commit** | **9ec3406d** — `Merge branch 'scala3-migration' into json-encode` + `resolutions in tracker/satterm/SUBSUME-M2.md` |
+| receiving branch before | `json-encode` **e64c0b87** ("JSON Stage 2/3 plan: the closing handoff entry") |
+| merged in | `scala3-migration` **37fc823f** ("Merge branch 'subsume-termination' into subsume-s2") — S0 + S1a + S1b + S2 |
+| merge base | **5557ba39** (the programme's base; `json-encode`'s last common ancestor) |
+| **merge commit** | **38756a10** — `Merge branch 'scala3-migration' into json-encode` + `resolutions in tracker/satterm/SUBSUME-M2.md` |
 | uncommitted after it | the B1 gate lift, 3 files (§3) — for the orchestrator to commit after review |
 
 Nothing was pushed. `tracker/repl-classpath.txt` was regenerated from this worktree's
@@ -35,7 +35,7 @@ you. The third is a semantic conflict that git could not see, and §3 resolves i
 |---|---|
 | **json-encode's side** (+5/−5, "the five-line change") | five `DataStatement` patterns gain the JSON named-fields **selector field** `sels`: `:801` `case (b@DataStatement(l, v, kindArgs, typeArgs, cons, _), rk)`; `:831-832` `case DataStatement(l, v, kindArgs, _, cons, sels) => DataStatement(l, v, kindArgs, typeArgs, cons.map{…}, sels)` (the only site that *carries the value through* rather than discarding it); `:1877` and `:1886` two more `_` widenings. `DataStatement` grew a field on `json-encode`, so these are compile-forced, not behavioural. |
 | **scala3-migration's side** (+157/−2) | S0's diagnosis instrumentation, all behind `-Dermine.subsumeTrace` (default OFF): `:367` `SubsumeTrace.cse(hm)(fskvs(hm.types -- mask).filter(ss(_)))`, `:618` `val stid = SubsumeTrace.enter(hm, sig)`, `:653` `SubsumeTrace.atEscape(stid, sks, sts, hm)`, `:654-655` the two halves of the escape check wrapped in `SubsumeTrace.phaseFskvs` / `phaseKindVars`, and `object SubsumeTrace` at `:2241`. |
-| **resolution** | BOTH, unedited. The hunks are 150+ lines apart and `ort` merged them; the result was then *verified* rather than trusted: `git diff scala3-migration HEAD -- Subst.scala` is exactly the five `sels` lines and nothing else, and `git diff 2afeb426 HEAD -- Subst.scala` is exactly `+157/−2`. Both checks are in this report's audit trail; the compile gate (§4) is the third. |
+| **resolution** | BOTH, unedited. The hunks are 150+ lines apart and `ort` merged them; the result was then *verified* rather than trusted: `git diff scala3-migration HEAD -- Subst.scala` is exactly the five `sels` lines and nothing else, and `git diff e64c0b87 HEAD -- Subst.scala` is exactly `+157/−2`. Both checks are in this report's audit trail; the compile gate (§4) is the third. |
 
 ### 1.2 `tracker/tools/lsp-client.py` — both blocks kept
 
@@ -51,7 +51,7 @@ This is the file where the auto-merge is wrong, and where git had no way to know
 
 | | |
 |---|---|
-| **json-encode's side** (+12 at `:185-196`, commit dd9e0316) | an eleven-line `QUARANTINED 2026-09-16` comment and the line `if (sys.props.contains("ermine.test.dateDiffReject"))`, immediately above the B1 refutation property, so that the property is registered only when that flag is set. |
+| **json-encode's side** (+12 at `:185-196`, commit 3374deaf) | an eleven-line `QUARANTINED 2026-09-16` comment and the line `if (sys.props.contains("ermine.test.dateDiffReject"))`, immediately above the B1 refutation property, so that the property is registered only when that flag is set. |
 | **scala3-migration's side** | S2 rewrote the same property's body `no(typeChecks(…))` → `rejects(typeChecks(…))` and added 81 lines below it: the `(B1-bound)` deadline pin, plus imports. |
 | **what `ort` produced** | the union: json-encode's `if (…)` guard **still standing above** S2's `rejects(…)` body — a property that is now fast and still gated off. Textually clean, semantically the opposite of what the closing sequence is for. |
 | **resolution** | The merge commit keeps the union verbatim (so the merge is exactly "both sides", auditable), and the **gate lift of §3 is the resolution**, left uncommitted for the orchestrator as the brief requires. `git diff scala3-migration HEAD -- TestDateAndScan.scala` on the merge commit is exactly json-encode's 12 lines; after the gate lift, the working tree differs from `scala3-migration` by 12 lines again — the replacement comment, and no `if`. |
@@ -62,7 +62,7 @@ No conflict: every incoming `tracker/satterm/**` file, `tracker/PROMPT-subsume-t
 `tracker/lean/**` (`Rowpartition/SubsumeEscape.lean`, `Loop/{RejectTerm,EnvBound}.lean`, the README
 rows), `tracker/lsp-tests/RowUnsat.e` and the `tracker/TICKET-perf-type-inference.md` addition are
 NEW on `json-encode` and were added as-is. `tracker/GATE-POLICY.md` and
-`tracker/TICKET-editor-and-solver-followups.md` were changed on `json-encode` only (dd9e0316) and
+`tracker/TICKET-editor-and-solver-followups.md` were changed on `json-encode` only (3374deaf) and
 not by the programme, so they merged untouched — and both are edited by §3 for the same reason
 `TestDateAndScan.scala` is.
 
@@ -134,7 +134,7 @@ B1 suite — the row says so.
 | the same, diffed against S2's landing corpus (`scratch-subsume/s2/corpus-after`) | **0 verdicts differ**; `2 of 168 files differ`, both only in the absolute worktree prefix inside one message of `sk03`/`sk05` (`…-wt-subsume-s2` vs `…-wt-json`) — the same two, for the same reason, that S2's own gate recorded | — | `<m>/gate-corpus-diff.txt` |
 | `tracker/tools/repl-smoke.sh` | **PASS, 9 groups / 86 checks**: aliasing 2, ffi 5, ffi-tolerant 9, json 20, pipedeof 12, relations 6, scoping 4, smoke 23, tauto 5 | 365 s | `<m>/gate-repl-smoke.log` |
 | `tracker/tools/lsp-smoke.sh` | **PASS, 582 checks** = json-encode's **577** before the merge (cited, not re-run: `tracker/json-stage3/report-J3e.md`:226 and `review-J3e.md`:30, both on the landed tree; also J3a/J3b/J3d) **+ S2's 5** `RowUnsat.e` checks. The B1 program's diagnostic arrives **129 ms** after the `didOpen` (typecheck 0.10 s), severity 1, *"Row partitions are unsatisfiable at field 'RowUnsat.startDate'"* | 63 s | `<m>/gate-lsp-smoke.log`, `<m>/lsp-server.log` |
-| `client/scripts/check-corpus.sh` | **60/60 node tests, 0 fail** over the 200-document corpus — json-encode's own gate at its 2afeb426 figure | 42 s | `<m>/gate-check-corpus-fresh.log` |
+| `client/scripts/check-corpus.sh` | **60/60 node tests, 0 fail** over the 200-document corpus — json-encode's own gate at its e64c0b87 figure | 42 s | `<m>/gate-check-corpus-fresh.log` |
 | `sbt core/test` in full, **twice** (§4.1) | run 1: **1,199 properties, 1 failed** — `(iso)` of `TestRunner`, a 180 s deadline that measures a lock, diagnosed in §4.2. run 2: **1,199/1,199, fully green** | 891 s / 1,218 s | `<m>/gate-full-core-test.log`, `<m>/gate-full-core-test-2.log` |
 | `.ei` hygiene | **7** written by the gates under `core/target/scala-3.3.8/classes/modules/` (all gitignored), all deleted; `find core -name '*.ei' -newer <marker>` = **0** afterwards | — | `<m>/ei-after.txt` |
 
@@ -152,7 +152,7 @@ re-run away. **Run 2 is the run of record: 1,199 of 1,199, fully green.**
 
 | | properties | result | wall | log |
 |---|---|---|---|---|
-| **before** — `json-encode` 5d0a2614, from the branch's own tracker | **1,196** | `1196/1196`, with the B1 refutation **gated off** and twenty other refutations each evaluated 100 times | **not recorded** — `tracker/JSON-STAGE3-PLAN.md`:351 gives the count and no wall clock, and none of the J3 reports records one either | — |
+| **before** — `json-encode` 84af8a10, from the branch's own tracker | **1,196** | `1196/1196`, with the B1 refutation **gated off** and twenty other refutations each evaluated 100 times | **not recorded** — `tracker/JSON-STAGE3-PLAN.md`:351 gives the count and no wall clock, and none of the J3 reports records one either | — |
 | **after**, run 1 | **1,199** | `Failed: Total 1199, Failed 1, Errors 0, Passed 1198` — the one red is `(iso)` | **891 s (14:47)** | `<m>/gate-full-core-test.log` |
 | **after**, run 2 | **1,199** | `Passed: Total 1199, Failed 0, Errors 0, Passed 1199` | **1,218 s (20:14)** | `<m>/gate-full-core-test-2.log` |
 
@@ -235,7 +235,7 @@ the harness did not (S2)"*.
 
 ## 6. What this stage says, and what it does not
 
-* **It says** that `scala3-migration` at d278c900 merges into `json-encode` cleanly, that the
+* **It says** that `scala3-migration` at 37fc823f merges into `json-encode` cleanly, that the
   programme's instrumentation and the JSON branch's selector change coexist in `Subst.scala`, and that
   with `rejects` in the tree the B1 refutation is an ordinary fast property: green at the default
   `minSuccessfulTests`, inside a 10-minute deadline, with no flag.

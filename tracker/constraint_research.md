@@ -63,7 +63,7 @@
      Also: `Part.apply` REVERSES its RHS list on every pass, so a partition's
      rendered order depends on how many substitution passes ran.
 
-  PRIOR ART IN THE REPO'S OWN HISTORY: commit 04c2308 on branch
+  PRIOR ART IN THE REPO'S OWN HISTORY: commit 1213681 on branch
   features/limit-row-solving (Dan Doel, 2018), "Bail out of row constraint solving
   if it takes too long" — a 50,000-step countdown and an exception named
   `Eternity`, never merged. On cutoff it returns the constraint set UNSOLVED, so

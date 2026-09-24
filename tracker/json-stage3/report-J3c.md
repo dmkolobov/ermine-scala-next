@@ -1,6 +1,6 @@
 # J3c as built: the document runner (params in, one JSON document out, over HTTP)
 
-Branch `json-runner`, worktree `~/research/ermine/ermine-scala-wt-json-runner`, off `03676cbe` (json-decode d2177ca5 merged with json-doc bf832e46). Uncommitted, as the brief says. 2026-09-16, about 4 h 45 of the 5 h budget. (Report text written by the implementer agent; the harness blocks writing `.md`, so the orchestrator should save this at `tracker/json-stage3/report-J3c.md`.)
+Branch `json-runner`, worktree `~/research/ermine/ermine-scala-wt-json-runner`, off `c7e73c7d` (json-decode 3f6d97d8 merged with json-doc 0a558d68). Uncommitted, as the brief says. 2026-09-16, about 4 h 45 of the 5 h budget. (Report text written by the implementer agent; the harness blocks writing `.md`, so the orchestrator should save this at `tracker/json-stage3/report-J3c.md`.)
 
 ## Files built
 
@@ -218,7 +218,7 @@ My `jstack` is frame-for-frame the coordinator's (`scratch/jstack1.txt`, `jstack
 seconds, so it is spinning, not progressing.
 
 No J3c code is on that path: a `typeChecks` property only loads and type-checks, and the entire
-production diff since the last green tree (`3eba80f8`) is the three new `json/*.scala` files, a
+production diff since the last green tree (`17cdcbd1`) is the three new `json/*.scala` files, a
 comment in `json/Write.scala`, `relational/package.scala`'s `withDriver` and
 `SqlEmitter.getUuid` — none of them reachable from the type checker. `TestDateAndScan`'s only
 mention of `SqlEmitter` is in a comment.
@@ -230,7 +230,7 @@ grows the env, that is at best quadratic and at worst exponential over shared ki
 type-checker performance cliff on one hard rejection case, and it belongs to whoever owns
 `Subst`, not to this stage. **Recommended: a ticket plus the `GATE-POLICY.md` quarantine the same
 document already gives `TestInterfaceRoundTrip`, and a bisect of `TestDateAndScan` alone against
-`3eba80f8` by whoever holds that tree** — I could not run that here without a second worktree and
+`17cdcbd1` by whoever holds that tree** — I could not run that here without a second worktree and
 a full rebuild.
 
 Two real defects of mine surfaced while looking, and both are fixed:

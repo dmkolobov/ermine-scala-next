@@ -1,6 +1,6 @@
 # The Ermine JSON API — a guide
 
-Stages 0 through 3e, built 2026-09-14..16 on branch `json-encode` (tip `2afeb426`).
+Stages 0 through 3e, built 2026-09-14..16 on branch `json-encode` (tip `e64c0b87`).
 
 This is the working guide for Ermine developers and report authors. It says what
 the JSON path does, how to use it, and what it does not do. Everything shown

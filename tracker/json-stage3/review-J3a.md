@@ -1,8 +1,8 @@
-# Review of J3a (relations in the schema exporter) and of the contract commit a7e8e050
+# Review of J3a (relations in the schema exporter) and of the contract commit a5a53da4
 
 Independent review, 2026-09-16, ~1 h 40 of the 2 h budget. Reviewer did not write either the
 stage or the contract. Worktree `~/research/ermine/ermine-scala-wt-json-wrappers`, branch
-`json-wrappers`, base `a7e8e050` (json-s3-base); the stage is uncommitted.
+`json-wrappers`, base `a5a53da4` (json-s3-base); the stage is uncommitted.
 Scratch prefix `RP = /tmp/claude-1000/-home-dmitry-research-caliper/c359de0f-018b-42eb-960e-7519d0922cee/scratchpad/review-j3a/`.
 
 Verdict in one line: the exported arms match the plan's wire contract key for key, the
@@ -154,7 +154,7 @@ The sweep the report suggests is still outstanding: `Gen.pick` survives at
 `core/src/test/scala/com/clarifi/reporting/Gens.scala:42` (`atLeastOneOf`). Out of J3a's
 scope; the orchestrator should file it.
 
-## 6. The contract commit a7e8e050
+## 6. The contract commit a5a53da4
 
 **Delivery through nesting.** `Encode.step` reaches `data` for every `Data` node, so the
 wrappers are recognised wherever they sit: `Just (Inline rel)` → `Builtin.Just` → `step` →
@@ -328,5 +328,5 @@ decode's `TestSchema` additions are appends while J3a's are a signature change.
 FIX-THEN-LAND — one required fix (§Required fixes item 1: `Gen.hexChar` at
 `scalacheck-binding/src/main/scala/TestSchema.scala:140` breaks the scalacheck 1.11.3 the 2.11
 port compiles against; replace it with `Gen.oneOf("0123456789abcdef".toList)`). Everything
-else in this review is optional or informational. The contract commit a7e8e050 is sound as
+else in this review is optional or informational. The contract commit a5a53da4 is sound as
 written and can land with the stage.

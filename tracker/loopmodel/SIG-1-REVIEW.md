@@ -145,20 +145,20 @@ four distinct signatures among them are genuinely entailed.
 
 ## The `Lower.scala` let-signature drop: a REGRESSION of the new pipeline
 
-It is a regression, and the commit that shipped it is **80df1eb** ("Post-G1 D3 part 2:
+It is a regression, and the commit that shipped it is **faa5769** ("Post-G1 D3 part 2:
 fused module path retired", 2026-08-31). The fused pipeline handled let signatures: its
-`let` production (`parsing/TermParsers.scala:224-243` at `9ad5909^`) ran
+`let` production (`parsing/TermParsers.scala:224-243` at `d8a98a6^`) ran
 `gatherBindings(bs)` then `checkBindings`, and yielded
 `Let(letLoc, rewriteShadowed(sh, p.extract._1), rewriteShadowed(sh, p.extract._2), body)`
 -- **both** halves into the `Let(pos, implicits, explicits, body)` slots, which is who
 filled `explicits` before. The replacement was written empty: `Lower.scala`'s `SLet` case
 (`:185-187`) passes `Nil`, because `Lower.bindings` (`:287`) is *typed*
 `(List[ImplicitBinding], List[Nothing])` and drops signatures outright
-(`case _: SSigStatement => ()  // 4.1`) -- a staged stub introduced in **91c0d52**
+(`case _: SSigStatement => ()  // 4.1`) -- a staged stub introduced in **284afe1**
 ("Stage 3.4a: surface-to-core lowering with the tnodes differential", 2026-08-30) whose
-promised 4.1 never came. It became reachable behind `-Dermine.pipeline=new` in **db16d0b**
-(Stage 4.1c) and became the only module path when 80df1eb deleted the fused branch from
-`Session.dep`. The fused term grammar itself was deleted in **9ad5909**, not 3ad2623 (that
+promised 4.1 never came. It became reachable behind `-Dermine.pipeline=new` in **b8f06ae**
+(Stage 4.1c) and became the only module path when faa5769 deleted the fused branch from
+`Session.dep`. The fused term grammar itself was deleted in **d8a98a6**, not 856ee7d (that
 one is "Post-G1 D7: the statement-extent scanner"); the review brief's guess was wrong.
 `where` on a top-level equation is unaffected because it goes through
 `NewPipeline.collectBlock` -> `lowerLet` -> `pairSigs` (NewPipeline.scala:346, 504-506,

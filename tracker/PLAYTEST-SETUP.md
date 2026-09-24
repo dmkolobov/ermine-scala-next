@@ -3,7 +3,7 @@
 **Prerequisite for `tracker/WP-7-MANUAL-CHECKLIST.md`.** Follow it top to
 bottom once; then open that file and start at step A1.
 
-**AMENDED 2026-09-23 BY WP-10 STAGE 5 (at HEAD `4846cd27`, the stage itself
+**AMENDED 2026-09-23 BY WP-10 STAGE 5 (at HEAD `56f608cd`, the stage itself
 uncommitted):** the extension is now **0.1.14** and packaged as
 `editor/vscode/ermine-lang-0.1.14.vsix` (§3); the panel needs the client bundle
 and the writers checkout (§1); two settings are new (§6); §2's check was re-run
@@ -26,7 +26,7 @@ running at the time, so the next window picks it up with no reload.
 
 | | |
 |---|---|
-| The worktree | `/home/dmitry/research/ermine/ermine-scala-wt-widget-preview`, branch `widget-preview`, HEAD `4846cd27` (WP-11) plus WP-10 stage 5's uncommitted docs, one test and a one-line wording fix. (Written first at `606d99b0`.) |
+| The worktree | `/home/dmitry/research/ermine/ermine-scala-wt-widget-preview`, branch `widget-preview`, HEAD `56f608cd` (WP-11) plus WP-10 stage 5's uncommitted docs, one test and a one-line wording fix. (Written first at `2b67997b`.) |
 | VS Code | 1.138.0 at `/snap/bin/code` (the extension needs ≥ 1.75) |
 | A JDK 17+ | present: `~/.local/ermine-toolchain/jdk-21.0.12.1+1`. `bin/ermine-lsp` finds it by itself when `JAVA_HOME` is unset |
 | sbt | **not needed.** `target/ermine-classpath` already exists here and is newer than `build.sbt`, so the launcher does not shell out to sbt |
@@ -64,7 +64,7 @@ OK: Ermine session ready: 129 modules in 12.0s
 all, means the classpath cache points somewhere stale — delete
 `target/ermine-classpath` and run it again, which will shell out to sbt once.
 
-**Re-run by WP-10 stage 5 on 2026-09-23 at 13:36 (-0600), HEAD `4846cd27`
+**Re-run by WP-10 stage 5 on 2026-09-23 at 13:36 (-0600), HEAD `56f608cd`
 plus the stage's uncommitted edits (none of them touches the server): exit code
 0**, last lines:
 
@@ -85,7 +85,7 @@ VS Code.
 
 **Already done: `editor/vscode/ermine-lang-0.1.14.vsix`, 854,103 bytes, 334
 files** (`ls -l`; `unzip -l` lists 334 entries, 3,091,342 bytes unpacked),
-REPACKAGED 2026-09-23 19:37 from commit `6fb17d7a` (Q25) after the earlier
+REPACKAGED 2026-09-23 19:37 from commit `f75b77f8` (Q25) after the earlier
 852,896-byte build from WP-10 stage 5; its `src/preview-core.js` sha256
 `eea5afd7…` equals the tree's. This is the file that is installed (§4). `unzip -p … extension/package.json` says `"version": "0.1.14"`, and its
 `src/extension.js`, `src/preview-core.js`, `test/preview-core.test.js` and
@@ -325,7 +325,7 @@ The two hand-written params files the checklist asks for are in
 
 **What `git status` will show, and what is fine.** This setup's own files
 (`tracker/PLAYTEST-SETUP.md`, `tracker/playtest/`) were committed in
-`c99a8b58`. Both `.vsix` files are gitignored (`editor/vscode/.gitignore`,
+`edb0b74c`. Both `.vsix` files are gitignored (`editor/vscode/.gitignore`,
 `*.vsix`) and do not appear, and neither does `client/dist/`. So the
 checklist's end-of-session rule reads: `git status --short` should show
 `.ermine/` and `.vscode/` — and nothing else.

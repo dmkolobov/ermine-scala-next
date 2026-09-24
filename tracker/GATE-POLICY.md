@@ -59,7 +59,7 @@ re-measurement applies to the numbers that go into the trackers, once, by the re
   by the user (LSP-ROADMAP.md): do not "fix" it here. Same rule: exactly this property red gets ONE re-run.
 
 LIFTED 2026-09-17 (M2, `tracker/satterm/SUBSUME-M2.md`): `TestDateAndScan."a dateDiff combine over a relation
-WITHOUT the dates is now REJECTED (B1)"` was quarantined on 2026-09-16 (commit dd9e0316) behind
+WITHOUT the dates is now REJECTED (B1)"` was quarantined on 2026-09-16 (commit 3374deaf) behind
 `-Dermine.test.dateDiffReject=true` as a checker that "does not terminate". It terminates: the `subsume-termination`
 programme measured the refusal at 0.06-0.09 s at seventeen Supply id bases (`satterm/SUBSUME-STAGE0.md`) and proved
 the escape walk total (`lean/Rowpartition/SubsumeEscape.lean`, `runV_steps`); what ran for twenty minutes was

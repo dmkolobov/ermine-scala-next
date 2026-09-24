@@ -8,7 +8,7 @@
 
 WHY THIS EXISTS.  Nothing in the corpus stresses the row-constraint solver --
 105 of 129 boot modules produce zero partition constraints and the global
-maximum residual is 15 (`lookbackJoin`).  Upstream commit 04c2308 (2018,
+maximum residual is 15 (`lookbackJoin`).  Upstream commit 1213681 (2018,
 branch features/limit-row-solving, never merged) added a 50000-step budget and
 an exception named `Eternity`, so the blow-up was real once.  To see it you
 have to AUTHOR the input, not find it.

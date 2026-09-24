@@ -24,7 +24,7 @@ Nothing in this report was executed. No JVM was started. `preview.tla` is a **DR
 never parsed and never model-checked** — it says so at its top.
 
 Sources read: worktree `/home/dmitry/research/ermine/ermine-scala-wt-widget-preview` at
-HEAD `0ee0842583b7121316905e9aeaf9ac173dd5c762`. All `:NNN` below are lines in
+HEAD `b7b93daa1fc47d92a148b5b958ecdf2e74e517af`. All `:NNN` below are lines in
 `core/src/main/scala/com/clarifi/reporting/ermine/lsp/Preview.scala` unless another file is
 named.
 
@@ -162,7 +162,7 @@ Score: **6 unconditional yes, 3 conditional, 1 no.**
 | `Bottom` memoisation of thrown errors (Q14; `Runtime.scala:231`, `:245-250`) | **NO** | a value-level fact about the evaluator; a spec could carry `sessionPoisoned` as a boolean, but only once you already knew |
 | **five catches swallowing `Cancelled`** (`Prim.apply`, `Box.apply`, `IO.Unsafe.eval`, the foreign invoke, `Bottom.thrown`) | **NO — and worse** | the spec's `CatchCancelled` action *assumes* the cancel propagates; the model would have asserted the bug away. DM-3 (`Bottom.thrown`) was found by a human reading catch arms |
 | symlink path identity (`sameFile` `:1652`) | **NO** | filesystem semantics, out of the alphabet |
-| the test-oracle bug (`13d9d907`, "the frame property's oracle mis-measured a body that starts with LF") | **NO** | a bug in the checking apparatus; a spec adds a *second* apparatus with the same exposure — this is a risk the model buys, not one it removes |
+| the test-oracle bug (`4220cd89`, "the frame property's oracle mis-measured a body that starts with LF") | **NO** | a bug in the checking apparatus; a spec adds a *second* apparatus with the same exposure — this is a risk the model buys, not one it removes |
 | `Encode.spine` unbounded on a cyclic list (WP-20), `ppRuntime` depth cap lost (WP-21) | **NO** | evaluator/printer termination; the repo's Lean style is the tool that *could* speak about these |
 
 ---
@@ -212,7 +212,7 @@ step rather than a novelty.
 |---|---|---|---|
 | **(a) Design document only** | a *checked* statement of §2's invariants; settles open questions (phase 2b collision, "cancel twice") before they are built; a reviewable artifact in the tracker's own idiom | drifts silently; a green TLC run proves nothing about `Preview.scala` | **take this first.** The tracker (§2.5, §4's rules, Q8-Q16) is *already* a prose spec — this only makes it executable |
 | **(b) Trace validation** — log protocol events, check the log against the spec with TLC | mechanical correspondence; mirrors the repo's own `looptrace` diff; the published method (arXiv 2404.16075) is used by CCF and etcd | needs event logging the server lacks, a stable vocabulary, a harness; covers only schedules actually run | **second, if (a) pays.** Do not start here |
-| **(c) ScalaCheck generators/oracles derived from the spec's actions** | tests the real code, in the existing gate, no new tier | a hand translation that can itself be wrong (see `13d9d907`); random, not exhaustive | **the pragmatic complement**; arguably the best value-per-hour if only one thing is done |
+| **(c) ScalaCheck generators/oracles derived from the spec's actions** | tests the real code, in the existing gate, no new tier | a hand translation that can itself be wrong (see `4220cd89`); random, not exhaustive | **the pragmatic complement**; arguably the best value-per-hour if only one thing is done |
 
 ### 5.1 Which events a spec needs, and what the log carries today
 
@@ -330,7 +330,7 @@ and no runtime dependency beyond a JVM the project already ships with.
 | The preview is judged done and no further protocol tickets land (WP-13/WP-14 deferred) | the payoff is on *future* changes; the historical defects are already fixed |
 | The calibration run (step 3) fails to re-find WP-5B | the abstraction is wrong and needs rework before it can be trusted |
 | Nobody but one person can read TLA+ | the tracker's value is reviewers checking each other; a spec only one person can review is a second unreviewed artifact |
-| It grows past ~500 lines, or starts modelling the evaluator | it stops being a protocol model and becomes a second implementation, with the `13d9d907` oracle risk |
+| It grows past ~500 lines, or starts modelling the evaluator | it stops being a protocol model and becomes a second implementation, with the `4220cd89` oracle risk |
 
 ### 7.5 Recommendation
 

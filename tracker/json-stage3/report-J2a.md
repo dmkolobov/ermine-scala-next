@@ -1,6 +1,6 @@
 # J2a as built: the params decoder (`json/Decode.scala`)
 
-Branch `json-decode`, worktree `~/research/ermine/ermine-scala-wt-json-decode`, off `json-s3-base` a7e8e050. Uncommitted, as the brief says. 2026-09-16, ~2 h of the 4 h budget. (Report text written by the implementer agent, saved to this path by the orchestrator: the agent's harness blocked writing `.md` files.)
+Branch `json-decode`, worktree `~/research/ermine/ermine-scala-wt-json-decode`, off `json-s3-base` a5a53da4. Uncommitted, as the brief says. 2026-09-16, ~2 h of the 4 h budget. (Report text written by the implementer agent, saved to this path by the orchestrator: the agent's harness blocked writing `.md` files.)
 
 ## What was built
 
@@ -83,10 +83,10 @@ Generator additions in `TestSchema`: `Short`, `Byte`, `Float`, `Char`, `Date`, `
 
 Error-path distribution over the 1,409 invalid documents: `replace` same 443, `tweak` same 343, `add key` same 156, `drop key` parent 138, `append element` parent 122 / same 44, `drop element` parent 100, `retag` same 55 / sibling 8. Only `retag` reports away from the mutation, at a sibling key in the same object.
 
-## Gates (post-merge with json-encode f8a789d1 = J3a)
+## Gates (post-merge with json-encode d21f304f = J3a)
 
-`json-encode` f8a789d1 (the contract + J3a's relation arms) was merged into `json-decode`
-40827243; the numbers below are from the merged tree. Pre-merge numbers are in the git
+`json-encode` d21f304f (the contract + J3a's relation arms) was merged into `json-decode`
+2c371bd6; the numbers below are from the merged tree. Pre-merge numbers are in the git
 history of this file.
 
 Logs in `/tmp/claude-1000/-home-dmitry-research-caliper/c359de0f-018b-42eb-960e-7519d0922cee/scratchpad/j2a/` (`scratch/` below).
@@ -102,7 +102,7 @@ Logs in `/tmp/claude-1000/-home-dmitry-research-caliper/c359de0f-018b-42eb-960e-
 
 `tracker/repl-classpath.txt` was regenerated for the smokes and restored with `git checkout`.
 
-### The merge with J3a (f8a789d1)
+### The merge with J3a (d21f304f)
 
 Conflicts and how they were resolved:
 
@@ -110,7 +110,7 @@ Conflicts and how they were resolved:
 |---|---|
 | `TestSchema.scala` (2 hunks) | J3a's `rels`-threaded `shape` kept, with J2a's `stage2Leaves(underMaybe)` appended to the leaves and `stage2Composites(depth, underMaybe)` to the composites; J2a's Stage 2a block kept whole beside J3a's `maybeShape(depth, rels)`. The Stage 2a composites pass `rels = false` inward ON PURPOSE: a foreign builder stores what `whnfForeign` gives it, which unwraps a `Rel` to its raw `Ext`, so a relation inside a `Vector` is not a value the walker can write. `recordShape` already uses J3a's `pickN`; nothing J2a added draws from a pool with `Gen.pick` (there is no `Gen.pick` left in the suite). |
 | `Validate.scala` (header) | J3a's fuller format paragraph kept, with its `uuid` clause CORRECTED to the code both sides now share: the canonical 8-4-4-4-12 form (regex + `UUID.fromString`), because `UUID.fromString` alone also takes `"1-1-1-1-1"`. The body merged cleanly: one `minLength` block, J2a's canonical `uuid` check. |
-| `JSON-STAGE3-PLAN.md` (2 hunks) | Stage table: J3a's rows, with the J2a row updated to `COMMITTED 40827243, json-encode merged in, landing`. Handoff log is append-only: J3a's entries kept verbatim, J2a's superseded line replaced by one new entry for the review round and this merge. |
+| `JSON-STAGE3-PLAN.md` (2 hunks) | Stage table: J3a's rows, with the J2a row updated to `COMMITTED 2c371bd6, json-encode merged in, landing`. Handoff log is append-only: J3a's entries kept verbatim, J2a's superseded line replaced by one new entry for the review round and this merge. |
 | `Schema.scala`, `Zod.scala`, `JSON-API-DESIGN.md` | auto-merged; checked by hand — `Char`'s `minLength`, the `tag`-field refusal and `declaredMaybe` all survive beside J3a's relation arms; `Zod` has exactly one `minLength` line (both sides added it identically); both §3.7b and J3a's revision of the Stage 1b relation paragraph are present. |
 
 Adapted after the merge (staged with it): `TestDecode` gained **`(d3)`**, which draws 120

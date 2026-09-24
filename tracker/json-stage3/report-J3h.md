@@ -1,6 +1,6 @@
 # J3h: one step interpreter for call, splice and token (branch `json-unify`, worktree `ermine-scala-wt-json-unify`)
 
-Base J3g 5e37cced. Nothing committed; the tree is dirty for review (`git diff --stat`: 8 files,
+Base J3g 910f288b. Nothing committed; the tree is dirty for review (`git diff --stat`: 8 files,
 484 insertions, 273 deletions, of which `tracker/json-stage3/brief-J3h-interp.md` is the
 orchestrator's own edit, not mine; plus the new untracked `json/Interp.scala`, 242 lines, and
 `tracker/json-stage3/logs/`).
@@ -176,7 +176,7 @@ Evidence after the fixes (one run each, as asked):
 |---|---|---|
 | `sbt -batch 'core/testOnly *TestRunner'` | `Passed: Total 32, Failed 0, Errors 0, Passed 32`, 40 s; `(ip-stats) 16 reports, 33 fetch scans over 111 rows, 32 wire relations deferredx17 inlinex15`; `(ip-stack) 2000 sequential scans in 18838 ms, 2000 fetch entries` | `tracker/json-stage3/logs/j3h-suites-r.log:142`, `:132`, `:139` |
 | `scripts/gate.sh run commit` (key `1a27d452b900115089d0d73380da638a0253b19f`) | `compile PASS 7s compiled`; `corpus PASS 54s 89 loaded / 79 rejected / 0 unknown of 168; 0 differ from expected`; `lsp PASS 53s PASS lsp (582 checks)` | `tracker/json-stage3/logs/j3h-gate-r.log` |
-| scope | `git status --porcelain client/` empty; HEAD still 5e37cced (nothing committed) | -- |
+| scope | `git status --porcelain client/` empty; HEAD still 910f288b (nothing committed) | -- |
 
 `TestDoc`, `TestWidgets`, `TestJson` and `TestSchema` were NOT re-run: R1 is inside
 `Runner.evalStep` (only `TestRunner` reaches it) and R2 is comments; their green is

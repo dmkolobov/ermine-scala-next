@@ -1,7 +1,7 @@
 # Review of J3b — the document types and the document writer
 
 Independent review, 2026-09-16. Worktree `~/research/ermine/ermine-scala-wt-json-doc`, branch
-`json-doc`, base `a7e8e050`; the stage is uncommitted. Reviewer did not write the stage.
+`json-doc`, base `a5a53da4`; the stage is uncommitted. Reviewer did not write the stage.
 Budget used: about 70 minutes. Scratch:
 `/tmp/claude-1000/-home-dmitry-research-caliper/c359de0f-018b-42eb-960e-7519d0922cee/scratchpad/`
 (`rev-*.log`, `rm/Repro*.scala`).
@@ -392,11 +392,11 @@ APIs and scalacheck 1.15 generators, both of which the 2.11 port must re-check.
 
 ---
 
-# Follow-up review (the delta on top of bf832e46)
+# Follow-up review (the delta on top of 0a558d68)
 
 2026-09-16, same reviewer, about 35 minutes. Reviewed
-`git diff bf832e46` (`lsp/Symbols.scala`, `TestNamedFields.scala`, the three trackers) plus
-`git show bf832e46 -- .../json/Write.scala` for required fix 1 as committed. Re-ran
+`git diff 0a558d68` (`lsp/Symbols.scala`, `TestNamedFields.scala`, the three trackers) plus
+`git show 0a558d68 -- .../json/Write.scala` for required fix 1 as committed. Re-ran
 `TestNamedFields + TestRenamer` in one sbt invocation and, because it pins my own fix 1, one
 mutation of `Write.scala` + `TestDoc`. Everything else is cited from the implementer's logs.
 Scratch: `rev2-named-renamer.log`, `rev2-testdoc-mutant.log`, `rev2-testdoc-reverted.log`.
@@ -419,7 +419,7 @@ asserts `teardowns.length == scans.length` plus, for the two row-error shapes, t
 scan was torn down. **I mutation-checked this myself**: restoring the `throw` in `push` gives
 `Failed: Total 20, Failed 1` on exactly (f), with the label `scans 3, teardowns 2`
 (`rev2-testdoc-mutant.log`). Reverted byte-for-byte (`Write.scala` md5
-`21865c25e7e24c8258dbacc7384d4678`, `git diff bf832e46 -- Write.scala` empty) and re-ran:
+`21865c25e7e24c8258dbacc7384d4678`, `git diff 0a558d68 -- Write.scala` empty) and re-ran:
 **20/20** (`rev2-testdoc-reverted.log`).
 
 Two notes for the record, neither blocking:
@@ -496,7 +496,7 @@ shows 14% of generated modules with 0 record fields and 86% with 1..12, so the g
 produces the shape. The exact pin covers the two things the property cannot state: a field name
 shared by two constructors (`nfpa` under both `NfPW` and `NfPV`) and a nullary constructor with
 no children. Both properties reuse `Symbols.beforeSym` / `overlaps` / `containsRng`, which
-already existed at bf832e46 — no forked copy of the invariants, which is what the common brief
+already existed at 0a558d68 — no forked copy of the invariants, which is what the common brief
 asks for.
 
 `Symbols.scala` is restored byte-identically after the implementer's mutation (md5
@@ -537,7 +537,7 @@ observed drift and the landing failure's exact shape (`SET class grew past its c
 `TestTolerantCheck."E11a: four cold checks of one module publish ONE form per constraint set"`
 red gets ONE re-run; anything else red is real.
 
-`tracker/GATE-POLICY.md` has not been edited (`git diff bf832e46 -- tracker/GATE-POLICY.md` is
+`tracker/GATE-POLICY.md` has not been edited (`git diff 0a558d68 -- tracker/GATE-POLICY.md` is
 empty), so this is an outstanding action rather than a done one.
 
 ## Verdict for the delta

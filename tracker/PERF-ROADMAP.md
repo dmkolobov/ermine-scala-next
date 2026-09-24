@@ -134,7 +134,7 @@ Green before EVERY commit:
   before diagnosis; if it reproduces, it is real — do not commit.  New flakes
   get root causes, not retries-forever (LSP-ROADMAP's log has worked examples).
 
-### BASELINE OF RECORD (P1, 2026-08-31, commit 5d17377 + the harness itself)
+### BASELINE OF RECORD (P1, 2026-08-31, commit 6763245 + the harness itself)
 
 Machine: dmitry-Z370P-D3, 12 cores, 15.6GB, JDK 21.0.12.1+1, default max heap
 3984MB, 1-minute load average below 1.0 at every start.  Reproduce with
@@ -499,8 +499,8 @@ before `instantiateType` is entered.
 
 Decision 6 makes `g1-validate.sh` mandatory for exactly this change class, and
 **it had not worked since post-G1 D3.**  Four breakages, all now fixed:
-`run old` (retired in 80df1eb, exits 2); `tools.G1Importing` (deleted in
-9ad5909, ClassNotFoundException); an assertion of exactly 5 group parse-errors
+`run old` (retired in faa5769, exits 2); `tools.G1Importing` (deleted in
+d8a98a6, ClassNotFoundException); an assertion of exactly 5 group parse-errors
 (it is 3 — Stage 1's split pipeline re-parses two modules the fused one could
 not, so the gate reported an IMPROVEMENT as a failure); and
 `tracker/g1-baseline`, committed at G1 as a drift tripwire and referenced by
@@ -870,7 +870,7 @@ deferred by LSP 5.5).
 - 2026-08-31 (ROW-CONSTRAINT SOLVING — investigated on a user's recollection
   that it was historically one of the slowest parts of Ermine.  NEGATIVE
   RESULT for perf, and a REAL ROBUSTNESS FINDING.  No code changed.)
-  The recollection is corroborated by an unmerged upstream commit: **04c2308,
+  The recollection is corroborated by an unmerged upstream commit: **1213681,
   Dan Doel, 2018-08-27, "Bail out of row constraint solving if it takes too
   long"**, on branch `features/limit-row-solving`, verified NOT an ancestor of
   HEAD.  It adds a 50,000-step countdown to `incorporateAll` and an exception
@@ -962,7 +962,7 @@ deferred by LSP 5.5).
   (Relation.e:206), the corpus's worst real case, has SIX chained
   row-constrained calls.  The synthetic at N=6 solves in 0.79s.  **The corpus
   stops one step short of the knee.**  That is why every profile said 0.4-1.2%
-  and why the 2018 `Eternity` budget (04c2308, never merged) would never have
+  and why the 2018 `Eternity` budget (1213681, never merged) would never have
   fired here.
   Note also `RHS.hashCode` at 11.7%: the queue key is `(rhs.hashCode,
   lhs.hashCode)` and a TypeVar's hash is its Supply-drawn id — so the SAME
@@ -991,7 +991,7 @@ deferred by LSP 5.5).
   optimization.  What it does change is that the robustness flag now has a
   number behind it — **eight chained inferred row operations in one definition
   hangs the compiler**, and inside the single-threaded resident LSP that is an
-  unrecoverable hang, not a slow save.  Porting 04c2308's budget (and reporting
+  unrecoverable hang, not a slow save.  Porting 1213681's budget (and reporting
   the unsolved set as a diagnostic rather than spinning) is the fix, and it
   belongs to LSP robustness debt.  A user writing a 10-way join would meet this
   on their first save.
@@ -1066,7 +1066,7 @@ deferred by LSP 5.5).
   THE GATE HAD NOT WORKED SINCE POST-G1 D3, which matters more than the design,
   because Decision 6 names it as mandatory for exactly this change class.  Four
   breakages: `g1-validate.sh:34` called `g1-diff.sh run old`, retired in
-  80df1eb (exits 2); it ran `tools.G1Importing`, deleted in 9ad5909
+  faa5769 (exits 2); it ran `tools.G1Importing`, deleted in d8a98a6
   (ClassNotFoundException); `g1-diff.sh` asserted exactly 5 group parse-errors
   when it is now 3, because Stage 1's split pipeline re-parses two modules the
   fused one could not — the gate was reporting an IMPROVEMENT as a failure; and
@@ -1111,7 +1111,7 @@ deferred by LSP 5.5).
 
   BASELINE RE-RECORDED (signed off).  `tracker/g1-baseline` was cut with `run
   old` before D3 and had gone stale.  Re-cut from a full-inference run at
-  3a2dd06, and the diff was small: only **6 of 129 interfaces** changed
+  2a7efae, and the diff was small: only **6 of 129 interfaces** changed
   (Relation, Relation/Op, Relation/Predicate, Layout/Chart, Layout/Report,
   Layout/Column/Unsafe — all row-constraint-heavy), plus browse/groups.  The
   drift check is now a HARD GATE, and the README records that re-cutting is a

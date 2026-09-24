@@ -104,9 +104,9 @@ a fourth fragment of `FetchFragments.e` if it fits in a line or two; otherwise l
 - (fxl-headline) and (fx1)/(fx5) stay green after the `HeadlineSource` refactor.
 - The pr-tier sweep `TestTolerantCheck` 6.2c keeps a catalogue `knownHeadDisagreements` of local
   binding heads; a new stdlib module with a local `let`/`where` head under a row constraint can
-  move it (J3g's Headline.e:63:9 did, commit 58c52fbb). Run `sbt -batch 'core/testOnly
+  move it (J3g's Headline.e:63:9 did, commit b1226e9c). Run `sbt -batch 'core/testOnly
   *TestTolerantCheck'` ONCE at the end; if it names a `Crosstab.e`/`Headline.e` location, add it to
-  the catalogue with a one-line comment as 58c52fbb did, and re-run that suite once.
+  the catalogue with a one-line comment as b1226e9c did, and re-run that suite once.
 
 ## Gates
 

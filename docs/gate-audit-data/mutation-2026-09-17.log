@@ -1,4 +1,4 @@
-mutate: commit b0ffb5db seed=1 n=1 classes=obo,swap,guard,mapord lanes=2 out=/home/dmitry/research/ermine/scratch-gate-audit/mutation-s1
+mutate: commit af863292 seed=1 n=1 classes=obo,swap,guard,mapord lanes=2 out=/home/dmitry/research/ermine/scratch-gate-audit/mutation-s1
 mutate: baseline gate corpus CACHED-PASS 43s 89 loaded / 79 rejected / 0 unknown of 168; 0 differ from expected
 mutate: baseline gate lsp CACHED-PASS 44s PASS  lsp (582 checks)
 mutate: baseline gate looptrace CACHED-PASS 29s 720 solves (20 seed x 6 bases + 600 generated); 720 segments; 720 agree
@@ -77,7 +77,7 @@ suites                  3        1         0          0         0
 harness exit=1
 
 [exited with code 0]
-mutate: commit b0ffb5db seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/cross-corpus2
+mutate: commit af863292 seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/cross-corpus2
 mutate: baseline gate corpus CACHED-PASS 43s 89 loaded / 79 rejected / 0 unknown of 168; 0 differ from expected
 mutant corpus given0 guard-575241c2e2 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2273 69s
 mutant corpus given1 mapord-9d53077f60 CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:641 68s
@@ -123,7 +123,7 @@ corpus                  1        9         0          0         0
 !!!     - _ <- (ks ++ ts).traverse[Pretty, Name](fresh _)
 !!!     + _ <- (ts ++ ks).traverse[Pretty, Name](fresh _)
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-mutate: commit b0ffb5db seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/corpus-recheck
+mutate: commit af863292 seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/corpus-recheck
 mutate: baseline gate corpus CACHED-PASS 43s 89 loaded / 79 rejected / 0 unknown of 168; 0 differ from expected
 mutant corpus guard guard-406ead7b36 CAUGHT core/src/main/scala/com/clarifi/reporting/ermine/Constraints.scala:2216 56s
 mutant corpus mapord mapord-25d83b6eee SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/SigEntail.scala:499 69s
@@ -145,7 +145,7 @@ corpus                  2        2         0          0         0
 corpus recheck exit=1
 
 [exited with code 0]
-mutate: commit b0ffb5db seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/g1-rescope
+mutate: commit af863292 seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/g1-rescope
 mutate: baseline gate g1 CACHED-PASS 282s 9 pass, 0 fail
 mutant g1 guard guard-a2d82f07d1 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/SigEntail.scala:343 185s
 mutant g1 mapord mapord-8707b56c7d SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:2183 185s
@@ -170,7 +170,7 @@ g1                      0        4         0          0         0
 !!!     - (ds ++ ds0, subs ++ isp)
 !!!     + (ds0 ++ ds, subs ++ isp)
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-mutate: commit b0ffb5db seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/lt-corpus-check
+mutate: commit af863292 seed=1 n=1 classes=obo,swap,guard,mapord lanes=1 out=/home/dmitry/research/ermine/scratch-gate-audit/lt-corpus-check
 mutate: baseline gate looptrace-corpus CACHED-PASS 1964s 18/18 groups agree over 3210869 segments
 mutant looptrace-corpus given0 obo-c62b48da22 SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:1599 1586s
 mutant looptrace-corpus given1 swap-19fc4805ae SURVIVED core/src/main/scala/com/clarifi/reporting/ermine/Subst.scala:890 1548s

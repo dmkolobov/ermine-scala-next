@@ -21,8 +21,8 @@ module ShouldFail.Sig03 where
    checker; `local` is INFERRED (`forall r t. r <- ((|health|), t) => {..r} -> Int`) and
    the call is refused by ordinary inference.  Decisive probe: `let g : Int -> Int; g x = x
    in g "hello"` LOADS, its `where` twin is rejected.  A regression of the new pipeline:
-   the fused `let` production (parsing/TermParsers.scala:224-243 at 9ad5909^) filled both
-   halves of `Let`; the empty stub was written in 91c0d52, became the only path in 80df1eb
+   the fused `let` production (parsing/TermParsers.scala:224-243 at d8a98a6^) filled both
+   halves of `Let`; the empty stub was written in 284afe1, became the only path in faa5769
    (2026-08-31).  Top-level and `where` go through `NewPipeline.pairSigs`, so sig01 is
    accepted.
 

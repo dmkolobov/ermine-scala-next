@@ -3,7 +3,7 @@
 (* UNCHECKED.  THIS FILE HAS NEVER BEEN PARSED BY SANY, NEVER TRANSLATED,    *)
 (* NEVER RUN THROUGH TLC OR ANY OTHER TOOL.  It is a DRAFT SKELETON written  *)
 (* by reading core/src/main/scala/com/clarifi/reporting/ermine/lsp/          *)
-(* Preview.scala at 0ee08425 and editor/vscode/src/preview-core.js.  Expect  *)
+(* Preview.scala at b7b93daa and editor/vscode/src/preview-core.js.  Expect  *)
 (* syntax errors, missing conjuncts, and at least one wrong invariant.  Its  *)
 (* purpose is to show the SHAPE and the SIZE of the model, not to be right.  *)
 (*                                                                          *)

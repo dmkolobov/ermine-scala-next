@@ -25,7 +25,7 @@ unreachable path go with it.  List in §5.
   `git diff --stat`: the five modified `lsp/*.scala` plus the new `lsp/QuickFix.scala`.  No
   `Subst`, `Type`, `Pretty`, `Lower`, `TolerantCheck`, `Renamer`, `NewPipeline`.  **Tier 0.**
 * `tracker/repl-classpath.txt` is **CLEAN in this tree** — `git status --porcelain
-  tracker/repl-classpath.txt` prints nothing, last touched by `956ebf5`.  The brief's premise is
+  tracker/repl-classpath.txt` prints nothing, last touched by `a0d8316`.  The brief's premise is
   stale (the implementer regenerated and reverted it, or never wrote it back); there is no content
   change to judge, cosmetic or real.
 * `tracker/LSP-ROADMAP.md` and `tracker/lean/` untouched.  `tracker/loopmodel/briefs/

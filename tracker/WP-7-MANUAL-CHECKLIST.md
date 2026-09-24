@@ -47,7 +47,7 @@ E2 gains a `SalesReport` sub-step; E1, E2's main step and E9 stay on `Sales`.
 | The render tab is UNTITLED and DIRTY | every update is a `WorkspaceEdit`, so the tab always has unsaved changes and closing it offers to save a throwaway render: **Don't Save**. There is no way round it for an untitled document, and it is one of the motivations for WP-10's panel, which Group E exercises (under `target: json`, the setting Groups A–C run with, the tab is what you get) |
 | 0.1.9 WRITES TO YOUR DISK | it is the first version that does. On the first pick of a report with no params file it creates three files under `.ermine/preview/`. Group B is where you look at them |
 | 0.1.10 CAN REPLACE ONE | and **only** through the command **Ermine: Write Params Skeleton**, and **only** after a modal you answer. Nothing automatic overwrites a params file, and nothing in the extension ever deletes one. B22-B26 are those steps |
-| Undo | any step that edits a checked-in file says so and says how to undo it. **At the end (A14) `git status --short` should show `.ermine/` and `.vscode/` and nothing else** — `.vscode/` is not gitignored here; the setup's own files (`tracker/PLAYTEST-SETUP.md`, `tracker/playtest/`) have been committed since (`c99a8b58`). `core/src/test/resources/doc/Sales.e` must be clean, and so must every file Group E edits (`tracker/playtest/fixtures/WpInt.e`, `client/src/widgets/scorecard.ts`) |
+| Undo | any step that edits a checked-in file says so and says how to undo it. **At the end (A14) `git status --short` should show `.ermine/` and `.vscode/` and nothing else** — `.vscode/` is not gitignored here; the setup's own files (`tracker/PLAYTEST-SETUP.md`, `tracker/playtest/`) have been committed since (`edb0b74c`). `core/src/test/resources/doc/Sales.e` must be clean, and so must every file Group E edits (`tracker/playtest/fixtures/WpInt.e`, `client/src/widgets/scorecard.ts`) |
 
 **The fixtures, one line each.** `WpSpin.e` diverges — it is the wedge, and
 **it offers TWO report-typed bindings in the picker, `spin : Int -> Node` AND
@@ -283,7 +283,7 @@ rest of WP-7's done-when. A15–A18 are an optional settings-validation tail.
 ### A14 [1.6] — Put the files back — **NEVER RUN**
 
 - **Do:** `git checkout -- core/src/test/resources/doc/Sales.e` and, if you ran A6, `git checkout -- core/src/main/resources/modules/Json.e`. Then `git status --short`.
-- **Expect:** **`.ermine/` and `.vscode/` and nothing else** — `.vscode/` is NOT gitignored in this worktree; the setup's own files were committed in `c99a8b58`. **`core/src/test/resources/doc/Sales.e` must be clean:** other suites read it.
+- **Expect:** **`.ermine/` and `.vscode/` and nothing else** — `.vscode/` is NOT gitignored in this worktree; the setup's own files were committed in `edb0b74c`. **`core/src/test/resources/doc/Sales.e` must be clean:** other suites read it.
 - **Bears on:** hygiene.
 
 ### A15 [2.3] — `ermine.preview.roots` validation (OPTIONAL) — **NEVER RUN**
@@ -878,7 +878,7 @@ E11 are the only way anyone will learn the answers they record.
   (MEASURED by the WP-11 review). E14 is the one step that changes it.
 - `ermine.preview.timeoutSeconds` at `60`, except in E5–E6, which set `5`.
 - **The report for E1–E3 and E9 is `core/src/test/resources/doc/Sales.e`**,
-  binding `report` (`report : Query -> Node`), typed since `6fb17d7a`: a
+  binding `report` (`report : Query -> Node`), typed since `f75b77f8`: a
   heading, a text and three tables (E2's `Sales` paragraph has the detail).
   **AMENDED BY PLAYTEST F2 (2026-09-23):** this line used to name
   `core/src/test/resources/modules/Doc/SalesReport.e` (`report : Node`), and

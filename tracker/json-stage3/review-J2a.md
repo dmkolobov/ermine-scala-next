@@ -1,8 +1,8 @@
 # Independent review of J2a (the params decoder)
 
 Reviewer: an agent that did not write the stage. Worktree
-`~/research/ermine/ermine-scala-wt-json-decode`, branch `json-decode`, base `a7e8e050`
-(`json-s3-base`). Reviewed: `git diff a7e8e050` plus the untracked
+`~/research/ermine/ermine-scala-wt-json-decode`, branch `json-decode`, base `a5a53da4`
+(`json-s3-base`). Reviewed: `git diff a5a53da4` plus the untracked
 `core/.../json/Decode.scala` and `scalacheck-binding/.../TestDecode.scala`. Read in the
 order the brief names; review brief is `tracker/json-stage3/brief-review.md` (found in the
 `ermine-scala-wt-json` worktree — it is not present in this one). ~1 h 45 m.

@@ -1,6 +1,6 @@
 # Second review of `tracker/JSON-WIDGET-PLAYGROUND.md` (adversarial, 2026-09-19)
 
-Reviewed against branch `json-encode` at `a0830244`, the same commit the rewrite cites.
+Reviewed against branch `json-encode` at `739e161d`, the same commit the rewrite cites.
 Every `file:line` below was opened in this review; nothing was built or run. The first
 review (`JSON-WIDGET-PLAYGROUND-REVIEW.md`) is the historical record and is not edited; its
 "checked and confirmed" list is not re-litigated here.

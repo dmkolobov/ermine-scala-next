@@ -26,10 +26,10 @@ done
 # REPAIRED 2026-08-31.  This gate had been failing since post-G1 D3 and had
 # evidently not been run since: it called two things that D3 deleted.  The
 # ModuleScope-vs-importing() differential ran com.clarifi.reporting.ermine.
-# tools.G1Importing, deleted in 9ad5909 along with the fused grammar it
+# tools.G1Importing, deleted in d8a98a6 along with the fused grammar it
 # compared against -- there is no second pipeline to differ from any more, so
 # the check is GONE rather than repaired.  The double run asked g1-diff.sh for
-# the 'old' pipeline, retired in 80df1eb, which exits 2.
+# the 'old' pipeline, retired in faa5769, which exits 2.
 #
 # In its place the drift tripwire is finally ARMED.  tracker/g1-baseline has
 # had the exact layout `compare` expects (ei/, browse.txt, groups.txt) since

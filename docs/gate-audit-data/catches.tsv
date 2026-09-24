@@ -1,31 +1,31 @@
 gate	class	sure	fix	date	defect	source
-corpus	REAL-DEFECT	yes	followups-4	2026-09-03	solver accumulation cliff across modules in one JVM (gu05 1.1 s alone, 27 s after two others)	commit 1ca4df9f
-corpus	REAL-DEFECT	unsure	862fa1ea	2026-09-02	labelCheckEarly: 11 of 26 changed messages moved blame into the stdlib	TICKET-row-solver-8abc.md:232
-lsp-smoke	REAL-DEFECT	unsure	93600ddc	2026-09-09	editor path lacked publishing=true (found by the reviewer's scripted LSP probe, not the fixtures)	loopmodel/S5-REVIEW.md:30
-looptrace-corpus	REAL-DEFECT	unsure	f450810b	2026-09-06	smallcanon canonKey empty-list prefix (flag default OFF)	loopmodel/D1-CHANGE.md:353
-ei-diff	REAL-DEFECT	yes	afa7c613	2026-09-02	4 published types regressed from a concrete row to constrained polymorphic	commit faf6e285
+corpus	REAL-DEFECT	yes	followups-4	2026-09-03	solver accumulation cliff across modules in one JVM (gu05 1.1 s alone, 27 s after two others)	commit c777cbd6
+corpus	REAL-DEFECT	unsure	1411c6c9	2026-09-02	labelCheckEarly: 11 of 26 changed messages moved blame into the stdlib	TICKET-row-solver-8abc.md:232
+lsp-smoke	REAL-DEFECT	unsure	53216547	2026-09-09	editor path lacked publishing=true (found by the reviewer's scripted LSP probe, not the fixtures)	loopmodel/S5-REVIEW.md:30
+looptrace-corpus	REAL-DEFECT	unsure	74b49298	2026-09-06	smallcanon canonKey empty-list prefix (flag default OFF)	loopmodel/D1-CHANGE.md:353
+ei-diff	REAL-DEFECT	yes	4c18fa5c	2026-09-02	4 published types regressed from a concrete row to constrained polymorphic	commit 52f8df40
 ei-diff	REAL-DEFECT	yes	ticket-B9	2026-09-13	stackedPair loses kind binders; OFF scheme ill-kinded	loopmodel/E11c-REVIEW.md:23
-g1-validate	REAL-DEFECT	yes	fb222701	2026-08-30	six old/new pipeline .ei divergences (new pipeline behind a flag)	commit fb222701
-g1-validate	REAL-DEFECT	unsure	ac74137a	2026-08-31	substitution fast path flipped rendered RHS order (uncommitted change)	commit ac74137a
-lean	GATE-DEFECT	unsure	ee070eaa	2026-09-07	S4 model mirror broke the NoFalseAccept chain; full lake build failed	loopmodel/S4B-REVIEW.md:14
+g1-validate	REAL-DEFECT	yes	6d15c91d	2026-08-30	six old/new pipeline .ei divergences (new pipeline behind a flag)	commit 6d15c91d
+g1-validate	REAL-DEFECT	unsure	49e63cc7	2026-08-31	substitution fast path flipped rendered RHS order (uncommitted change)	commit 49e63cc7
+lean	GATE-DEFECT	unsure	eb3a921d	2026-09-07	S4 model mirror broke the NoFalseAccept chain; full lake build failed	loopmodel/S4B-REVIEW.md:14
 2.11-suite	REAL-DEFECT	yes	ticketed	2026-09-16	Timestamp column does not round-trip through SQLite on 2.11	json-encode-2.11:report-P2.md:55
 2.11-suite	REAL-DEFECT	yes	worked-around	2026-09-16	2.11 Session.eval does not resolve type constructors inside a term	json-encode-2.11:report-P1.md:74
 2.11-suite	REAL-DEFECT	unsure	not-ported	2026-09-09	TestInterfaceKey warm load deadlocks the 2.11 loader	backport-2.11:BACKPORT.md:89
-2.11-suite	GATE-DEFECT	yes	d75dfb1f	2026-09-16	TestRunner request built with unordered nospaces printer	json-encode-2.11:report-P3.md:52
-sql-render	REAL-DEFECT	yes	81603d6d	2026-09-07	forcing any pivot panicked: record# returned a 2.13 MapView	loopmodel/E1-EXAMPLES.md:1112
-sql-render	REAL-DEFECT	yes	8902f782	2026-09-07	MultiCurrencyPnl unrated-postings section always empty (example)	loopmodel/E3-REVIEW.md:140
-sigentail-survey	REAL-DEFECT	yes	3be37bf9	2026-09-11	seven shipped stdlib signatures do not entail their bodies	commit c1d70379
-sigentail-survey	REAL-DEFECT	unsure	4287882b	2026-09-11	let-bound signatures dropped by rename/Lower.scala (LET-1)	commit c1d70379
-TestStage1Pins	REAL-DEFECT	yes	80df1eba	2026-08-31	interleaved equations of one name silently merged	LSP-ROADMAP.md:3149
-TestStage1Pins	REAL-DEFECT	yes	4943c72c	2026-08-31	term chains could not open with a prefix operator	LSP-ROADMAP.md:3161
-TestStage1Pins	REAL-DEFECT	yes	4943c72c	2026-08-31	class statements with a body silently dropped	LSP-ROADMAP.md:3166
-TestErmine	REAL-DEFECT	yes	7a4254d7	2026-08-30	Scala 3 port: 30+ foreign bindings failed at run time	commit 7a4254d7
-TestErmine	GATE-DEFECT	yes	4e68569c	2026-08-31	fixture writeback made ill-kinded modules "load"	LSP-ROADMAP.md:3183
-TestRenamer	REAL-DEFECT	yes	65c037c1	2026-09-16	LSP symbol tree emitted field selectors as straddling siblings	json-stage3/report-J3b.md:73
-TestErmineModules	REAL-DEFECT	unsure	3be37bf9	2026-09-11	SoftRelation.e example built a drilldown row with dt twice	loopmodel/SIG-3b-CORRECTIONS.md:111
-TestInterfaceRoundTrip	REAL-DEFECT	unsure	1113913c	2026-08-31	process-global depCache served closures with another session's flags	LSP-ROADMAP.md:3127
-TestInterfaceRoundTrip	GATE-DEFECT	yes	93600ddc	2026-09-09	TestInterfaceKey draft flipped JVM-wide properties	loopmodel/S5-HYGIENE.md:433
-TestLower	GATE-DEFECT	yes	cb3cb111	2026-09-09	TestInterfaceKey set ermine.loadInSeries process-wide	commit cb3cb111
-TestDateAndScan	GATE-DEFECT	yes	ac2606a0	2026-09-16	fixture no(...) returned passed, ScalaCheck re-ran a refutation 100x	GATE-POLICY.md:61
-TestDoc	GATE-DEFECT	unsure	3eba80f8	2026-09-16	J2a/J3b merge gap in TestDoc.dImps	json-stage3/report-J3c.md:179
-TestRTag	REAL-DEFECT	yes	c895bf2e	2015-08-04	StringT lost equals (outside the 2026 window; not ranked)	commit c895bf2e
+2.11-suite	GATE-DEFECT	yes	2de40034	2026-09-16	TestRunner request built with unordered nospaces printer	json-encode-2.11:report-P3.md:52
+sql-render	REAL-DEFECT	yes	fac46775	2026-09-07	forcing any pivot panicked: record# returned a 2.13 MapView	loopmodel/E1-EXAMPLES.md:1112
+sql-render	REAL-DEFECT	yes	0caaba94	2026-09-07	MultiCurrencyPnl unrated-postings section always empty (example)	loopmodel/E3-REVIEW.md:140
+sigentail-survey	REAL-DEFECT	yes	93c9d1bb	2026-09-11	seven shipped stdlib signatures do not entail their bodies	commit 16889be4
+sigentail-survey	REAL-DEFECT	unsure	75253148	2026-09-11	let-bound signatures dropped by rename/Lower.scala (LET-1)	commit 16889be4
+TestStage1Pins	REAL-DEFECT	yes	faa5769e	2026-08-31	interleaved equations of one name silently merged	LSP-ROADMAP.md:3149
+TestStage1Pins	REAL-DEFECT	yes	ba6429c0	2026-08-31	term chains could not open with a prefix operator	LSP-ROADMAP.md:3161
+TestStage1Pins	REAL-DEFECT	yes	ba6429c0	2026-08-31	class statements with a body silently dropped	LSP-ROADMAP.md:3166
+TestErmine	REAL-DEFECT	yes	5ba81767	2026-08-30	Scala 3 port: 30+ foreign bindings failed at run time	commit 5ba81767
+TestErmine	GATE-DEFECT	yes	21a331a2	2026-08-31	fixture writeback made ill-kinded modules "load"	LSP-ROADMAP.md:3183
+TestRenamer	REAL-DEFECT	yes	8f16f913	2026-09-16	LSP symbol tree emitted field selectors as straddling siblings	json-stage3/report-J3b.md:73
+TestErmineModules	REAL-DEFECT	unsure	93c9d1bb	2026-09-11	SoftRelation.e example built a drilldown row with dt twice	loopmodel/SIG-3b-CORRECTIONS.md:111
+TestInterfaceRoundTrip	REAL-DEFECT	unsure	be085509	2026-08-31	process-global depCache served closures with another session's flags	LSP-ROADMAP.md:3127
+TestInterfaceRoundTrip	GATE-DEFECT	yes	53216547	2026-09-09	TestInterfaceKey draft flipped JVM-wide properties	loopmodel/S5-HYGIENE.md:433
+TestLower	GATE-DEFECT	yes	edb6434f	2026-09-09	TestInterfaceKey set ermine.loadInSeries process-wide	commit edb6434f
+TestDateAndScan	GATE-DEFECT	yes	36c2dcf9	2026-09-16	fixture no(...) returned passed, ScalaCheck re-ran a refutation 100x	GATE-POLICY.md:61
+TestDoc	GATE-DEFECT	unsure	17cdcbd1	2026-09-16	J2a/J3b merge gap in TestDoc.dImps	json-stage3/report-J3c.md:179
+TestRTag	REAL-DEFECT	yes	fb3537ca	2015-08-04	StringT lost equals (outside the 2026 window; not ranked)	commit fb3537ca

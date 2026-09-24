@@ -1,7 +1,7 @@
 # Review of J3d (widget prop types, TypeScript client, table adapters, one new widget)
 
 Independent review, 2026-09-16. Worktree `~/research/ermine/ermine-scala-wt-json-client`,
-branch `json-client`, uncommitted against base `6f0e3d8b`. Reviewer did not write the stage.
+branch `json-client`, uncommitted against base `f7a7bfdb`. Reviewer did not write the stage.
 Read: `brief-J-common.md`, `JSON-STAGE3-PLAN.md`, `brief-J3d-client.md`, `report-J3d.md`,
 `report-J3a.md` (J3d notes), `brief-review.md`. Legacy read-only at `~/research/ermine/ermine-writers`.
 
@@ -22,7 +22,7 @@ one required documentation fix for J3e.
 
 ## Scope
 
-`git diff --stat 6f0e3d8b`: `.gitignore` (+2), `tracker/JSON-API-DESIGN.md` (+52, the new
+`git diff --stat f7a7bfdb`: `.gitignore` (+2), `tracker/JSON-API-DESIGN.md` (+52, the new
 §3.7e), `tracker/JSON-STAGE3-PLAN.md` (+11). Untracked: `client/` (30 tracked files),
 `core/src/main/resources/modules/Layout/Widgets.e` and `Widgets/{Format,Table,Drilldown,Scorecard}.e`,
 `core/src/test/resources/modules/Doc/SalesReport.e`, `scalacheck-binding/src/main/scala/TestWidgets.scala`,

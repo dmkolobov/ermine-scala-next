@@ -2,7 +2,7 @@
 
 > **STATUS: PROPOSALS.** Nothing here has been built. Options and one recommendation per problem,
 > for the user to adopt or reject. Every `file:line` was opened on branch `json-encode` at
-> `a0830244` while writing this. Third-party facts are tagged *external* and were **not verified**
+> `739e161d` while writing this. Third-party facts are tagged *external* and were **not verified**
 > against the tool's source; the bracketed tag on each recommendation names the prior art it copies
 > or says `[first principles]`. Group A is the second review's unresolved findings
 > (`JSON-WIDGET-PLAYGROUND-REVIEW-2.md`); Group B is what reading the design turned up. Settled

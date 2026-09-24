@@ -3,7 +3,7 @@
 Stage S2 of the `subsume-termination` programme (`tracker/PROMPT-subsume-termination.md`,
 brief `tracker/satterm/briefs/brief-S2.md`, REBRIEFED 2026-09-16 as a harness stage).
 Worktree `~/research/ermine/ermine-scala-wt-subsume-s2`, branch `subsume-s2` off
-`subsume-termination` (3fe4e8c3).
+`subsume-termination` (e4e73e95).
 
 **No compiler change. Nothing under `core/src/main` is touched; `Subst.scala` is not touched.
 Nothing committed.**
@@ -545,7 +545,7 @@ with a log path.
    say so; this stage found nothing to change that. The programme's deliverable 1 is met and
    deliverable 2 is not owed.
 2. **The `-Dermine.test.dateDiffReject` gate on `json-encode` can be lifted once this lands.**
-   It was added (commit dd9e0316, GATE-POLICY.md, TICKET-editor-and-solver-followups item 12)
+   It was added (commit 3374deaf, GATE-POLICY.md, TICKET-editor-and-solver-followups item 12)
    because the B1 property looked like a hang. It is 187 s of ordinary suite now. Lifting it is
    a `json-encode` edit, not this branch's, and it should be done only after this stage is
    committed — named here so the orchestrator can ticket it.
@@ -614,15 +614,15 @@ green and twice deliberately red. `find core -name '*.ei'` = 0. No commits.
 ## Landing gates (orchestrator's gate run, 2026-09-17)
 
 Run by the orchestrator on the tree being landed — `~/research/ermine/ermine-scala-wt-subsume-s2`
-at **28e4761c** (branch `subsume-s2`, the S2 stage commit merged with `subsume-termination`, so
+at **1aa3e142** (branch `subsume-s2`, the S2 stage commit merged with `subsume-termination`, so
 this is the first run that carries S0's `Subst.scala` instrumentation AND S2's harness changes
 together). Logs are under `<g>` = `/home/dmitry/research/ermine/scratch-subsume/gates-s2/`.
 Nothing was committed. `tracker/repl-classpath.txt` was regenerated from this worktree's
 `target/ermine-classpath` before the smoke gates and restored with `git checkout` afterwards, per
 GATE-POLICY's worktree rule; `git status` is clean apart from this section.
 
-**Tier 1 is NOT triggered.** `git diff --stat ccaf3b45..HEAD -- core/src/main` is **empty** —
-nothing under `core/src/main` has changed since the S0 landing commit (`ccaf3b45`), which ran
+**Tier 1 is NOT triggered.** `git diff --stat ac841a35..HEAD -- core/src/main` is **empty** —
+nothing under `core/src/main` has changed since the S0 landing commit (`ac841a35`), which ran
 Tier 1 in full and was green. The whole S2 diff is test sources (`scalacheck-binding/src/main`),
 an LSP test fixture (`tracker/lsp-tests/RowUnsat.e`), `tracker/tools/lsp-client.py` and tracker
 documents.
@@ -650,4 +650,4 @@ properties all *proved*, 1/1 `(rr)` proved. The only numbers that differ from §
 (this run was deliberately contended, four JVMs at once), and no wall clock is a gate here — the
 B1 suite's only requirement was to finish inside the 10-minute deadline, which it did with four
 and a half minutes to spare. Tier 1 was not run and is not owed: `core/src/main` is untouched
-since `ccaf3b45`, which ran it.
+since `ac841a35`, which ran it.

@@ -183,7 +183,7 @@ object TestDateAndScan extends Properties("Date, dateDiff and Layout.Scan (F3)")
         |""".stripMargin, "good", onlyTest)
 
   /* UNQUARANTINED 2026-09-17 (M2 of the `subsume-termination` programme,
-   * tracker/satterm/SUBSUME-M2.md).  From 2026-09-16 (commit dd9e0316) this refutation was
+   * tracker/satterm/SUBSUME-M2.md).  From 2026-09-16 (commit 3374deaf) this refutation was
    * registered only under `-Dermine.test.dateDiffReject`, because it "did not terminate" when
    * the suite ran alone.  The programme showed that the checker was never what ran long: the
    * module is REFUSED in 0.06-0.09 s by the compiler at every one of seventeen `Supply` id

@@ -8,7 +8,7 @@ report `tracker/json-stage3/report-<id>.md` in the stage worktree. Budget: under
 
 The UNCOMMITTED diff in the stage worktree against its base
 (`git -C <worktree> diff <base>` plus untracked files; the orchestrator names the base).
-For J3a also review the contract commit `a7e8e050` (`git show a7e8e050`) -- it lands with J3a.
+For J3a also review the contract commit `a5a53da4` (`git show a5a53da4`) -- it lands with J3a.
 
 ## What you check
 

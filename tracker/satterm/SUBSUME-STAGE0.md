@@ -3,7 +3,7 @@
 Stage S0 of the `subsume-termination` programme (`tracker/PROMPT-subsume-termination.md`,
 brief `tracker/satterm/briefs/brief-S0.md`). Worktree
 `~/research/ermine/ermine-scala-wt-subsume-s0`, branch `subsume-s0`, base `scala3-migration`
-478a369c. **No fix; measurement only. Nothing committed.**
+5557ba39. **No fix; measurement only. Nothing committed.**
 
 Scratch, and every log path below, is relative to
 `<s>` = `/home/dmitry/research/ermine/scratch-subsume/s0/`.
@@ -217,7 +217,7 @@ module); and **not one of the thirty has any frame at `Type.scala:651`** — the
 the thread is "always" in.
 
 **What this can and cannot say.** Part B's three dumps were taken on other trees
-(`json-encode 3eba80f8`, `json-runner 85d95531`) and are not in `<s>/`, so the honest claim is
+(`json-encode 17cdcbd1`, `json-runner 1ed1d60c`) and are not in `<s>/`, so the honest claim is
 **"not reproduced here"**, not "did not happen". With about one sample in twelve landing in the
 walk, three independent single dumps all landing there is ~0.06 % — most likely a small,
 correlated sample (one dump per JVM, or several taken inside one walk) rather than a
@@ -718,7 +718,7 @@ The thing that *is* worth fixing is in the test harness, and it is one line: a r
 property should assert the rejection once (`Prop.proved` after catching `Death`) instead of
 asking ScalaCheck for a hundred identical library-scale checks. That is a `TestErmine.no`
 change, outside this programme's brief, and it is why the property is already gated behind
-`-Dermine.test.dateDiffReject=true` on `json-encode` (commit dd9e0316).
+`-Dermine.test.dateDiffReject=true` on `json-encode` (commit 3374deaf).
 
 ---
 
@@ -897,9 +897,9 @@ nondeterminism is parked by the user, `-Dermine.solveDet` stays default OFF, and
 ## Landing gates (orchestrator's gate run, 2026-09-16)
 
 Run by the orchestrator on the tree being landed — `~/research/ermine/ermine-scala-wt-subsume-s0`
-at **00abe6e6** (branch `subsume-s0`, merged with `subsume-termination`) — with the pre-change
-tree `~/research/ermine/ermine-scala-wt-subsume` at **7f2a00a5** (branch `subsume-termination`,
-Scala byte-identical to `scala3-migration` 478a369c) as the A side of every differential. The
+at **8f5ed923** (branch `subsume-s0`, merged with `subsume-termination`) — with the pre-change
+tree `~/research/ermine/ermine-scala-wt-subsume` at **11f38083** (branch `subsume-termination`,
+Scala byte-identical to `scala3-migration` 5557ba39) as the A side of every differential. The
 only Scala difference between the two trees is `Subst.scala` **+157 / −2**, all of it behind
 `-Dermine.subsumeTrace` (**default OFF**). Logs, traces and snapshots are under
 `<g>` = `/home/dmitry/research/ermine/scratch-subsume/gates-s0/`. Nothing was committed, and the only file either tree gained is this section: `tracker/repl-classpath.txt` was regenerated from each worktree's own `target/ermine-classpath` per GATE-POLICY's worktree rule and **restored afterwards** (`git checkout`), so both trees are otherwise clean and `find core -name '*.ei'` is 0 on both.

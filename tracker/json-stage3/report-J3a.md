@@ -1,6 +1,6 @@
 # J3a as built: relations in the schema exporter (the §3.4a union, the wrappers, the generic arm)
 
-Branch `json-wrappers`, worktree `~/research/ermine/ermine-scala-wt-json-wrappers`, off `json-s3-base` a7e8e050. Uncommitted. 2026-09-16, ~3 h of the 4 h budget. (Report text written by the implementer agent, saved to this path by the orchestrator: the agent's harness blocked writing `.md` files.)
+Branch `json-wrappers`, worktree `~/research/ermine/ermine-scala-wt-json-wrappers`, off `json-s3-base` a5a53da4. Uncommitted. 2026-09-16, ~3 h of the 4 h budget. (Report text written by the implementer agent, saved to this path by the orchestrator: the agent's harness blocked writing `.md` files.)
 
 ## What was built
 

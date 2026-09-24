@@ -1,6 +1,6 @@
-# Review of J3g (`json-unify`, uncommitted diff against json-encode babac791)
+# Review of J3g (`json-unify`, uncommitted diff against json-encode 9fa3f89f)
 
-Reviewer: independent (did not write the stage). Scope: `git diff babac791` (15 files, 723
+Reviewer: independent (did not write the stage). Scope: `git diff 9fa3f89f` (15 files, 723
 insertions, 151 deletions) plus the untracked `Layout/Widgets/Headline.e`, `FetchFragments.e`,
 `client/src/{widgets,generated}/headline.ts`. Every number below names its log; the logs I
 produced are `tracker/json-stage3/logs/review-*.log`.
@@ -33,7 +33,7 @@ own mutation (`sequence_Fetch` right to left): `Failed: Total 29, Failed 1` with
 (fxl-order) red, `14 of 24 failed` (`logs/mutation-fxl-order.log:103-109`) -- read and consistent
 with the distribution (the one-leaf trees cannot fail).
 
-## My mutations (both reverted; `git diff babac791 --stat` is back to 15 files / 723 / 151, and
+## My mutations (both reverted; `git diff 9fa3f89f --stat` is back to 15 files / 723 / 151, and
 `core/copyResources` was re-run so `target/` holds the stage's `Fetch.e` again)
 
 Two mutations in one `core/testOnly *TestRunner` run, attributable per property because

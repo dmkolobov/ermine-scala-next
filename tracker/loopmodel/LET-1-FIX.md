@@ -483,7 +483,7 @@ is Stage-3 Decision (a); it was silently answering the inferred one, and
 **Two gate observations worth carrying into the trackers,** neither caused by this change:
 
 1. `tracker/g1-baseline` does NOT predate the let drop.  It was re-recorded on 2026-08-31
-   (`1a18b78`) and re-cut on 2026-09-09 (`ed53fe7`), both AFTER `80df1eb` made the split
+   (`7ebcbfa`) and re-cut on 2026-09-09 (`ed53fe7`), both AFTER `faa5769` made the split
    pipeline the only module path, so it was captured WITH the regression in place.  The
    brief's instruction to expect it to be "equal-or-closer" to a fused-pipeline baseline
    does not apply; it is green, and the reason it is green is that `G1Compare` reads

@@ -2,7 +2,7 @@
 
 (Report text written by the implementer agent, saved to this path by the orchestrator: the agent's harness blocked writing `.md` files.)
 
-Branch `json-charts`, worktree `~/research/ermine/ermine-scala-wt-json-charts`, off c5f92b2d (J3d on `json-client`). Uncommitted. 2026-09-16, ~4 h of the 5 h budget, plus the review fix (`review-J3e.md`, FIX-THEN-LAND) — see "Review fixes applied" at the end.
+Branch `json-charts`, worktree `~/research/ermine/ermine-scala-wt-json-charts`, off 5b0cc4ee (J3d on `json-client`). Uncommitted. 2026-09-16, ~4 h of the 5 h budget, plus the review fix (`review-J3e.md`, FIX-THEN-LAND) — see "Review fixes applied" at the end.
 
 ## Files built
 

@@ -1,7 +1,7 @@
 # J3g: widgets and layouts in `Fetch`; `Fetch Node` as THE report type (Change A)
 
 Branch `json-unify`, worktree `~/research/ermine/ermine-scala-wt-json-unify`, off `json-encode`
-babac791. Budget 6 h. Read `brief-J-common.md`, design note §3.4b, `modules/Layout/Fetch.e`,
+9fa3f89f. Budget 6 h. Read `brief-J-common.md`, design note §3.4b, `modules/Layout/Fetch.e`,
 `json/Runner.scala` (`render`, `build`, `renderFetch`, `interpret`, `evalStep`), the four
 `core/src/test/resources/doc/Fetch*.e` examples, `TestRunner.scala` section (fx), and
 `client/README.md` "Adding a widget". J3f's decisions (design note §3.4b table) stand: `Fetch` is a

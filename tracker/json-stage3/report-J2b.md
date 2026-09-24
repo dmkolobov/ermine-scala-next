@@ -2,7 +2,7 @@
 
 (Report text written by the implementer agent, saved to this path by the orchestrator: the agent's harness blocked writing `.md` files.)
 
-Branch `json-spread`, worktree `~/research/ermine/ermine-scala-wt-json-spread`, off `json-decode` d2177ca5 (J2a reviewed + `json-encode` f8a789d1 / J3a merged in). Uncommitted, as the brief says. 2026-09-16, inside the 4 h budget.
+Branch `json-spread`, worktree `~/research/ermine/ermine-scala-wt-json-spread`, off `json-decode` 3f6d97d8 (J2a reviewed + `json-encode` d21f304f / J3a merged in). Uncommitted, as the brief says. 2026-09-16, inside the 4 h budget.
 
 ## What was built
 

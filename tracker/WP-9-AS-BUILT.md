@@ -2,7 +2,7 @@
 
 > **FOLDED INTO `tracker/JSON-WIDGET-PLAYGROUND.md` ON 2026-09-21 -- all nine edits of the closing section, plus the WP-10 and WP-17 rows. THAT DOCUMENT IS NOW THE AUTHORITY; this file is kept as the build's own record.**
 
-Branch `wp9-bundle`, forked from `widget-preview` at `f8fb9de7`. Everything below is inside
+Branch `wp9-bundle`, forked from `widget-preview` at `dc30cc50`. Everything below is inside
 `client/` except this file. **NOTHING HERE HAS RUN IN A BROWSER OR A VS CODE WEBVIEW**: no
 CSP has been enforced against these bundles, no panel has loaded them, and the third row of
 §5's bundle checklist ("`table` renders through the writers global") is untouched and still
@@ -28,7 +28,7 @@ and the guarded ambient-`document` read is `client/src/format.ts:121`, not `:123
 | Q-B | **TSC-FIRST, not `ts-loader`.** webpack's entry is the `tsc` output (`dist/src/…js`); `bundle` = `npm run build && webpack`. The vendored closure is therefore `webpack` + `webpack-cli` and nothing else, permanently (the design review's D5, recommendation (b)) | the ORCHESTRATOR, for this build, on the design review's recommendation; **the user has been told**. It departs from §5's Bundle row, which says `entry: src/index.ts` + `ts-loader`. `webpack.config.js` is structured so switching back is two constants and two commented blocks |
 | D4 | **TWO ENTRIES**: `ermine-client` (`window.ErmineClient`) and `ermine-host` (`window.ErmineHost`) | same. The reason is §5's own CSP: under `script-src ${cspSource}` with no nonce the host page may carry no inline `<script>` at all |
 | — | The host entry is the **presentation reducer skeleton** only, carrying §5's eight message kinds **minus** §4's withdrawn rule (5) and **plus** WP-22's `held`. WP-10 owns the panel | same |
-| Q19 | **DECIDED BY THE USER, 2026-09-20**, verbatim: *"oh yeah unsafe-eval sounds great. We'll remove it later on if need be"*. `'unsafe-eval'` is allowed in the **PREVIEW WEBVIEW's CSP only**, so the committed writers bundle loads as it is. **THREE THINGS IT DOES NOT CHANGE, and they are what keeps it removable**: (a) **WP-9's own bundles must still contain no `eval(` and no `new Function`** — `(b-no-eval)` pins exactly that, so the flag comes out the day the writers bundle is rebuilt; (b) **`unsafe-eval` does NOT permit inline `<script>`**, so D4's second entry is still required — only `'unsafe-inline'` or a nonce would relax that, and §5's CSP has neither; (c) nobody has still watched the writers bundle load or fail in a webview, so the decision removed a BLOCKER, not a DOUBT. The decision was taken after this branch forked, and `widget-preview` already carries it at `a046cb0b` (§5's CSP row, §13's Q19 row, §14's WP-9 row) — **the fold-in must not re-add it** | the USER |
+| Q19 | **DECIDED BY THE USER, 2026-09-20**, verbatim: *"oh yeah unsafe-eval sounds great. We'll remove it later on if need be"*. `'unsafe-eval'` is allowed in the **PREVIEW WEBVIEW's CSP only**, so the committed writers bundle loads as it is. **THREE THINGS IT DOES NOT CHANGE, and they are what keeps it removable**: (a) **WP-9's own bundles must still contain no `eval(` and no `new Function`** — `(b-no-eval)` pins exactly that, so the flag comes out the day the writers bundle is rebuilt; (b) **`unsafe-eval` does NOT permit inline `<script>`**, so D4's second entry is still required — only `'unsafe-inline'` or a nonce would relax that, and §5's CSP has neither; (c) nobody has still watched the writers bundle load or fail in a webview, so the decision removed a BLOCKER, not a DOUBT. The decision was taken after this branch forked, and `widget-preview` already carries it at `c791f098` (§5's CSP row, §13's Q19 row, §14's WP-9 row) — **the fold-in must not re-add it** | the USER |
 | Q-C | **NOT TOUCHED.** `client/dist/` stays gitignored (`.gitignore:10`); the bundle is built, never committed | WP-17 |
 
 ## 2. What was added or changed
@@ -284,12 +284,12 @@ early, and the old text pointed them at the wrong thing. No test pinned the old 
 ## Fold into §5 / §14 at merge
 
 **Nine edits**, each one line or one row, checked against `widget-preview`'s tip
-`a046cb0b` (line numbers below are that tip's). **This file touches no other tracker file
+`c791f098` (line numbers below are that tip's). **This file touches no other tracker file
 on purpose**, to keep `tracker/JSON-WIDGET-PLAYGROUND.md` free of merge conflicts while
 WP-8, WP-22 and WP-24 are in flight.
 
 **Before anything else: DO NOT RE-ADD Q19.** The user's decision landed on `widget-preview`
-after this branch forked, and `a046cb0b` already carries it in §5's CSP row (`:855`),
+after this branch forked, and `c791f098` already carries it in §5's CSP row (`:855`),
 §13's Q19 row (`:1659`) and §14's WP-9 row (`:2635`). The edits below assume it is there.
 
 1. **§5, Bundle row** — replace `entry: src/index.ts`, `ts-loader` with: **two entries**,
@@ -302,7 +302,7 @@ after this branch forked, and `a046cb0b` already carries it in §5's CSP row (`:
    inline `<script>`, so the second entry is required exactly as before.
 2. **§5, Bundle row** — the `.gitignore` citation `:11` is **`:10`** (D3, MEASURED again here).
 3. **§5, `devtool` row** — it is now pinned by a TEST, `(b-no-eval)`, not only by the
-   config. §5's CSP row at `a046cb0b` already says "D9's static test"; this edit's job is
+   config. §5's CSP row at `c791f098` already says "D9's static test"; this edit's job is
    to give that test its name and file (`client/test/bundle.test.ts`).
 4. **§5, Bundle checklist row** — two of the three rows are node tests as of WP-9
    (`client/test/bundle.test.ts`); the third, "`table` renders through the writers global",

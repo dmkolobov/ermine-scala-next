@@ -1,7 +1,7 @@
 # SUBSUME-M2 REVIEW — merge `scala3-migration` into `json-encode`, and the B1 gate lift
 
 Opus reviewer, 2026-09-17. I did not write this stage. Worktree `~/research/ermine/ermine-scala-wt-json`
-(branch `json-encode`, merge commit **9ec3406d**, gate lift + follow-ups UNCOMMITTED). Every command below was
+(branch `json-encode`, merge commit **38756a10**, gate lift + follow-ups UNCOMMITTED). Every command below was
 run from that worktree with `PATH=~/.local/ermine-toolchain/jdk-21.0.12.1+1/bin:~/.local/ermine-toolchain/bin:$PATH`
 and `ERMINE_JAVA_OPTS="-Xmx2g -XX:ActiveProcessorCount=4"`. My logs are under
 `<r>` = `/home/dmitry/research/ermine/scratch-subsume/review-m2/`; the implementer's are under
@@ -60,15 +60,15 @@ otherwise idle. Either way the ten-minute deadline has ~2.5x headroom.
   `case (b@DataStatement(l, v, kindArgs, typeArgs, cons, _), rk)`; `:831-832` the `DataStatement(…, cons, sels)`
   pattern and re-construction — the one site that *carries the field through*; `:1877` and `:1886` two `_`
   widenings. Nothing else. This is json-encode's named-fields change and it survived.
-* `git diff 2afeb426 HEAD -- core/…/Subst.scala` = **+157/−2**, and I checked it is not merely the same count
-  but the same patch: `diff <(git diff 2afeb426 HEAD -- …) <(git diff 478a369c scala3-migration -- …)` is
+* `git diff e64c0b87 HEAD -- core/…/Subst.scala` = **+157/−2**, and I checked it is not merely the same count
+  but the same patch: `diff <(git diff e64c0b87 HEAD -- …) <(git diff 5557ba39 scala3-migration -- …)` is
   **byte-identical**. S0's instrumentation arrived whole.
 * The merged line numbers match the report's §1.1: `:367` `SubsumeTrace.cse`, `:618` `enter`, `:653` `atEscape`,
   `:654-655` `phaseFskvs`/`phaseKindVars`, `:2241` `object SubsumeTrace`.
 * Third check: `TestNamedFields` 16/16 (§1) exercises the `sels` path; `TestRowRefusals`/B1 exercise `:648`.
 
 **3.2 `tracker/tools/lsp-client.py`: both blocks kept.** `git diff --stat scala3-migration HEAD` = **+22**
-(json-encode's `ermine/schema` block, 4 checks at `:448/:453/:456/:461`); `git diff --stat 2afeb426 HEAD` =
+(json-encode's `ermine/schema` block, 4 checks at `:448/:453/:456/:461`); `git diff --stat e64c0b87 HEAD` =
 **+24** (S2's `RowUnsat.e` block, 5 checks at `:210/:213/:214/:216/:218`). Independently confirmed by count:
 my own smoke run says **582 = 577 + 5**, and 577 is json-encode's figure at `report-J3e.md`:226 and
 `review-J3e.md`:30.
@@ -80,9 +80,9 @@ The report is right that this is the one place where a textually clean auto-merg
 right to make the gate lift the resolution rather than editing the merge commit. After the lift the working tree
 differs from `scala3-migration` by **12 lines again**, all comment, no `if`.
 
-**3.4 Nothing was lost in the merge.** `git diff 2afeb426 HEAD --diff-filter=D` is **empty** (no file deleted),
-and json-encode's divergence from the base `478a369c` over all the programme's files is exactly the three files
-the brief predicted (`git diff --stat 478a369c 2afeb426 --` over the eight candidate paths: Subst.scala 10,
+**3.4 Nothing was lost in the merge.** `git diff e64c0b87 HEAD --diff-filter=D` is **empty** (no file deleted),
+and json-encode's divergence from the base `5557ba39` over all the programme's files is exactly the three files
+the brief predicted (`git diff --stat 5557ba39 e64c0b87 --` over the eight candidate paths: Subst.scala 10,
 TestDateAndScan 12, lsp-client.py 22 — the other five test files had no json-encode change to lose).
 
 ## 4. The gate lift — correct
@@ -105,7 +105,7 @@ TestDateAndScan 12, lsp-client.py 22 — the other five test files had no json-e
   `no` → 100 evaluations and 1,282 s → 181–195 s / 1,698 s → 524 s (`SUBSUME-STAGE2.md`:32, :218, :39, :413), the
   58 ms LSP answer (`SUBSUME-STAGE2.md`:43, :385), and the `:648` perf residual 2.79 s/12.2 s = 23 %,
   45.4 s/184 s = 24.7 %, 12.1x `:365` (`TICKET-perf-type-inference.md`:97-101). **One figure is wrong — §F-1.**
-* The property-count arithmetic is exact: 1,196 (json-encode at 5d0a2614, `JSON-STAGE3-PLAN.md`:351) + B1
+* The property-count arithmetic is exact: 1,196 (json-encode at 84af8a10, `JSON-STAGE3-PLAN.md`:351) + B1
   (registered at all for the first time on this branch) + `(B1-bound)` + `(rr)` = **1,199**, which is what both
   full runs report. The lift *adds* a property; it does not merely speed one up.
 
@@ -167,7 +167,7 @@ log and predates the correction — out of scope for M2.)
 **F-2 (should fix before the commit; hygiene, not a defect). `docs/JSON-GUIDE.md` must not be swept into the
 gate-lift commit.** It is untracked, 87 KB, `mtime` 2026-09-16 21:01 — inside M2's working window, so a
 `git add -A` or `git commit -a -A` would land it — yet its own header says *"Stages 0 through 3e, built
-2026-09-14..16 on branch json-encode (tip 2afeb426)"*, i.e. it is JSON Stage-3 documentation written against the
+2026-09-14..16 on branch json-encode (tip e64c0b87)"*, i.e. it is JSON Stage-3 documentation written against the
 **pre-merge** tip, not M2's product, and no review has read it. *Fix*: commit the six paths §5 of the report
 names explicitly (the five modified files plus `tracker/satterm/SUBSUME-M2.md`, and now this review), never `-A`.
 

@@ -1,6 +1,6 @@
 # Review of `tracker/JSON-WIDGET-PLAYGROUND.md` (adversarial, 2026-09-19)
 
-Reviewed against branch `json-encode` at `a0830244`. Every `file:line` below was opened in
+Reviewed against branch `json-encode` at `739e161d`. Every `file:line` below was opened in
 this review; nothing was built or run. Where a claim rests on third-party behaviour it is
 marked *external*, as the document does.
 

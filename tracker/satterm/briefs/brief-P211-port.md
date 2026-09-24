@@ -1,11 +1,11 @@
 # brief-P211 — port the programme's Scala to `backport-2.11`, then merge into `json-encode-2.11` (Opus porter, 4 h; reviewer 1.5 h)
 
-Worktree `~/research/ermine/ermine-scala-wt-backport`, branch `backport-2.11` (tip 572e3592 at the time of writing).
+Worktree `~/research/ermine/ermine-scala-wt-backport`, branch `backport-2.11` (tip bec47958 at the time of writing).
 Read `backport/BACKPORT.md` (JDK 8 + sbt 0.13 recipe, `backport/env-2.11.sh`), `backport/brief-BP-*.md` and
 `backport/CORRECTIONS.md` (how earlier ports were done and reviewed), and on `scala3-migration` (main checkout
 `~/research/ermine/ermine-scala`): `tracker/satterm/SUBSUME-PLAN.md` (closing sequence), `SUBSUME-STAGE0.md` §3
 (what S0 built), `SUBSUME-STAGE2.md` §3 (what S2 built), and the diffs of the landing commits (`git log
-478a369c..scala3-migration -- core scalacheck-binding tracker/tools`). Report: `backport/SUBSUME-2.11.md`.
+5557ba39..scala3-migration -- core scalacheck-binding tracker/tools`). Report: `backport/SUBSUME-2.11.md`.
 
 ## The user's instruction (2026-09-16)
 
@@ -39,7 +39,7 @@ then merge `backport-2.11` into `json-encode-2.11` with a full test there. Nothi
 ## Gates (2.11, JDK 8 + sbt 0.13 per BACKPORT.md)
 
 Compile; the converted suites alone; `TestRowRefusals` alone; flag-OFF run zero records; full 2.11 `core/test` in
-the background (backport-2.11 baseline 735/735 per the sig-entail back-port; json-encode-2.11 858/858 at d75dfb1f)
+the background (backport-2.11 baseline 735/735 per the sig-entail back-port; json-encode-2.11 858/858 at 2de40034)
 with count and wall clock before/after. Then the merge step: in `~/research/ermine/ermine-scala-wt-json211`
 (`json-encode-2.11`), `git merge backport-2.11`, resolve conflicts (list them), port the `(B1-bound)` pin if
 `TestDateAndScan.scala` is there, lift any `dateDiffReject`-style gate if one was ported to 2.11, full 2.11

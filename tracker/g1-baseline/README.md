@@ -33,7 +33,7 @@ explanation, and the baseline is re-cut on it.
 1,301 `browse.txt` lines; `groups.txt` byte-identical.  `G1Compare` — which compares up to
 alpha-equivalence, so it sees through renaming — reports 22 signatures in 7 files as
 genuinely differing.  Two classes, both from adoptions COMMITTED after the baseline was
-recorded in `1a18b78` (2026-08-31):
+recorded in `7ebcbfa` (2026-08-31):
 
 * `Relation/Scan.ei :: sumBy'` — F3 (`775a20f`, 2026-09-08) deleted a VACUOUS `r <- (h, t)`
   from the written signature in `Relation/Scan.e` by hand; the baseline still carries it.

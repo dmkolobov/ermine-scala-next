@@ -1294,7 +1294,7 @@ numbers everything else is ranked against are real.
 THE PERF PREMISE, with provenance.  Read every figure with its tag.
 
 - MEASURED (`tracker/tools/perf-bench.sh editor`, `Layout/Report.e`, 1757
-  lines / 77,385 bytes, PERF-ROADMAP P1 baseline of record, commit 5d17377,
+  lines / 77,385 bytes, PERF-ROADMAP P1 baseline of record, commit 6763245,
   2026-08-31): round trip **1.616 s** = read **0.770 s** + typecheck **0.515 s**
   + debounce **0.300 s** (policy, not work) + residual **0.017 s**.
 - MEASURED (LSP roadmap "Gate evidence (G2)", 2026-08-31, the same file): the
@@ -2419,7 +2419,7 @@ with the SET count recorded; g1 re-cut and justified; batch A/B; committed.
 ## Blocked / Awaiting
 
 **GATE G1 — awaiting sign-off (2026-08-30).** Stage 1 checklist complete
-(commits 8b1e07f..b42d132).  Every gate layer ran dry: .ei 1447/1447
+(commits 94c1d66..a232222).  Every gate layer ran dry: .ei 1447/1447
 alpha-equal, browse/groups/importing goldens, G1Resolution 8223/8223,
 warm-reload matrix, eval + scoping corpus under both pipelines, 4.4
 flips.  TWO KNOWN DELTAS need explicit acceptance: (1) lookbackJoin's
@@ -2492,8 +2492,8 @@ abbreviated:
 - misses answer null; didClose clears; no .ei written next to fixtures.
 
 Baselines at gate: core/test 761/762 (known Constraints failure only),
-repl-smoke 3/3, lsp-smoke 27/27. Commits f0ba9b4 (0.1), 0f3a12c (0.2),
-d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
+repl-smoke 3/3, lsp-smoke 27/27. Commits 6fb0fea (0.1), 8addabe (0.2),
+421ff3c (0.3), 14b9373 (0.4), 6d6f8f6 (0.5), 598626a (0.6), + this one
 (0.7). Stage 0 complete — loop stopped for sign-off per the gate.
 
 ## Iteration log
@@ -3812,12 +3812,12 @@ d3bde88 (0.3), 3665e06 (0.4), 0b8f30e (0.5), a978805 (0.6), + this one
 
 ## Gate evidence (G2, recorded 2026-08-31)
 
-Stage 2 shipped in seven commits, b401325..HEAD, on branch
+Stage 2 shipped in seven commits, 2039d28..HEAD, on branch
 scala3-migration.  Every one of them was green on all four baselines
 before it landed.
 
 BATCH STRICTNESS FROZEN — the gate's hard half.  Across the whole
-stage (`git diff f7aaed6..HEAD`), the only batch-path file touched is
+stage (`git diff fd0c7e5..HEAD`), the only batch-path file touched is
 Session.scala, at **27 insertions and 0 deletions**: the `Buffer`
 SourceFile subclass plus its two cases in sourceFileTypeScore /
 sourceFileOrdering.  Nothing was removed or altered.  The REPL golden

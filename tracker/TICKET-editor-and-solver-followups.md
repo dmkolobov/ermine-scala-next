@@ -392,7 +392,7 @@ to refuse `combine_Op (dateDiff_Op days (col_Op startDate) (col_Op endDate)) gap
 Run ALONE (`sbt 'core/testOnly com.clarifi.reporting.TestDateAndScan'`) the property never returns: one RUNNABLE
 thread in `Subst.subsumeType (Subst.scala:648) -> SubstEnv.kindVars (:169) -> Kind.kindVars (Kind.scala:96) ->
 HasKindVars.mapHasKindVars.vars (:125) -> Type.vars (Type.scala:649-653)` recursing, 28 CPU-minutes observed,
-GC idle. Reproduced on scala3-migration 478a369c (pre-JSON), json-encode 3eba80f8 and json-runner 85d95531;
+GC idle. Reproduced on scala3-migration 5557ba39 (pre-JSON), json-encode 17cdcbd1 and json-runner 1ed1d60c;
 inside a full core/test it passes when the Supply ids it meets are favourable (every landing run up to 1170/1170)
 and wedged three full runs on 2026-09-16 when two new suites shifted the order. `subsumeType` recomputes
 `hm.kindVars` over the WHOLE substitution environment per call, unmemoised; on a refutation search that grows the

@@ -1,7 +1,7 @@
 # J3h: one step interpreter for call, splice and token (Change B)
 
 Branch `json-unify`, worktree `~/research/ermine/ermine-scala-wt-json-unify`, on top of J3g,
-committed as 5e37cced (your base; the review diff is against it). Budget 6 h. Read `brief-J-common.md`,
+committed as 910f288b (your base; the review diff is against it). Budget 6 h. Read `brief-J-common.md`,
 `brief-J3g-lift.md` and `report-J3g.md`, design note §3.4a/§3.4b/§3.4c, then `json/Write.scala`
 (`segments`, `doc`, `relation`, `resolve`, `one`, `inlined`, `deferred`, `Rows.Sink`),
 `json/Runner.scala` (`render`, `renderFetch`, `interpret`, `evalStep`, `data`),

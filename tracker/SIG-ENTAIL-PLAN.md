@@ -180,7 +180,7 @@ orchestrator's (FIX-THEN-ADVANCE edits applied; BLOCK -> a fix round to the impl
   `X <- (L, sk)`; 871/914 have no concrete label at all and are out of reach of any
   refutation-shaped procedure ("X meets sk" is not "X is inside sk") -- S2 must handle
   variable-only wanteds by a different route. SECOND BUG: rename/Lower.scala drops
-  let-bound signatures (regression: stub 91c0d52, sole path since 80df1eb); no LSP test
+  let-bound signatures (regression: stub 284afe1, sole path since faa5769); no LSP test
   pins it; ticket for the LSP loop. Annotation site live: pin sig05 added. Tier 0 off:
   corpus 88/70/0 of 158, off-vs-warn 0 differ and .out byte-identical, .ei 129/129
   identical vs g1-baseline and off-vs-warn, repl-smoke 8/8 (with the WORKTREE classpath --

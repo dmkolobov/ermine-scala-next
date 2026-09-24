@@ -7,8 +7,8 @@ written up here so you can decide.
 - The second one is a **known bug already filed in this repo**, under
   `core/examples/bugs/` — the diagnosis below is the upstream author's, and it
   reproduces on this branch exactly as their report describes.
-- For the first, `Term.scala` is byte-identical to the original at `8de8010`
-  (`git diff 8de8010 --ignore-cr-at-eol -- .../Term.scala` is empty), so the
+- For the first, `Term.scala` is byte-identical to the original at `2929691`
+  (`git diff 2929691 --ignore-cr-at-eol -- .../Term.scala` is empty), so the
   code producing it is unchanged. I could not run the 2.11 build to confirm the
   *behaviour* empirically — its dependencies (`scala-parsers`, `f0`,
   `machines`) are no longer resolvable, which is what started this whole
@@ -46,7 +46,7 @@ discarded when a `let` appears in function position. The fix is one word:
 `eval(b, envp, stk)`.
 
 `Term.scala` has **no changes** from the original in this migration
-(`git diff 8de8010 --ignore-cr-at-eol -- .../Term.scala` is empty), so this is
+(`git diff 2929691 --ignore-cr-at-eol -- .../Term.scala` is empty), so this is
 upstream. I have not applied the fix.
 
 ## 2. A pattern variable may not shadow a global — already reported upstream

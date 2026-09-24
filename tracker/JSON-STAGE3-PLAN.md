@@ -27,7 +27,7 @@ produced by a new document runner (new code, not ermine-writers).
 
 ## Branches and landing mechanics
 
-`json-s3-base` = `json-encode` 2071bfa0 + this plan, the briefs and the CONTRACT commit
+`json-s3-base` = `json-encode` c5910118 + this plan, the briefs and the CONTRACT commit
 (below). Every Phase 1 stage branches off it; it reaches `json-encode` with the first
 landing (its code is reviewed as part of stage J3a's review).
 
@@ -197,8 +197,8 @@ lines on `ermine.json.doc`; both need a log4j configuration to be visible
 | Id | Branch | What | Depends on | Phase |
 |---|---|---|---|---|
 | J3a | json-wrappers | Schema exporter: relation union/arms, `nullable` + `rowCount`, row-polymorphic relation arm, zod discriminated union, fixtures | contract | 1 -- LANDED |
-| J2a | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 -- COMMITTED 40827243, json-encode merged in, landing |
-| J3b | json-doc | `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 -- BUILT bf832e46, landing |
+| J2a | json-decode | `json/Decode.scala` (type-directed JSON -> Runtime), entry-type check, round-trip + agreement properties | contract | 1 -- COMMITTED 2c371bd6, json-encode merged in, landing |
+| J3b | json-doc | `modules/Layout/Doc.e`; `json/Doc.scala`, `json/Write.scala` in the scanner effect; hot-loop row encoder; Buffered strategy; delivery policy + threshold; `PlanCache` + deferred tokens; per-relation row/byte log | contract | 1 -- BUILT 0a558d68, landing |
 | J3c | json-runner | `json/Runner.scala` (boot, report lookup, `Params -> Node` check, decode, apply, write on one connection), HTTP server (`POST /report/<Module>`, `GET /data/<token>`), `bin/ermine-serve` | J2a, J3b | 2 |
 | J3d | json-client | BUILT 2026-09-16 (report-J3d.md, design note 3.7e): `modules/Layout/Widgets/{Format,Table,Drilldown,Scorecard}.e` + the `Layout/Widgets.e` umbrella (one module per widget: field selectors are module-global); `client/` TS package -- generated zod, dispatcher, legacy table adapters, `formatDisplay` port, `scorecard` end to end | J3a, J3b | 2 -- BUILT |
 | J3e | json-charts | Chart/stylebox prop types and adapters (`axisChart`, `pieChart`, `drilldownPieChart`, `drilldownBar`, `styleBox`; `treeMap` registered as unsupported) | J3d | 3 |
@@ -236,7 +236,7 @@ branch (they share `Lib.scala`).
   relational-engine behaviour change whose real gate is the full `core/test`, not the JSON
   suites. A ticket for J3c: `relational/package.scala:121-128` needs
   `try k(d) finally teardown()` so a scan that throws on its own is torn down too.
-- 2026-09-16 J3b landing gate (full `core/test` on bf832e46) found a REAL bug that
+- 2026-09-16 J3b landing gate (full `core/test` on 0a558d68) found a REAL bug that
   `Layout/Doc.e` exposed: `Renamer 3.2a.6.4 corpus: siblings are sorted, and no two of them
   straddle` failed with 7 pairs, all record-style constructors straddling their own field
   symbols. Root cause in Stage 1a's `lsp/Symbols.scala`: selectors were emitted as SIBLINGS of
@@ -248,7 +248,7 @@ branch (they share `Lib.scala`).
   declarations + an exact tree) pin the shape where the syntax is generated; mutation-checked
   against the old shape. Also measured, not fixed: `TestTolerantCheck` alone on this tree x3,
   E11a green every time (58/58), so the landing run's E11a failure did not reproduce here.
-- 2026-09-16 06:20 contract + plan committed a7e8e050 on json-s3-base; worktrees
+- 2026-09-16 06:20 contract + plan committed a5a53da4 on json-s3-base; worktrees
   wt-json-wrappers / wt-json-decode / wt-json-doc created; J3a, J2a, J3b implementers launched.
   Later briefs (J3c, J3d, J3e, J2b, review, port) written, uncommitted in wt-json until the
   first landing.
@@ -257,7 +257,7 @@ branch (they share `Lib.scala`).
   Reviews: J2a FIX-THEN-LAND (flaky (e2) depth probe; unpinned `tag`-field disagreement),
   J3b FIX-THEN-LAND (RowError must exit via Stop so the driver tears down; RecordMap comment
   and two gate figures corrected), fixes dispatched to the implementers; J3a review running.
-  Process slip: briefs written after a7e8e050 were not in the stage worktrees; copied there.
+  Process slip: briefs written after a5a53da4 were not in the stage worktrees; copied there.
   J3b found and fixed a Scala 3 inference bug in record/RecordMap.scala (SharingKeySet.get ->
   Nothing cast) that silently broke record equality / uniq dedup on the relational side: the
   landing full core/test is its real gate. Tickets for J3c: NULL in a GUID column NPEs in
@@ -265,7 +265,7 @@ branch (they share `Lib.scala`).
 - 2026-09-16 ~08:30 J3a reviewed FIX-THEN-LAND (one fix: `Gen.hexChar` absent from the 2.11
   scalacheck; applied by the orchestrator, 67/67) and COMMITTED on json-wrappers with the
   contract, the briefs and review-J3a.md; landing gate (full core/test) running. J3b committed
-  bf832e46 on json-doc after its fixes (81/81, looptrace 720/720), full core/test running.
+  0a558d68 on json-doc after its fixes (81/81, looptrace 720/720), full core/test running.
   NOTE for J3b/J3d: the wrappers take a ROW, not a relation -- `Inline (|a, b|)` / `Inline r`,
   since `data Inline r = Inline [..r]`. J3a found `Gen.pick` biased in ScalaCheck 1.15.4
   (first pool element almost never kept; `TestSchema.pickN` replaces it) and that
@@ -277,9 +277,9 @@ branch (they share `Lib.scala`).
   fixed: `TestJson` declared three different `data Shape`s and two `data Series` in one
   process, which the PROCESS-GLOBAL `DataConDecl` registry turns into a cross-property race
   (one red in twenty runs), and `TestDecode`'s null-wrapper equivalence had a hole for a
-  raw `Some(JNull)` inside a native container. json-encode f8a789d1 (J3a) then merged into
+  raw `Some(JNull)` inside a native container. json-encode d21f304f (J3a) then merged into
   json-decode; see `tracker/json-stage3/report-J2a.md` for the post-merge gate numbers.
-- 2026-09-16 ~12:00 J2b BUILT on json-spread (off json-decode d2177ca5): `Spread Json`
+- 2026-09-16 ~12:00 J2b BUILT on json-spread (off json-decode 3f6d97d8): `Spread Json`
   merges into the encoder's object, opens the exporter's (`additionalProperties: true`,
   zod `.passthrough()`) and is gathered back by the decoder; `Spread` of anything but
   `Json`, a second one per constructor and a positional one are refused by the exporter,
@@ -303,7 +303,7 @@ branch (they share `Lib.scala`).
   follow. `table` is a keyword: the smart constructor is `tabular`, the registry
   name is still "table". Property (a) 5/5, node suite 33/33 over a 200-document
   corpus, `tsc --strict` and `check-generated.sh` green.
-- 2026-09-16 J3e built on `json-charts` (uncommitted, off J3d c5f92b2d): five more Ermine
+- 2026-09-16 J3e built on `json-charts` (uncommitted, off J3d 5b0cc4ee): five more Ermine
   modules under `Layout/Widgets/` (`Chart` holds the shared meta/axis/series vocabulary,
   one module per widget as J3d's field-selector rule requires), `client/src/charts.ts`,
   `client/test/charts.test.ts`, four more generated zod modules, chart generators in
@@ -352,15 +352,15 @@ branch (they share `Lib.scala`).
   `dImps` lacked the Stage 2a modules J2a added to `TestSchema.shape` (Date, GUID, Prim,
   Native.Maybe, Native.Pair, Vector as V), which failed 13 of its 80 cases with "undefined
   type" — a J2a/J3b merge gap, red on the tip before this stage touched anything.
-- 2026-09-16 12:21 LANDED: json-encode = 5d0a2614, full core/test 1196/1196 on that tree (1130 at the
+- 2026-09-16 12:21 LANDED: json-encode = 84af8a10, full core/test 1196/1196 on that tree (1130 at the
   start; the one quarantined refutation removed, TestRunner 17, TestWidgets 6, TestDoc 20, TestDecode 13,
   TestSchema 27, TestNamedFields 16, TestJson 28 added). client/scripts/check-corpus.sh on the landed tree:
-  60/60 node tests over a 200-document corpus of all eight widgets. 2.11: json-encode-2.11 = d75dfb1f
-  (P1 c8d0dac1, P2 438eeb0c, P3 d75dfb1f), full core/test 858/858. Nothing pushed; nothing merged into
+  60/60 node tests over a 200-document corpus of all eight widgets. 2.11: json-encode-2.11 = 2de40034
+  (P1 6743002a, P2 728392d8, P3 2de40034), full core/test 858/858. Nothing pushed; nothing merged into
   scala3-migration or backport-2.11. Stage worktrees wt-json-{wrappers,decode,doc,runner,client,spread,
-  charts} are all ancestors of 5d0a2614 and can be removed. Orchestrator note: the last runs were started
+  charts} are all ancestors of 84af8a10 and can be removed. Orchestrator note: the last runs were started
   with nohup and finished unnoticed for three hours -- background jobs must be harness-tracked or polled.
-- 2026-09-18 J3f BUILT on `json-fetch` (worktree `ermine-scala-wt-json-fetch`, from json-encode 6c44d72d):
+- 2026-09-18 J3f BUILT on `json-fetch` (worktree `ermine-scala-wt-json-fetch`, from json-encode 69cacdb7):
   `scanRelation` / `scanRelationInOrder` for the JSON runner. The user's question: `Params -> Node` never
   sees a row, so the old `Report.e:617` bridge (rows to a continuation, list back to SQL via `relation`)
   had no counterpart. Design (design note §3.4b): a SEPARATE type `Layout.Fetch.Fetch a` -- `Done a |
@@ -382,7 +382,7 @@ branch (they share `Lib.scala`).
   by `bin/ermine :load` (`count`, `descending`, `columns` are global selectors) -- renamed. Gate:
   `scripts/gate.sh status` on the commit. NOT landed on json-encode; no 2.11 port; `Layout.Scan`
   (the `Report f z` runner) left as is.
-- 2026-09-18 J3g BUILT on `json-unify` (worktree `ermine-scala-wt-json-unify`, from json-encode babac791),
+- 2026-09-18 J3g BUILT on `json-unify` (worktree `ermine-scala-wt-json-unify`, from json-encode 9fa3f89f),
   NOT committed: `Fetch Node` is the report type and `Params -> Node` is sugar for `done` of it.
   `modules/Layout/Fetch.e` gained `map_Fetch`, `bind_Fetch`, `sequence_Fetch` (left to right) and the
   layout lifts `vflowF` / `hflowF` / `gridF` / `tabbedF` (it now imports `Layout.Doc`; `Doc` does not
@@ -400,7 +400,7 @@ branch (they share `Lib.scala`).
   document). Properties: `TestRunner` (fxl-order), (fxl-laws), (fxl-sugar), (fxl-conn), (fxl-headline),
   (fx5), (fx1) updated; `TestWidgets` generates the headline too. Gates in report-J3g.md. Open: the
   2.11 port; `Layout.Scan` and the legacy Report/Writer path untouched.
-- 2026-09-18 J3h BUILT on `json-unify` (worktree `ermine-scala-wt-json-unify`, on J3g 5e37cced),
+- 2026-09-18 J3h BUILT on `json-unify` (worktree `ermine-scala-wt-json-unify`, on J3g 910f288b),
   NOT committed: one loop over one step type. New `core/src/main/scala/com/clarifi/reporting/ermine/json/Interp.scala`
   holds `Step` (`Eval`, `Call`, `Emit`, `Splice`, `Token`) and the driver `Interp.run`, which is now
   the only place a scan happens. `Write.doc` = `Interp.run(Write.steps(d, cfg), ..)` (the delivery is
@@ -420,7 +420,7 @@ branch (they share `Lib.scala`).
   which is a wire and a language question, not a driver one. Also open: the 2.11 port; `Layout.Scan`
   and the legacy Report/Writer path untouched.
 - 2026-09-18 J3i BUILT on `json-crosstab` (worktree `ermine-scala-wt-json-unify`, from json-encode
-  3cae9678), NOT committed: the crosstab and the Fetch widget SHAPE. New
+  22b99671), NOT committed: the crosstab and the Fetch widget SHAPE. New
   `modules/Layout/Widgets/Crosstab.e`: `CrosstabProps` (title, the two axis headings, two sorted
   distinct label lists, `cells : List (List (Maybe Double))` row-major, `rowTotals`/`colTotals`/
   `grandTotal`, `crosstabFormat`) + `crosstab` + `CrosstabSource` + `crosstabOf : CrosstabSource ..
@@ -448,6 +448,6 @@ branch (they share `Lib.scala`).
   is a `Lib.scala` change shared with the 2.11 branch, and whether `primOrd` should ignore case at
   all is a language question for the user, not a stage decision. Also open: the 2.11 port; the
   client corpus fixtures still not regenerated.
-- 2026-09-18 J3f LANDED: json-encode fast-forwarded to 23cccbc1 (the gated tree itself; scripts/gate.sh status 23cccbc1: compile, corpus, lsp, suites 1200/1200 PASS). The user confirmed it coexists with the legacy Report/Writer path (untouched; full core/test green). Worktree ermine-scala-wt-json-fetch can be removed. Open: the 2.11 port.
-- 2026-09-18 J3g+J3h LANDED: json-encode fast-forwarded to 58c52fbb (J3g 5e37cced, J3h a772df7e, pin 58c52fbb). pr tier on the landed tree: compile, corpus 89/79/0 of 168, lsp 582 checks, suites 1211/1211 PASS; lean UNAVAILABLE (no Lean tree here). The first full run failed 1 of 1211: TestTolerantCheck 6.2c `knownHeadDisagreements` needed `Headline.e:63:9` (a new stdlib module with a row-constrained local `let` head moves that catalogue; expect it for any new Layout/Widgets module with a local head). Worktree ermine-scala-wt-json-unify can be removed. Open: 2.11 port; client corpus fixtures not regenerated; a cap on fetched rows.
-- 2026-09-18 J3i + WidgetName LANDED: json-encode fast-forwarded to 876587c8 (3cae9678 Fetch/Windowed doc correction, 812d60a7 J3i crosstab + the Fetch widget shape, 876587c8 phantom-typed Layout.Doc.WidgetName). pr tier on 876587c8: compile, corpus 89/79/0 of 168, lsp 582 checks, suites 1216/1216 PASS; lean UNAVAILABLE here. Open from J3i: a case-sensitive Ord String (primOrd lower-cases; crosstab keys differing only by case merge), no cap on the crosstab matrix, client corpus fixtures not regenerated, 2.11 port. Worktree ermine-scala-wt-json-unify (branch json-crosstab) can be removed.
+- 2026-09-18 J3f LANDED: json-encode fast-forwarded to 0710affd (the gated tree itself; scripts/gate.sh status 0710affd: compile, corpus, lsp, suites 1200/1200 PASS). The user confirmed it coexists with the legacy Report/Writer path (untouched; full core/test green). Worktree ermine-scala-wt-json-fetch can be removed. Open: the 2.11 port.
+- 2026-09-18 J3g+J3h LANDED: json-encode fast-forwarded to b1226e9c (J3g 910f288b, J3h 099a9599, pin b1226e9c). pr tier on the landed tree: compile, corpus 89/79/0 of 168, lsp 582 checks, suites 1211/1211 PASS; lean UNAVAILABLE (no Lean tree here). The first full run failed 1 of 1211: TestTolerantCheck 6.2c `knownHeadDisagreements` needed `Headline.e:63:9` (a new stdlib module with a row-constrained local `let` head moves that catalogue; expect it for any new Layout/Widgets module with a local head). Worktree ermine-scala-wt-json-unify can be removed. Open: 2.11 port; client corpus fixtures not regenerated; a cap on fetched rows.
+- 2026-09-18 J3i + WidgetName LANDED: json-encode fast-forwarded to bb964508 (22b99671 Fetch/Windowed doc correction, 05f4c662 J3i crosstab + the Fetch widget shape, bb964508 phantom-typed Layout.Doc.WidgetName). pr tier on bb964508: compile, corpus 89/79/0 of 168, lsp 582 checks, suites 1216/1216 PASS; lean UNAVAILABLE here. Open from J3i: a case-sensitive Ord String (primOrd lower-cases; crosstab keys differing only by case merge), no cap on the crosstab matrix, client corpus fixtures not regenerated, 2.11 port. Worktree ermine-scala-wt-json-unify (branch json-crosstab) can be removed.
