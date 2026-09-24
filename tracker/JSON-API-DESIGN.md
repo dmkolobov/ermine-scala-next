@@ -547,7 +547,7 @@ in a table scans twice (`FetchHeadline.e` says so). `Fetch` has one operation, s
 widget makes this special; a caller holding the numbers uses `headline` and scans once.
 
 **The Fetch widget shape (J3i, 2026-09-18).** A widget whose constructor scans is TWO records and
-one function between them: the WIRE props (registered in `widgetNames`, schema-checked by the
+one function between them: the WIRE props (registered in `widgetNames` [removed by WP-32 S3, 2026-09-23: a `WidgetName` term is the registration], schema-checked by the
 exported zod, rendered by a client component) and a SOURCE record of what the constructor needs to
 work the props out -- the fields and the relation -- with `...Of : ...Source -> Fetch Node` between
 them. The source is server-side by design: no registry, no schema, nothing of it on the wire, and

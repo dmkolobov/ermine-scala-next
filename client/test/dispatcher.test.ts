@@ -114,6 +114,20 @@ test("(d-prototype-names) `constructor`, `toString`, `__proto__` are unknown nam
   }
 });
 
+test("(d-no-schema) a registry key with no generated schema says where to declare it (WP-32 S3)", async () => {
+  // only a registry a JS caller built can carry a key WidgetRegistry lacks; the
+  // message names the Ermine declaration and the generator, since no list exists
+  const registry = { ...defaultRegistry(), gauge: { render: () => undefined } } as unknown as Registry;
+  const { document, target } = newDom();
+  const result = await render(target, parseDocument(doc({ tag: "Widget", name: "gauge", props: {} })),
+    registry, env(document));
+  assert.deepStrictEqual(result.errors.map((e) => e.message), [
+    "no props schema was generated for it -- declare `xName : WidgetName (XProps r)` " +
+      "in a Layout.Widgets module and run client/scripts/generate.sh",
+  ]);
+  assert.equal(target.querySelector(".ermine-widget-error")?.getAttribute("data-widget"), "gauge");
+});
+
 test("(d-invalid) invalid props render an error box naming the widget and the zod path", async () => {
   const { document, target } = newDom();
   const broken = { ...tableProps, columns: [{ ...tableProps.columns[0], align: "AlignSideways" }] };

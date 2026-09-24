@@ -213,6 +213,15 @@ async function renderTabbed(
   return wrapper;
 }
 
+/** The error for a name the registry renders but the generator never found: the
+ *  generated `WIDGET_PROP_SCHEMAS` has every `WidgetName` term of Layout.Widgets and
+ *  the modules under Layout/Widgets/, so the fix is a declaration there plus a
+ *  regeneration.  Reachable only from a registry a JS caller built with an extra
+ *  key (a typed `Registry` cannot have one); pinned by `(d-no-schema)`. */
+const NO_SCHEMA_MESSAGE =
+  "no props schema was generated for it -- declare `xName : WidgetName (XProps r)` " +
+  "in a Layout.Widgets module and run client/scripts/generate.sh";
+
 async function renderWidget(
   name: string,
   rawProps: unknown,
@@ -234,11 +243,13 @@ async function renderWidget(
   // schema is missing, as before.  Both lookups are OWN-property checks
   // (`hasOwnProperty`), so `constructor`, `toString` or `__proto__` -- inherited
   // from Object.prototype by every object literal -- are an unknown name, never
-  // "no props schema was generated" (S2 review N-3).
+  // "no props schema was generated" (S2 review N-3).  There is no list to add a
+  // name to: the generator DISCOVERS every `WidgetName` term, so the message says
+  // where to declare one (WP-32 S3).
   const own = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
   if (!own(WIDGET_PROP_SCHEMAS, name)) {
     return own(registry, name)
-      ? fail(`no props schema was generated for it -- add it to client/scripts/generate.sh`)
+      ? fail(NO_SCHEMA_MESSAGE)
       : fail(`no renderer is registered under that name`);
   }
   const outcome = await dispatch(name as WidgetName, rawProps, registry, env, errors, path, uid);

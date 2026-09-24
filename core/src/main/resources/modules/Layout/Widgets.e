@@ -54,18 +54,7 @@ export Layout.Widgets.Text
 -- names already.  MEASURED by the Q25 review: exporting it gives no clash
 -- error -- the umbrella loads and `title` SILENTLY resolves to HeadingProps,
 -- breaking every importer's Scorecard/Table code.  Import it by name.
-import List using empty_Bracket; cons_Bracket
 import Layout.Doc using {type WidgetName; WidgetName}
-
--- | The registry names Stage 3 reserves.  Every one of them is built except
--- "treeMap", which has no JS renderer at all (`runTreeMap` is undefined in the
--- bundle and the Local branch of HTMLWriter.treeMap is `sys.error("todo")`): it
--- is deliberately left OUT of the client registry, so a document asking for one
--- gets the dispatcher's error box naming it.
-widgetNames : List String
-widgetNames = ["table", "drilldownTable", "axisChart", "pieChart",
-               "drilldownPieChart", "styleBox", "drilldownBar", "treeMap",
-               "scorecard", "headline", "crosstab", "heading", "text"]
 
 -- | A props type with no values: `WidgetName Unsupported` reserves a registry
 -- name that has no renderer and no props (WP-32).  `bin/ermine-schema

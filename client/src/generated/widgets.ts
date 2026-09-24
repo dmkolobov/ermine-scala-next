@@ -2,7 +2,7 @@
 // generator sha256 fd620fc9b2709307610e341ba9b147fba536ff2aa08e038ce04061bd20bd9b6a core/src/main/scala/com/clarifi/reporting/ermine/json/Schema.scala
 // generator sha256 945ed57841a8286d214ab99b09ea7ff1b0cbddc52b9558d8a460fdfd0e9d7192 core/src/main/scala/com/clarifi/reporting/ermine/json/SchemaMain.scala
 // generator sha256 86cb46708f035d0540e7b5f9ef9b73ffed587f2aff800bd7e5119ea823e173e8 core/src/main/scala/com/clarifi/reporting/ermine/json/Zod.scala
-// body sha256: 242195e5920f540518df6a400ee651e28690977df32324d3be9ff20ebb5da999
+// body sha256: 3bb927b6058ba9f60b61076f2e7100b6ec9dae47bb2f8d9d3576656aab670cd4
 // Generated from Ermine by bin/ermine-schema (com.clarifi.reporting.ermine.json.Zod) -- do not edit.
 // command: bin/ermine-schema --widgets Layout.Widgets Layout.Doc:Node=DocNode Layout.Doc:Tab=DocTab
 //
@@ -50,7 +50,7 @@
 // sha256 b84bf1d0f3d427e81e5cef22f0ec38423f65783859e892a0e386bb58f00ea7be Layout/BorderOptions.e
 // sha256 34815e30f92b2c2737c9cf86a26afd2f575a7f559edf9077851f16b9fcb21011 Layout/Doc.e
 // sha256 64401b6c1b5851c206b365486b7a5e9c6a6906665ab48cdd9f30395f6150e802 Layout/Fetch.e
-// sha256 3d49432aad3ba10e36dc06e0b5117177a845febd2a57c4ba238d09e483fd5c4e Layout/Widgets.e
+// sha256 edbba15a542cf3164cfde2cb99ea42ad3279025020e2bfebb42f5e66dd19132a Layout/Widgets.e
 // sha256 38eaab87a929fd272e9e7a7325d0651ad38446145d177ecca5f5462fc304fb48 Layout/Widgets/AxisChart.e
 // sha256 06eee101ed74664f32cf2184929751994bdcb7699d341f7d889d784ed11739a6 Layout/Widgets/Chart.e
 // sha256 b2b330cb8abe56908646cea0da519dfe657411524f61491bdbe83bdaa5efe268 Layout/Widgets/Crosstab.e

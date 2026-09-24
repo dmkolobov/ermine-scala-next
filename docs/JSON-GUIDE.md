@@ -871,8 +871,9 @@ export const UNSUPPORTED_WIDGETS: readonly string[] = ["treeMap"];
   `core/src/main/resources/modules/` is a warning on stderr (stale resources).
 - The output goes to stdout; the header records the exact command.
 
-About 5.5 s for the call above (5.40 s and 5.66 s measured), one JVM, against 38-40 s for `client/scripts/generate.sh`'s
-thirteen boots.
+About 5.5 s for the call above (5.40 s and 5.66 s measured), one JVM, against 38-40 s for the
+thirteen boots `client/scripts/generate.sh` made before WP-32; the script is now this one call
+(5.0 s wall, MEASURED at WP-32 S3).
 
 ### The LSP request
 
@@ -896,22 +897,23 @@ a user record, a user relation, `UserInline`, `UserDeferred`, `UserTableProps`,
 the exporter's output with them byte for byte; `ERMINE_SCHEMA_FIXTURES=write`
 rewrites them instead (see §11).
 
-The client's zod is generated the same way: `client/scripts/generate.sh` runs
-`bin/ermine-schema --zod` once per widget prop type and writes
-`client/src/generated/`, and `client/scripts/check-generated.sh` regenerates into
-a temp dir and diffs:
+The client's zod is generated the same way, into ONE file: `client/scripts/generate.sh`
+makes the single `bin/ermine-schema --widgets Layout.Widgets Layout.Doc:Node=DocNode
+Layout.Doc:Tab=DocTab` call and writes `client/src/generated/widgets.ts` (every props
+schema and type, `WidgetRegistry`, `WidgetName`, `WIDGET_PROP_SCHEMAS`,
+`UNSUPPORTED_WIDGETS`), headed by the sha256 of the generator's own Scala and of the
+body. There are no per-type files and no list of types in the script (WP-32 S2).
+Two checks keep it honest: `client/scripts/check-fresh.js`, the `generated` gate at
+the commit tier (no JVM, about two seconds: every header hash recomputed, every
+module under `Layout/Widgets/` listed, and every recursive declaration identical to
+zod's inference), and `client/scripts/check-generated.sh`, which regenerates into a
+temp file and diffs (one JVM; a manual check, in no gate). `client/README.md`
+("Staleness and exactness") has the details.
 
-```
-$ client/scripts/check-generated.sh
-check-generated: src/generated is up to date
-```
-
-(28 seconds here, nine `bin/ermine-schema` boots.)
-
-Note: `--zod -i` inlines every `$def` it reaches into each generated module, so the
-shared chart types appear in both `axisChart.ts` and `drilldownBar.ts`. They are
-structurally identical and `check-generated.sh` guards them. The one-module
-`--widgets` form above emits each once; WP-32 stage 2 moves the client onto it.
+Note: `--zod -i` inlines every `$def` it reaches into each module it writes, so two
+separate `--zod -i` calls repeat a shared type. The client no longer makes such
+calls: the one-module `--widgets` form above emits every definition once
+(`CellFormat`, reached from ten props types, appears once in `widgets.ts`).
 
 ---
 
@@ -1044,29 +1046,45 @@ value — including a bare `String`, as `SalesRaw.e` does for its `"text"` widge
 
 ### The widgets
 
-`Layout/Widgets.e` re-exports one module per widget. Smart constructors, registry
-names and the relation field of each:
+`Layout/Widgets.e` re-exports one module per widget (Heading excepted, below). A
+widget IS a declared `WidgetName` term: `bin/ermine-schema --widgets Layout.Widgets`
+scans the umbrella and every module under `Layout/Widgets/` for them, and the table
+below is what it found (`client/src/generated/widgets.ts`: `WidgetRegistry`, 12
+keys, plus `UNSUPPORTED_WIDGETS`):
 
-| Constructor | Registry name | Relation field | Delivery |
-|---|---|---|---|
-| `tabular` | `table` | `rows` | bare `[..r]` |
-| `drilldownTable` | `drilldownTable` | `ddRows` | bare `[..r]` |
-| `scorecard` | `scorecard` | `cards` | `Inline r` |
-| `axisChart` | `axisChart` | `chartRows` | bare `[..r]` |
-| `pieChart` | `pieChart` | `pieRows` | `Inline r` |
-| `drilldownPieChart` | `drilldownPieChart` | `pieRows` | `Inline r` |
-| `styleBox` | `styleBox` | `styleBoxRows` | `Inline r` |
-| `drilldownBar` | `drilldownBar` | `barRows` | bare `[..r]` |
-| `heading` | `heading` | — | no relation |
-| `plainText` | `text` | — | no relation |
-| — | `treeMap` | — | **unsupported** |
+| Registry name | Name term | Module | Props type | Constructor | Relation field | Delivery |
+|---|---|---|---|---|---|---|
+| `axisChart` | `axisChartName` | `Layout.Widgets.AxisChart` | `AxisChartProps r` | `axisChart` | `chartRows` | bare `[..r]` |
+| `crosstab` | `crosstabName` | `Layout.Widgets.Crosstab` | `CrosstabProps` | `crosstab`, `crosstabOf` | — | no relation (`crosstabOf` scans on the server) |
+| `drilldownBar` | `drilldownBarName` | `Layout.Widgets.DrilldownBar` | `DrilldownBarProps r` | `drilldownBar` | `barRows` | bare `[..r]` |
+| `drilldownPieChart` | `drilldownPieChartName` | `Layout.Widgets.PieChart` | `PieChartProps r` | `drilldownPieChart` | `pieRows` | `Inline r` |
+| `drilldownTable` | `drilldownTableName` | `Layout.Widgets.Drilldown` | `DrilldownTableProps r` | `drilldownTable` | `ddRows` | bare `[..r]` |
+| `heading` | `headingName` | `Layout.Widgets.Heading` | `HeadingProps` | `heading` | — | no relation |
+| `headline` | `headlineName` | `Layout.Widgets.Headline` | `HeadlineProps` | `headline`, `headlineOf` | — | no relation (`headlineOf` scans on the server) |
+| `pieChart` | `pieChartName` | `Layout.Widgets.PieChart` | `PieChartProps r` | `pieChart` | `pieRows` | `Inline r` |
+| `scorecard` | `scorecardName` | `Layout.Widgets.Scorecard` | `ScorecardProps r` | `scorecard` | `cards` | `Inline r` |
+| `styleBox` | `styleBoxName` | `Layout.Widgets.StyleBox` | `StyleBoxProps r` | `styleBox` | `styleBoxRows` | `Inline r` |
+| `table` | `tableName` | `Layout.Widgets.Table` | `TableProps r` | `tabular` | `rows` | bare `[..r]` |
+| `text` | `textName` | `Layout.Widgets.Text` | `TextProps` | `plainText` | — | no relation |
+| `treeMap` | `treeMapName` | `Layout.Widgets` | `Unsupported` | — | — | **unsupported** |
 
 `treeMap` is a reserved name with no renderer behind it at all (`runTreeMap` is
 undefined in the legacy bundle and the Local branch of `HTMLWriter.treeMap` is
-`sys.error("todo")`), so it is deliberately left out of the client registry and a
-document asking for one gets an error box naming it.
+`sys.error("todo")`). Its name term is `treeMapName : WidgetName Unsupported`, and
+`data Unsupported` has no constructors, so the generator lists it in
+`UNSUPPORTED_WIDGETS` instead of the registry, `widget treeMapName x` cannot
+type-check, and a document asking for one gets an error box naming it.
 
-`Layout.Widgets.widgetNames` lists thirteen: the eleven above plus `headline` and `crosstab`. `heading` (`Layout.Widgets.Heading`, `HeadingProps {title, sortColumn, matched, total}`) and `plainText` (`Layout.Widgets.Text`, `TextProps {body}`) were added by Q25 (2026-09-23) with generated zod like every other widget. `Layout.Widgets` re-exports Text but NOT Heading: Heading's `title`, `sortColumn` and `total` are field names Scorecard, Table's `ColumnSort` and Headline already own, and through the umbrella they would silently resolve to `HeadingProps`, so import `Layout.Widgets.Heading` by name. The client validates every widget against its GENERATED schema and nothing else (`client/README.md`, "Adding a widget").
+`heading` (`HeadingProps {title, sortColumn, matched, total}`) and `plainText`
+(`TextProps {body}`) were added by Q25 (2026-09-23). `Layout.Widgets` re-exports Text
+but NOT Heading: Heading's `title`, `sortColumn` and `total` are field names
+Scorecard, Table's `ColumnSort` and Headline already own, and through the umbrella
+they would silently resolve to `HeadingProps`, so import `Layout.Widgets.Heading` by
+name. The scan still finds `headingName`, because it reads every module under
+`Layout/Widgets/`, not the umbrella's exports. There is no hand-kept list of names
+(`Layout.Widgets.widgetNames` was deleted by WP-32 S3). The client validates every
+widget against its GENERATED schema and nothing else (`client/README.md`, "Adding a
+widget").
 
 ### `CellFormat`
 
@@ -1761,16 +1779,19 @@ is not.
 ```sh
 cd client
 npm ci
-npm run generate          # src/generated/ from bin/ermine-schema --zod
-npm run check-generated   # CI: regenerate into a temp dir and diff
+npm run generate          # src/generated/widgets.ts from ONE bin/ermine-schema --widgets call
+npm run check-fresh       # the `generated` gate (commit tier): header hashes + exactness, no JVM
+npm run check-generated   # manual: regenerate into a temp file and diff (one JVM)
 npm run typecheck         # tsc --noEmit, strict
 npm test                  # tsc, then node --test "dist/test/*.test.js"
 ```
 
-All four are green from a clean checkout here. `npm test` alone is **60 tests,
-57 pass, 3 skipped** — the three that need fixtures the Scala side writes name
-the command that would produce them. `client/scripts/check-corpus.sh` writes both
-fixtures and then runs the suite: **60/60**.
+`npm test` is **130 tests, 130 pass, 0 skipped** with the bundle built
+(`npm run bundle`) and the corpus fixtures present (MEASURED at WP-32 S3,
+2026-09-23; `client/README.md` keeps the history). Without them the bundle and
+corpus tests SKIP rather than fail, and each names the command that would produce
+what it needs; `client/scripts/check-corpus.sh` writes the fixtures and then runs
+the suite.
 
 ```
 $ client/scripts/check-corpus.sh
@@ -1894,24 +1915,37 @@ errors: [{"path":"$.root","widget":"scorecard",
 
 ### Adding a widget
 
-Three edits plus the generate step:
+Two edits and one command. The widget is named in exactly TWO places: its
+`WidgetName` term in Ermine and its line in `defaultRegistry()`; everything between
+is generated, and the compiler names whatever is missing.
 
 1. **Ermine** — a new module under `Layout/Widgets/`, ONE PER WIDGET (field
    selectors are module-global), declaring the props `data`, its registry name
-   `fooName : WidgetName FooProps; fooName = WidgetName "foo"`, and a smart
+   `fooName : WidgetName (FooProps r); fooName = WidgetName "foo"`, and a smart
    constructor `foo p = widget fooName p`; then `export Layout.Widgets.Foo` from
-   `Layout/Widgets.e`. A relation field is `[..r]` when the request may defer it,
-   `Inline r` when the widget cannot work without the rows; leave the row
-   parameter free.
-2. **Generate** — one line in the `types` array of `client/scripts/generate.sh`
-   (`"Layout.Widgets.Foo:FooProps:foo:FoopropsSchema"`), one line in
-   `WIDGET_PROP_SCHEMAS` in the same script, then `npm run generate`.
-3. **TypeScript** — mirror the props in `src/props.ts`, write
-   `src/widgets/foo.ts` as a `Widget<FooProps>`, add one line to
-   `defaultRegistry()`.
+   `Layout/Widgets.e` (unless one of its field names is already owned, as with
+   Heading). A relation field is `[..r]` when the request may defer it, `Inline r`
+   when the widget cannot work without the rows; leave the row parameter free. The
+   `WidgetName` term IS the registration: no list to edit anywhere.
+2. **Generate** — `npm run generate` in `client/` (`client/scripts/generate.sh`, one
+   `bin/ermine-schema --widgets` call, one JVM, about five seconds). It finds
+   `fooName`, and `src/generated/widgets.ts` gains `FooProps`, `FooPropsSchema`,
+   `foo: FooProps` in `WidgetRegistry` and its `WIDGET_PROP_SCHEMAS` entry. Commit
+   the file; the `generated` gate (commit tier) refuses a stale or hand-edited one,
+   and refuses a module under `Layout/Widgets/` that the header does not list.
+3. **TypeScript** — write `src/widgets/foo.ts` as a `Widget<FooProps>`, importing
+   the type from `../generated/widgets`; its `render(ctx, props)` receives
+   `Resolved<FooProps>` (relations already inline). Then register it:
+   `npm run typecheck` fails at `defaultRegistry()` with `Property 'foo' is missing
+   in type ... but required in type 'Registry'` until the line `foo: fooWidget(),`
+   is there. A registry key the generator never found, or a renderer for the wrong
+   props type, is a tsc error too.
 
-`scorecard` is the worked example of exactly that: one `data`, one TS component
-(plain DOM, no legacy code), one registry line, one generate line.
+`scorecard` is the worked example: one `data` and one `scorecardName` term, one TS
+component (plain DOM, no legacy code), one registry line. A registry that a JS
+caller built with a key the generator never found gets the error box "no props
+schema was generated for it -- declare `xName : WidgetName (XProps r)` in a
+Layout.Widgets module and run client/scripts/generate.sh".
 
 One shape to avoid: the dispatcher finds relations STRUCTURALLY, so
 `isWireRelation` requires the WHOLE arm (`kind` plus `columns` of real column
@@ -2035,7 +2069,10 @@ $ ERMINE_SCHEMA_FIXTURES=write sbt -batch 'core/testOnly *TestSchema'
 
 (Run on an unchanged tree it rewrites identical bytes and `git status` stays
 clean, which is a cheap way to check the gate itself.) The client's equivalent is
-`client/scripts/check-generated.sh`.
+`client/scripts/check-fresh.js`, the `generated` gate at the commit tier (no JVM:
+it recomputes the hashes in `src/generated/widgets.ts`'s header and checks every
+recursive declaration against zod's inference); `client/scripts/check-generated.sh`
+(regenerate and diff, one JVM) is a manual check in no gate.
 
 ### Quarantines you may meet
 

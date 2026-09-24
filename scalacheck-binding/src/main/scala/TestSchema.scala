@@ -927,7 +927,7 @@ object TestSchema extends Properties("Ermine JSON Schema") {
     assert(src.contains("z.discriminatedUnion(\"tag\""), src)
   }
 
-  property("(e3) a recursive record is an interface, a mutual pair both declared, a non-recursive def keeps z.infer (WP-32)") =
+  property("(e3) a recursive record is an interface, a mutual pair and a 3-cycle all declared, a non-recursive def keeps z.infer (WP-32)") =
     sessionProof { implicit s =>
       val decls = List(
         "data Rk = Rk { rkLabel : String, rkNote : Maybe String, rkKids : List Rk }",
@@ -947,6 +947,35 @@ object TestSchema extends Properties("Ermine JSON Schema") {
       assert(src.contains("export type Test_Wrap = z.infer<typeof Test_Wrap>;"), src)
       assert(!src.contains("export const Test_Wrap:"), src)
       assert(!src.contains("ZodTypeAny"), src)
+
+      // A 3-cycle Ca -> Cb -> Cc -> Ca, reached from Ba, which is recursive only THROUGH
+      // the cycle (not a member), under a root Wrap3.  Tarjan visits in sorted order,
+      // Ba, Ca, Cb, Cc: the cycle closes at Cc -> Ca across TWO tree edges, so a tree
+      // edge that folds in index(w) instead of low(w) splits {Ca} off {Cb, Cc} and Ca
+      // loses its declaration (the S1 review's M13; a 2-cycle or self-loop cannot see it).
+      val decls3 = List(
+        "data Ba = Ba { baC : Ca }",
+        "data Ca = Ca0 Int | Ca1 Cb",
+        "data Cb = Cb { cbC : Cc }",
+        "data Cc = Cc { ccA : List Ca }",
+        "data Wrap3 = Wrap3 { w3B : Ba, w3C : Cb }").mkString("\n")
+      val schema3 = schemaAfter(decls3, "Wrap3").fold(e => sys.error(e.report), identity)
+      val src3 = Zod.render(schema3).fold(e => sys.error(e), identity)
+      assert(src3.contains("/** Test.Ca */\nexport type Test_Ca =\n" +
+                           "  | { tag: \"Ca0\"; args: [number] }\n" +
+                           "  | { tag: \"Ca1\"; args: [Test_Cb] };\n" +
+                           "export const Test_Ca: z.ZodType<Test_Ca> = "), src3)
+      assert(src3.contains("/** Test.Cb */\nexport interface Test_Cb {\n  cbC: Test_Cc;\n}\n" +
+                           "export const Test_Cb: z.ZodType<Test_Cb> = "), src3)
+      assert(src3.contains("/** Test.Cc */\nexport interface Test_Cc {\n  ccA: Array<Test_Ca>;\n}\n" +
+                           "export const Test_Cc: z.ZodType<Test_Cc> = "), src3)
+      List("Ca", "Cb", "Cc") foreach { m =>
+        assert(!src3.contains("z.infer<typeof Test_" + m + ">"), m + "\n" + src3) }
+      List("Ba", "Wrap3") foreach { n =>
+        assert(src3.contains("export type Test_" + n + " = z.infer<typeof Test_" + n + ">;"), n + "\n" + src3)
+        assert(!src3.contains("export const Test_" + n + ":"), n + "\n" + src3)
+        assert(!src3.contains("export interface Test_" + n + " "), n + "\n" + src3) }
+      assert(!src3.contains("ZodTypeAny"), src3)
     }
 
   property("(e4) a multi-type bundle emits every definition once, with short names and aliases (WP-32)") =

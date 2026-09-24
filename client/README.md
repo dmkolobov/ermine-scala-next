@@ -53,7 +53,7 @@ is long-standing, not new.
 With that checkout present, the command above is green. Eight of the tests skip, each
 naming what would make it run: three need FIXTURES the Scala side writes — property (b)'s
 200-document corpus, its negative half, and the end-to-end document — and five need the
-browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (100 tests: 97 passed, 3 skipped after S1; **112 tests: 109 passed, 3 skipped after WP-10 S2**; **114 tests: 111 passed, 3 skipped after WP-10 S3**; **115 tests: 112 passed, 3 skipped after WP-11**, with the bundle built, MEASURED 2026-09-23; **128 tests, 128 passed, 0 skipped after WP-32 S2**, bundle built and the corpus fixtures present, MEASURED 2026-09-23)
+browser bundle, which `npm run bundle` builds. That was **90 tests, 82 passed, 8 skipped** before WP-10 S1 added `test/page.test.ts` (100 tests: 97 passed, 3 skipped after S1; **112 tests: 109 passed, 3 skipped after WP-10 S2**; **114 tests: 111 passed, 3 skipped after WP-10 S3**; **115 tests: 112 passed, 3 skipped after WP-11**, with the bundle built, MEASURED 2026-09-23; **129 tests, 129 passed, 0 skipped after WP-32 S2** (with its review's `(d-prototype-names)`), bundle built and the corpus fixtures present, MEASURED 2026-09-23; **130 tests, 130 passed, 0 skipped after WP-32 S3** (`(d-no-schema)` pins the missing-schema message), MEASURED 2026-09-23)
 (MEASURED 2026-09-21 on node v24.20.0; the count this paragraph carried before WP-9 was
 33/3 and was stale by 29 passing tests). `npm run test:bundle` builds the bundle first and
 gives 87 passed, 3 skipped; writing the fixtures as well runs all 90:
