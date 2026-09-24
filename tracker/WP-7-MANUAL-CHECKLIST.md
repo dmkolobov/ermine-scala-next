@@ -18,6 +18,16 @@ id — `B12 [2.38]` — so every reference elsewhere in the tracker (`§2.35`,
 "deviations" section survives as Appendix 1 and the old "what these steps
 cannot tell you" paragraphs as Group D. Nothing was dropped.
 
+**AMENDED 2026-09-23 BY THE FIRST PLAYTEST (findings F1, F2 in
+`tracker/PLAYTEST-RESULTS.md`).** F1: under 0.1.14 the panel could not build its
+page at all in a real VS Code (the CSP guard refused `'self'
+https://*.vscode-cdn.net`); fixed in 0.1.15, so Group E needs 0.1.15. F2:
+`Doc/SalesReport.e`'s `report : Node` is REFUSED at render (400, *"a report must
+be a function Params -> Node, not Node"*), so E1, E2 and E9 and the 30-minute
+path now use the typed `core/src/test/resources/doc/Sales.e`, and **E10 has NO
+FIXTURE** until the runner accepts a zero-parameter report or `SalesReport`
+gains a parameter (the user's call, Q27).
+
 ## Before you start
 
 | | |
@@ -112,7 +122,8 @@ carried; 4 and 5 are new with the panel (WP-10).
    `Sales` sub-step — **U6 was taken on the design review's F2, "the preview never
    mints a deferred token", which `Sales.e` disproves; Q24 is DECIDED (you,
    2026-09-23: "Do (a) and (d) now, file (c)."): the refusal stays, the
-   done-when is `Doc/SalesReport.e`, `heading`/`text` now draw, the fetch pair
+   done-when is an inline fixture (since playtest F2 only the typed `Sales.e`
+   can meet it: `Doc/SalesReport.e` is refused at render, Q27), `heading`/`text` now draw, the fetch pair
    is WP-30**); U7 the extension's unit tests gate every commit (no step).
    Any of them is yours to overturn.
 
@@ -141,9 +152,9 @@ with `ermine.preview.target` at `json` (the settings file's value); set it to
 | 8 | **B11** | invalid JSON refuses in the tab instead of rendering yesterday's parameters |
 | 9 | **C1** | the watchdog fires, the banner appears, the status bar turns orange |
 | 10 | **C5** + **C6** | after a restart the wedged report is **held** and you are asked — Q17's loop, closed or not |
-| 11 | **E1** + **E2** | E1 opens the panel on `Doc/SalesReport.e` (E2's setup); E2: a document draws in the panel at all — the bundle loads in a real webview (nobody has seen it) |
+| 11 | **E1** + **E2** | E1 opens the panel on `core/src/test/resources/doc/Sales.e` → `report` (E2's setup; was `Doc/SalesReport.e`, refused at render by F2); E2: a document draws in the panel at all — the bundle loads in a real webview (nobody has seen it) |
 | 12 | **E5** + **E6** | the stuck banner survives a hidden panel — and, instrumented, which of the two contradicting `@types/vscode` sentences is true (F1). **E6 is not optional here**: E5 leaves the server wedged, `WpInt.e` edited and the timeout at 5 s, and E6's Undo puts all three back |
-| — | *re-pick* | **Ermine: Preview Report...** → `core/src/test/resources/modules/Doc/SalesReport.e` → `report` again, and check the scorecard is back: E8 and E9 both need E2's document |
+| — | *re-pick* | **Ermine: Preview Report...** → `core/src/test/resources/doc/Sales.e` → `report` again, and check the `Sales` heading and three tables are back: E8 and E9 both need E2's document (was `Doc/SalesReport.e`: F2) |
 | 13 | **E8** | deleting the bundle files flips the page; deleting the folder is the open question the typings predict |
 | 14 | **E9** | `table` through the writers' `runTabular` — WP-11's done-when, human since WP-9 |
 
@@ -860,16 +871,19 @@ E11 are the only way anyone will learn the answers they record.
   `/home/dmitry/research/ermine/ermine-writers/writers/html/src/main/resources/web`
   (MEASURED by the WP-11 review). E14 is the one step that changes it.
 - `ermine.preview.timeoutSeconds` at `60`, except in E5–E6, which set `5`.
-- **The report for E1–E3 and E9–E10 is `core/src/test/resources/modules/Doc/SalesReport.e`**,
-  binding `report` (`report : Node`, `SalesReport.e:40`). It is the
-  repository's own end-to-end fixture: one three-row relation drawn as a
-  `scorecard`, a `table`, an `axisChart` and a `pieChart`, at
-  `$.children[0]` to `$.children[3]`. It takes no parameters. **Nobody has
-  rendered it through the preview** (INFERRED from its type and imports that
-  it renders; the server-side placement puts its root at
-  `core/src/test/resources/modules`, INFERRED from its header). If it does not
-  render at all, record that in E2 and use `Sales.report` for the banner steps
-  (E4 does anyway).
+- **The report for E1–E3 and E9 is `core/src/test/resources/doc/Sales.e`**,
+  binding `report` (`report : Query -> Node`), typed since `6fb17d7a`: a
+  heading, a text and three tables (E2's `Sales` paragraph has the detail).
+  **AMENDED BY PLAYTEST F2 (2026-09-23):** this line used to name
+  `core/src/test/resources/modules/Doc/SalesReport.e` (`report : Node`), and
+  the first real playtest MEASURED that the server refuses it at render: 400
+  *"Doc.SalesReport.report is not a report: a report must be a function
+  Params -> Node, not Node"* (`json/Decode.scala:137`; the picker offers bare
+  `Node` bindings knowingly, `lsp/Definitions.scala:393-397`). **E10 (the pie
+  and bar charts) has NO FIXTURE** until the runner accepts a zero-parameter
+  report or `SalesReport` gains a parameter (the user's call, Q27). Run the
+  panel steps after A4/B1, so `Sales`'s params file already exists (a first
+  pick writes it and opens it, which is B1's behaviour, INFERRED to move focus).
 - **Open the webview's developer tools once** for E3 and keep them for E5:
   **Developer: Open Webview Developer Tools** while the panel is focused.
 
@@ -881,8 +895,8 @@ describes), no *unsaved* hint (nothing produces one yet), and never shows
 ### E1 [new] — The panel opens BESIDE, and the cursor stays where it was — **NEVER RUN**
 
 - **Setup:** the standing setup; no panel open; an `.e` file open in the only editor group.
-- **Do:** click into that editor and start typing. WITHOUT stopping, run **Ermine: Preview Report...** → `core/src/test/resources/modules/Doc/SalesReport.e` → `report`.
-- **Expect:** a webview tab titled **`Ermine preview`** (`editor/vscode/src/preview-core.js:5466`, `const PANEL_TITLE = "Ermine preview";`) opens in a NEW column beside yours, and **the cursor stays in your editor**: the panel is created with `{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }` (`editor/vscode/src/extension.js:2588`). **No untitled JSON tab opens**: under `panel` the tab path is skipped (`if (route.tab) await showAnswer(answer, reveal);`, `editor/vscode/src/extension.js:2414`). The channel logs the usual `preview: render Doc.SalesReport.report (generation N; the report was picked; …)` and, once per panel, ``preview: watching ${dir} for bundle rebuilds`` (`editor/vscode/src/extension.js:2658`) with `dir` = this worktree's `client/dist/browser`. **No `preview: the legacy writers …` line**: a present writers folder is silent (`writersLine` answers null, `editor/vscode/src/preview-core.js:5778`).
+- **Do:** click into that editor and start typing. WITHOUT stopping, run **Ermine: Preview Report...** → `core/src/test/resources/doc/Sales.e` → `report` (was `Doc/SalesReport.e`: refused at render, F2).
+- **Expect:** a webview tab titled **`Ermine preview`** (`editor/vscode/src/preview-core.js:5466`, `const PANEL_TITLE = "Ermine preview";`) opens in a NEW column beside yours, and **the cursor stays in your editor**: the panel is created with `{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }` (`editor/vscode/src/extension.js:2588`). **No untitled JSON tab opens**: under `panel` the tab path is skipped (`if (route.tab) await showAnswer(answer, reveal);`, `editor/vscode/src/extension.js:2414`). The channel logs the usual `preview: render Sales.report (generation N; the report was picked; …)` and, once per panel, ``preview: watching ${dir} for bundle rebuilds`` (`editor/vscode/src/extension.js:2658`) with `dir` = this worktree's `client/dist/browser`. **No `preview: the legacy writers …` line**: a present writers folder is silent (`writersLine` answers null, `editor/vscode/src/preview-core.js:5778`).
 - **Failure:** the cursor lands in the panel; a JSON tab opens as well; the panel opens in your own column, replacing the file. **Paste into `tracker/PLAYTEST-RESULTS.md`:** the Ermine channel from the command on, and the value of `ermine.preview.target` you had.
 - **Bears on:** WP-10 S2 (the reveal latch, `preserveFocus`); U1.
 
@@ -890,10 +904,10 @@ describes), no *unsaved* hint (nothing produces one yet), and never shows
 
 - **Setup:** E1's panel.
 - **Do:** look at it.
-- **Expect:** a **scorecard titled `Sales by region`** (`core/src/test/resources/modules/Doc/SalesReport.e:43`) with three cards, EMEA, APAC and AMER (`SalesReport.e:35` and the two lines after it); below it the table, the bar chart and the pie, which E9 and E10 judge. **No banner at all**: the banner is hidden whenever there is nothing to say (`banner.hidden = p.banner === null;`, `client/src/host/page.ts:258`), and the document is not dimmed. The scorecard needs no writers, so it is the part of this step that does not depend on WP-11. **The channel carries no `preview panel: widget …` line**: the page logs one per widget that failed (`client/src/host/page.ts:305`).
-- **E2, the `Sales` sub-step (Q24 (d), added 2026-09-23; REWRITTEN BY Q25 the same day: `Sales` is TYPED now).** **Do:** **Ermine: Preview Report...** → `core/src/test/resources/doc/Sales.e` → `report` (then re-pick `Doc/SalesReport.e` as the *re-pick* row says, before E8/E9). **Expect** (MEASURED in jsdom from the captured answer, `scratch-widget-preview/q25/captures.json` `ok-sales` = `editor/vscode/test/fixtures/panel-answers.json` `ok-sales`, by `client/test/widgets.test.ts` `(w-sales-panel)`; every widget validated against the GENERATED zod by `scratch-widget-preview/q25/validate.mjs`; NOT yet seen in VS Code): **FIVE widgets, NO error box.** (1) **the heading DRAWS** (`Layout.Widgets.Heading`, `core/src/test/resources/doc/Sales.e:154`): a title `Sales` (`client/src/widgets/heading.ts:43`, `title.textContent = props.title;`) and one line ``${props.matched} matched``, ``total ${props.total}``, ``sorted by ${props.sortColumn}`` joined by `, ` (`heading.ts:54-58`) -- with the capture's params (`2026-01-05`..`2026-02-20`, `north`, `ByAmount`) that reads **`3 matched, total 4350.75, sorted by amount`**; with the skeleton's today's dates it reads `0 matched, total 0, sorted by day` (Q21; MEASURED `ok=true`, `sales-today` in the same capture); (2) **the text DRAWS** (`Layout.Widgets.Text`): a paragraph **`every line item, whatever the date range`** (`client/src/widgets/text.ts:22`, `p.textContent = props.body;`; the string is `Sales.e:165`); (3) **THREE TABLES DRAW through the writers' `runTabular`**, as E9's does: `$.root.children[1].cells[0][0]` with the headers `Region`, `Day`, `Amount`, `Units` and three north rows, sorted by `Amount` descending (INFERRED, as E9's sort is, from the `ColumnSort 2 True` that `sortOf ByAmount` gives, `Sales.e:122`); `[0][1]` with one header, `Region`, and four rows; `[1][0]` with `Item`, `Amount`, `Units` and all eight line items. **The items table is INLINE**: a typed table cannot force deferral (`TableProps.rows` is a bare relation) and the preview asks inline, so nothing in this document reaches the page's refusal (`this preview does not fetch deferred relations, …`) -- that box is WP-30's, and no fixture shows it today. The Ermine channel carries **no** `preview panel: widget …` line (`client/src/host/page.ts:305`). **Failure:** any error box; markup in the heading shown as markup rather than text; a table with no rows; fewer or more than five widgets. (The step's history: Q24 (d) drew `heading`/`text` with hand-written schemas and left all three tables as boxes, since the old `Sales.e` handed `table` a bare relation; the user decided Q25 on 2026-09-23, *"I'm pretty sure I want typed widget schemas in the typescript rather than matching runtime ermine values fallibly"* and *"Rewrite it."* The untyped shape lives on in `core/src/test/resources/doc/SalesRaw.e`, the runner's fixture, which is NOT a preview step: four of its five widgets are boxes by design.)
+- **Expect (AMENDED BY PLAYTEST F2, 2026-09-23):** the typed `Sales` document exactly as the `Sales` paragraph below describes: **five widgets, no error box**. (This step used to expect `Doc/SalesReport.e`'s scorecard `Sales by region`; that report is refused at render, F2, so no fixture draws a scorecard today.) **No banner at all**: the banner is hidden whenever there is nothing to say (`banner.hidden = p.banner === null;`, `client/src/host/page.ts:258`), and the document is not dimmed. The heading and the text need no writers, so they are the part of this step that does not depend on WP-11. **The channel carries no `preview panel: widget …` line**: the page logs one per widget that failed (`client/src/host/page.ts:305`).
+- **E2, the `Sales` sub-step (Q24 (d), added 2026-09-23; REWRITTEN BY Q25 the same day: `Sales` is TYPED now).** **Do:** nothing more: E1 already picked it (before F2 this was a second pick after `Doc/SalesReport.e`). **Expect** (MEASURED in jsdom from the captured answer, `scratch-widget-preview/q25/captures.json` `ok-sales` = `editor/vscode/test/fixtures/panel-answers.json` `ok-sales`, by `client/test/widgets.test.ts` `(w-sales-panel)`; every widget validated against the GENERATED zod by `scratch-widget-preview/q25/validate.mjs`; NOT yet seen in VS Code): **FIVE widgets, NO error box.** (1) **the heading DRAWS** (`Layout.Widgets.Heading`, `core/src/test/resources/doc/Sales.e:154`): a title `Sales` (`client/src/widgets/heading.ts:43`, `title.textContent = props.title;`) and one line ``${props.matched} matched``, ``total ${props.total}``, ``sorted by ${props.sortColumn}`` joined by `, ` (`heading.ts:54-58`) -- with the capture's params (`2026-01-05`..`2026-02-20`, `north`, `ByAmount`) that reads **`3 matched, total 4350.75, sorted by amount`**; with the skeleton's today's dates it reads `0 matched, total 0, sorted by day` (Q21; MEASURED `ok=true`, `sales-today` in the same capture); (2) **the text DRAWS** (`Layout.Widgets.Text`): a paragraph **`every line item, whatever the date range`** (`client/src/widgets/text.ts:22`, `p.textContent = props.body;`; the string is `Sales.e:165`); (3) **THREE TABLES DRAW through the writers' `runTabular`**, as E9's does: `$.root.children[1].cells[0][0]` with the headers `Region`, `Day`, `Amount`, `Units` and three north rows, sorted by `Amount` descending (INFERRED, as E9's sort is, from the `ColumnSort 2 True` that `sortOf ByAmount` gives, `Sales.e:122`); `[0][1]` with one header, `Region`, and four rows; `[1][0]` with `Item`, `Amount`, `Units` and all eight line items. **The items table is INLINE**: a typed table cannot force deferral (`TableProps.rows` is a bare relation) and the preview asks inline, so nothing in this document reaches the page's refusal (`this preview does not fetch deferred relations, …`) -- that box is WP-30's, and no fixture shows it today. The Ermine channel carries **no** `preview panel: widget …` line (`client/src/host/page.ts:305`). **Failure:** any error box; markup in the heading shown as markup rather than text; a table with no rows; fewer or more than five widgets. (The step's history: Q24 (d) drew `heading`/`text` with hand-written schemas and left all three tables as boxes, since the old `Sales.e` handed `table` a bare relation; the user decided Q25 on 2026-09-23, *"I'm pretty sure I want typed widget schemas in the typescript rather than matching runtime ermine values fallibly"* and *"Rewrite it."* The untyped shape lives on in `core/src/test/resources/doc/SalesRaw.e`, the runner's fixture, which is NOT a preview step: four of its five widgets are boxes by design.)
 - **Failure:** a blank panel; the `Pick a report: Ermine: Preview Report...` banner (`client/src/host/index.ts:299`) after the render line has appeared; or a red box saying `the client bundle (window.ErmineClient) is not loaded, so the document cannot be drawn` (`client/src/host/page.ts:287`). **Paste:** the Ermine channel, and the developer tools' console (E3's window) as text.
-- **Bears on:** WP-10's done-when, **AMENDED BY Q24 AND Q25 (2026-09-23): an inline fixture renders in the panel -- `Doc/SalesReport.e`, this step's main document, or the typed `Sales`** (and E9/E10). Also WP-9's bundle in a real webview, and Q25's typed `heading`/`text` widgets. WP-30's deferred box is NOT reachable from this step (no fixture carries a typed deferred table).
+- **Bears on:** WP-10's done-when, **AMENDED BY Q24 AND Q25 (2026-09-23): an inline fixture renders in the panel -- the typed `Sales`, this step's document** (and E9). **Before playtest F2 this also named `Doc/SalesReport.e`, which is refused at render (Q27).** Also WP-9's bundle in a real webview, and Q25's typed `heading`/`text` widgets. WP-30's deferred box is NOT reachable from this step (no fixture carries a typed deferred table).
 
 ### E3 [new] — The console shows no CSP violation but the one named sprite — **NEVER RUN**
 
@@ -948,7 +962,7 @@ instrumentation below is what tells the two apart.
 
 ### E7 [new] — `npm run bundle:watch`: edit a widget, the panel updates ONCE, no restart — **NEVER RUN**
 
-- **Setup:** E2's `Doc.SalesReport` document in the panel. In a terminal: `cd client && npm run bundle:watch`, and wait until it has built once and gone quiet. **Its own first build rewrites the bundle, so the panel reloads once here** — that is the watcher working, not this step's event.
+- **Setup (NOTE, playtest F2: no fixture draws a scorecard today, so this step's scorecard edit has nothing to show; edit `client/src/widgets/heading.ts` instead and look for the `Sales` heading, or SKIP it):** E2's `Doc.SalesReport` document in the panel. In a terminal: `cd client && npm run bundle:watch`, and wait until it has built once and gone quiet. **Its own first build rewrites the bundle, so the panel reloads once here** — that is the watcher working, not this step's event.
 - **Do:** in `client/src/widgets/scorecard.ts` change `title.textContent = props.title;` to `title.textContent = "E7 " + props.title;` and **save**.
 - **Expect:** within a few seconds the banner **`the client bundle changed; reloading`** (`client/src/host/index.ts:291`) appears, then the page is replaced and the scorecard's title reads **`E7 Sales by region`** — with no render line in the channel and no server restart: the new page is sent the last document again. The channel logs **exactly ONE** reload line for the build, `"preview: " + why + "; reloading the panel"` (`editor/vscode/src/preview-core.js:5931`), where `why` is `the client bundle changed (N file events)` (`editor/vscode/src/preview-core.js:5927`). One build writes four files; only the `*.js` two are watched (`editor/vscode/src/preview-core.js:5852`) and every event pushes one shared 250 ms deadline (`editor/vscode/src/preview-core.js:5857`), so one build is one reload. Scroll position is lost; that is accepted.
 - **Undo:** `git checkout -- client/src/widgets/scorecard.ts`. That is a second build, so a second reload line is expected. Then stop `bundle:watch` (Ctrl-C).
@@ -971,14 +985,16 @@ instrumentation below is what tells the two apart.
 
 ### E9 [new] — `table` renders THROUGH `runTabular` — **NEVER RUN**
 
-- **Setup:** E2's `Doc.SalesReport` document; writers at the default.
-- **Do:** look at the second item, `$.children[1]`.
-- **Expect:** a real table drawn by the legacy writers, with the headers `Region`, `Sales` and `Change` (`core/src/test/resources/modules/Doc/SalesReport.e:46` and the two lines after it) and three rows, EMEA, APAC and AMER, sorted by the second column (INFERRED from the `ColumnSort 1 True` in the same `TableProps`). **No error box** for it, and **no** `preview panel: widget "table" …` line in the channel (`client/src/host/page.ts:305`). The error it would show without the writers is `env.htmlwriter with a runTabular function is required by this widget` (`client/src/legacy.ts:338`), and seeing THAT means the writers did not load.
+- **Setup:** E2's `Sales` document; writers at the default. (AMENDED BY PLAYTEST F2: this step used `Doc/SalesReport.e`'s table, which is refused at render.)
+- **Do:** look at the items table, `$.root.children[1].cells[1][0]` (the last one, under the text).
+- **Expect:** a real table drawn by the legacy writers, with the headers `Item`, `Amount` and `Units` and all **eight** line items, whatever the date range (E2's `Sales` paragraph; MEASURED in jsdom, NOT yet in VS Code). The `byDay` table at `cells[0][0]` has rows only for dates that select sales (with the skeleton's today's dates it is an empty four-column table, Q21), so it is not this step's witness. **No error box** for it, and **no** `preview panel: widget "table" …` line in the channel (`client/src/host/page.ts:305`). The error it would show without the writers is `env.htmlwriter with a runTabular function is required by this widget` (`client/src/legacy.ts:338`), and seeing THAT means the writers did not load.
 - **Failure:** an error box; a table with no rows; an unstyled table (then `common.css` did not load — look in E3's console). **Paste:** the channel, the console, and one sentence describing what is drawn.
-- **Also (optional, since Q25):** the typed `Sales` (E2's sub-step) draws THREE tables through the same `runTabular`; any of them may stand in for this one if `Doc.SalesReport`'s is in doubt.
+- **Also:** the other two `Sales` tables draw through the same `runTabular`.
 - **Bears on:** WP-11 done-when (the one row that has been HUMAN since WP-9); §5's Bundle checklist third row.
 
-### E10 [new] — A `pieChart` draws — **NEVER RUN**
+### E10 [new] — A `pieChart` draws — **NO FIXTURE (playtest F2)**
+
+**NO FIXTURE until the runner accepts a zero-parameter report or `SalesReport` gains a parameter (the user's call, Q27).** The only report with a `pieChart` and an `axisChart` is `Doc/SalesReport.e` (`report : Node`), which the server refuses at render (F2); `Sales` has no chart. Record E10 as **SKIP (F2)**. The step below is kept as written for when it has a fixture again.
 
 - **Setup:** E2's document.
 - **Do:** scroll to the last item, `$.children[3]`, and the bar chart above it, `$.children[2]`.
@@ -1013,8 +1029,8 @@ instrumentation below is what tells the two apart.
 ### E14 [new] — The writers-missing banner — **NEVER RUN**
 
 - **Setup:** `mkdir -p /tmp/wp-empty`. **Close the panel**: a page built WITH the whole writers is not re-checked by a command (only a page built without them is), so changing the setting under an open, healthy panel does nothing until a new panel or a bundle rebuild.
-- **Do:** set `"ermine.preview.writersPath": "/tmp/wp-empty"`, then **Ermine: Preview Report...** → `core/src/test/resources/modules/Doc/SalesReport.e` → `report`.
-- **Expect, the banner** (status 0, so no `NNN:` prefix and no path): `the legacy writers are not loaded: no htmlwriter.js in /tmp/wp-empty. table, drilldownTable, the charts and styleBox show an error box instead; set ermine.preview.writersPath to the writers' web/ folder and run Ermine: Preview Report... again` — built at `editor/vscode/src/preview-core.js:5758` and `:5759`, with the `why` of `:5757` and the fix of `:5754`, sent as an `error` with `status: 0` (`editor/vscode/src/preview-core.js:5333`). **The document is DIMMED** under it, the scorecard drawn, and the three legacy widgets are error boxes: the table's says `env.htmlwriter with a runTabular function is required by this widget` (`client/src/legacy.ts:338`), the charts' `env.htmlwriter with a …` (`client/src/charts.ts:451`). **The channel** has the same sentence once, prefixed `preview: ` (`editor/vscode/src/preview-core.js:5778`), and one `preview panel: widget "…" at $.children[N]: it threw while rendering: …` line per legacy widget (`client/src/host/page.ts:305`, `client/src/dispatcher.ts:247`). While this banner is up a re-render in flight shows NO *re-rendering* banner (an error outranks `stale`, `client/src/host/index.ts:225`) — expected, and in the README since this stage.
+- **Do:** set `"ermine.preview.writersPath": "/tmp/wp-empty"`, then **Ermine: Preview Report...** → `core/src/test/resources/doc/Sales.e` → `report` (was `Doc/SalesReport.e`: refused at render, F2).
+- **Expect, the banner** (status 0, so no `NNN:` prefix and no path): `the legacy writers are not loaded: no htmlwriter.js in /tmp/wp-empty. table, drilldownTable, the charts and styleBox show an error box instead; set ermine.preview.writersPath to the writers' web/ folder and run Ermine: Preview Report... again` — built at `editor/vscode/src/preview-core.js:5758` and `:5759`, with the `why` of `:5757` and the fix of `:5754`, sent as an `error` with `status: 0` (`editor/vscode/src/preview-core.js:5333`). **The document is DIMMED** under it, the heading and text drawn (AMENDED BY F2: `Sales` has no scorecard and no chart), and its three tables are error boxes, each saying `env.htmlwriter with a runTabular function is required by this widget` (`client/src/legacy.ts:338`). **The channel** has the same sentence once, prefixed `preview: ` (`editor/vscode/src/preview-core.js:5778`), and one `preview panel: widget "…" at $.children[N]: it threw while rendering: …` line per legacy widget (`client/src/host/page.ts:305`, `client/src/dispatcher.ts:247`). While this banner is up a re-render in flight shows NO *re-rendering* banner (an error outranks `stale`, `client/src/host/index.ts:225`) — expected, and in the README since this stage.
 - **Then:** set `writersPath` back to `""` and run **Ermine: Preview Report...** again, the same pick. **Expect** the page to reload WITH the writers (a page built without them IS re-checked on a command) and the banner to go.
 - **Failure:** no banner; a banner that begins `0:`; widgets drawn although the folder is empty; or the fix in "Then" needing a window reload. **Paste:** the channel.
 - **Bears on:** WP-11's second done-when half; the Bundle checklist row's third state; N2.

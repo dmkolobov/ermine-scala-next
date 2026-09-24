@@ -5369,10 +5369,47 @@ function previewCsp(cspSource) {
     " 'unsafe-inline'; img-src " + cspSource + " data:;";
 }
 
-/** A `cspSource` that could break out of its directive is refused, not escaped. */
+/**
+ * A `cspSource` that could break out of its directive is refused, not escaped.
+ *
+ * VS Code's real `webview.cspSource` is a LIST: `'self' https://*.vscode-cdn.net`
+ * (MEASURED in the first playtest, 2026-09-23, finding F1; the old guard
+ * refused every space and quote and so refused the real value). It is split on
+ * runs of spaces/tabs and EACH token must be exactly one CSP source expression:
+ *
+ *   quoted keyword   `'self'`, `'unsafe-eval'`  -- passed through, we add none
+ *   scheme-source    `https:`, `vscode-webview-resource:`
+ *   host-source      [scheme://][*.]host[:port|:*][/path]
+ *
+ * The value is trimmed of spaces/tabs only, and the TRIMMED value is both
+ * checked and emitted; a token holding any control or non-ASCII character
+ * (a newline, `\v`, NBSP, U+2028, U+FEFF) is refused before the arms run.
+ * Anything else (`;` `,` `"` `<` `>` `\` a newline, an unquoted keyword like
+ * `self`, an empty value) is refused by name, quoting the offending token. The
+ * host arm also admits `+` (VS Code's older `https://file+.vscode-resource...`
+ * value); `+` cannot end a directive. The path arm admits neither `,` (CSP3
+ * excludes it from a path) nor `&` (an entity inside the meta attribute).
+ */
+const CSP_KEYWORD_SOURCE = /^'[a-z-]+'$/;
+const CSP_SCHEME_SOURCE = /^[A-Za-z][A-Za-z0-9+.-]*:$/;
+const CSP_HOST_SOURCE =
+  /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)?(\*\.)?[A-Za-z0-9*][A-Za-z0-9.+-]*(:(\d+|\*))?(\/[A-Za-z0-9._~%!$()*+=:@\/-]*)?$/;
+/** A keyword WITHOUT its quotes parses as a host named `self`: always a mistake. */
+const CSP_UNQUOTED_KEYWORD = /^(self|none|unsafe-[a-z-]+|strict-dynamic|report-sample|wasm-unsafe-eval)$/i;
+/** The value the guard checks is the value the page gets: spaces/tabs trimmed, nothing else. */
+function cspSourceTrim(s) {
+  return s.replace(/^[ \t]+|[ \t]+$/g, "");
+}
 function cspSourceProblem(s) {
-  if (typeof s !== "string" || !s.trim()) return "cspSource is not a non-empty string";
-  if (/[\s;,'"<>&\\]/.test(s)) return "cspSource " + JSON.stringify(s) + " contains a character that would change the policy";
+  if (typeof s !== "string" || !cspSourceTrim(s)) return "cspSource is not a non-empty string";
+  for (const token of cspSourceTrim(s).split(/[ \t]+/)) {
+    if (/[^\x21-\x7e]/.test(token)) {
+      return "cspSource " + JSON.stringify(s) + ": the token " + JSON.stringify(token) + " holds a control or non-ASCII character";
+    }
+    if (CSP_KEYWORD_SOURCE.test(token) || CSP_SCHEME_SOURCE.test(token) ||
+      (CSP_HOST_SOURCE.test(token) && !CSP_UNQUOTED_KEYWORD.test(token))) continue;
+    return "cspSource " + JSON.stringify(s) + ": the token " + JSON.stringify(token) + " is not a CSP source expression";
+  }
   return null;
 }
 
@@ -5436,7 +5473,7 @@ function buildPreviewHtml(uris, opts) {
     '<html lang="en">',
     "<head>",
     '<meta charset="utf-8">',
-    '<meta http-equiv="Content-Security-Policy" content="' + previewCsp(u.cspSource) + '">',
+    '<meta http-equiv="Content-Security-Policy" content="' + previewCsp(cspSourceTrim(u.cspSource)) + '">',
     "<title>Ermine preview</title>",
   ]
     .concat(styles.map((s) => '<link rel="stylesheet" href="' + htmlEscape(s) + '">'))

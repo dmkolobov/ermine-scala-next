@@ -10389,9 +10389,118 @@ test("panel (csp): the policy is EXACTLY the design review's one line, character
 });
 
 test("panel (csp): a cspSource that would change the policy is REFUSED, never escaped into it", () => {
-  for (const bad of ["", "  ", "a; script-src *", "a 'unsafe-inline'", 'a"', "a\nb", undefined, 7]) {
+  // `a 'unsafe-inline'` left this list in 0.1.15 (F1): a quoted keyword is a
+  // CSP source expression, passed through verbatim like VS Code's own 'self'.
+  for (const bad of ["", "  ", "a; script-src *", 'a"', "a\nb", undefined, 7]) {
     assert.throws(() => core.buildPreviewHtml({ cspSource: bad, client: "c.js", host: "h.js" }),
       /buildPreviewHtml: cspSource/, "cspSource " + JSON.stringify(bad));
+  }
+});
+
+// PLAYTEST F1 (2026-09-23): VS Code's REAL webview.cspSource, MEASURED by the
+// user in a real VS Code. The 0.1.14 guard refused it, so every panel render
+// showed "the preview page could not be built". Every test before this one
+// used a single bare token.
+const REAL_VSCODE_CSP_SOURCE = "'self' https://*.vscode-cdn.net";
+
+test("panel (csp) F1: VS Code's REAL cspSource `'self' https://*.vscode-cdn.net` is ACCEPTED and the page's CSP is pinned exactly", () => {
+  const html = core.buildPreviewHtml({ cspSource: REAL_VSCODE_CSP_SOURCE, client: "c.js", host: "h.js" });
+  const expected =
+    "default-src 'none'; script-src 'self' https://*.vscode-cdn.net 'unsafe-eval'; " +
+    "style-src 'self' https://*.vscode-cdn.net 'unsafe-inline'; " +
+    "img-src 'self' https://*.vscode-cdn.net data:;";
+  assert.strictEqual(core.previewCsp(REAL_VSCODE_CSP_SOURCE), expected);
+  assert.strictEqual(html, [
+    "<!DOCTYPE html>",
+    '<html lang="en">',
+    "<head>",
+    '<meta charset="utf-8">',
+    '<meta http-equiv="Content-Security-Policy" content="' + expected + '">',
+    "<title>Ermine preview</title>",
+    "</head>",
+    "<body>",
+    '<div id="' + core.PREVIEW_ROOT_ID + '"></div>',
+    '<script src="c.js"></script>',
+    '<script src="h.js"></script>',
+    "</body>",
+    "</html>",
+    "",
+  ].join("\n"));
+});
+
+test("panel (csp) F1 table: each token must be ONE CSP source expression -- accepted rows build, refused rows are named by token", () => {
+  const accepted = [
+    REAL_VSCODE_CSP_SOURCE,
+    "vscode-webview-resource: https:",
+    "'self'",
+    "https://example.com:8443/assets/web/",
+    "*.example.com:* http://localhost:3000/x",
+    "https://file+.vscode-resource.vscode-cdn.net",
+    "'self'\thttps://*.vscode-cdn.net",
+    "'self'  https://*.vscode-cdn.net",
+    "'self' \t \thttps://*.vscode-cdn.net",
+    "*",
+  ];
+  for (const src of accepted) {
+    const html = core.buildPreviewHtml({ cspSource: src, client: "c.js", host: "h.js" });
+    assert.ok(html.indexOf('content="' + core.previewCsp(src) + '"') > 0, "accepted verbatim: " + JSON.stringify(src));
+  }
+  const refused = [
+    ["'self'; script-src *", "'self';"],
+    ["a b;", "b;"],
+    ["self", "self"],
+    ["'self' <x>", "<x>"],
+    ["'self'\nhttps://x", "'self'\nhttps://x"],
+    ["", null],
+    ['"quoted"', '"quoted"'],
+    ["'self' https://a,https://b", "https://a,https://b"],
+    ["';'", "';'"],
+    ["'self' https://a;b", "https://a;b"],
+    ["https://a/p;q", "https://a/p;q"],
+    ["https://a/&quot;", "https://a/&quot;"],
+    ["https://a\\b", "https://a\\b"],
+    ["https://a/&amp", "https://a/&amp"],
+    ["https://a/\\b", "https://a/\\b"],
+    ["'self'\n", "'self'\n"],
+    ["\v'self'", "\v'self'"],
+    ["'self' https://x\u00a0", "https://x\u00a0"],
+    ["'self'\u2028", "'self'\u2028"],
+  ];
+  for (const [src, token] of refused) {
+    assert.throws(() => core.buildPreviewHtml({ cspSource: src, client: "c.js", host: "h.js" }),
+      (err) => /^buildPreviewHtml: cspSource/.test(err.message) &&
+        (token === null || err.message.indexOf("the token " + JSON.stringify(token) + " ") >= 0),
+      "refused by name: " + JSON.stringify(src));
+  }
+});
+
+test("panel (csp) F1 glue: setPanelHtml passes webview.cspSource UNTOUCHED, and a build failure still becomes the notice page", () => {
+  const fsMod = require("node:fs");
+  const ext = fsMod.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  assert.ok(/core\.previewPageUris\(panel\.webview\.cspSource, bundle, writers, uriOf\)/.test(ext), "cspSource passed verbatim");
+  assert.strictEqual((ext.match(/cspSource/g) || []).length, 1, "extension.js touches cspSource exactly once");
+  assert.strictEqual(core.previewPageUris(REAL_VSCODE_CSP_SOURCE, { ok: true, dir: "/b" }, null, (d, f) => d + "/" + f).cspSource,
+    REAL_VSCODE_CSP_SOURCE);
+  let message = null;
+  try { core.buildPreviewHtml({ cspSource: "self", client: "c.js", host: "h.js" }); } catch (err) { message = err.message; }
+  assert.ok(message && /^buildPreviewHtml: cspSource/.test(message));
+  const notice = core.buildPanelNoticeHtml({ title: "The preview page could not be built", message });
+  assert.ok(notice.indexOf("The preview page could not be built") >= 0, "the notice names the failure");
+  assert.ok(notice.indexOf("buildPreviewHtml: cspSource") >= 0, "the notice carries the message");
+  // extension.js's own catch: a page-build throw becomes THIS notice page
+  assert.ok(/catch \(err\) \{\s*const message = err && err\.message \? err\.message : String\(err\);\s*log\(`preview: BUG -- the panel page could not be built: \$\{message\}`\);\s*panel\.webview\.html = core\.buildPanelNoticeHtml\(\{ title: "The preview page could not be built", message \}\);/.test(ext),
+    "extension.js setPanelHtml's catch shows the notice page on a build failure");
+});
+
+test("panel (csp) F1 round 2: the TRIMMED value is both checked and emitted -- surrounding spaces/tabs never reach the policy", () => {
+  const html = core.buildPreviewHtml({ cspSource: " \t" + REAL_VSCODE_CSP_SOURCE + "\t ", client: "c.js", host: "h.js" });
+  assert.ok(html.indexOf('content="' + core.previewCsp(REAL_VSCODE_CSP_SOURCE) + '"') > 0, "the emitted CSP is the trimmed value");
+  // a control or non-ASCII character is refused by its own name, before the arms run
+  for (const [src, token] of [["'self'\n", "'self'\n"], ["\v'self'", "\v'self'"], ["'self' https://x\u00a0", "https://x\u00a0"], ["'self'\u2028", "'self'\u2028"]]) {
+    assert.throws(() => core.buildPreviewHtml({ cspSource: src, client: "c.js", host: "h.js" }),
+      (err) => err.message === "buildPreviewHtml: cspSource " + JSON.stringify(src) + ": the token " + JSON.stringify(token) +
+        " holds a control or non-ASCII character",
+      "refused as a control/non-ASCII token: " + JSON.stringify(src));
   }
 });
 

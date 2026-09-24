@@ -57,8 +57,8 @@ code --extensionDevelopmentPath="$PWD" /path/to/ermine-scala
 gitignored, so build it yourself):
 
 ```sh
-npx @vscode/vsce package          # -> ermine-lang-0.1.14.vsix
-code --install-extension ermine-lang-0.1.14.vsix
+npx @vscode/vsce package          # -> ermine-lang-0.1.15.vsix
+code --install-extension ermine-lang-0.1.15.vsix
 ```
 
 `npm run package` does the same. Upgrading is the same command with the new
@@ -114,8 +114,11 @@ workspace symbol picker.
 
 ## Preview
 
-A **report** is any top-level binding whose type is `Node`, `Params -> Node`,
-`Fetch Node` or `Params -> Fetch Node`. The preview renders one, on the
+A **report** is a top-level binding whose type is `Params -> Node` or
+`Params -> Fetch Node`. The binding picker also offers a zero-parameter
+binding (`report : Node`), but the server refuses it at render with a 400,
+*"… is not a report: a report must be a function Params -> Node, not Node"*
+(playtest finding F2, see **0.1.15**). The preview renders one, on the
 server, in a second session of its own, and re-renders it when a file it
 depends on is saved — with no JVM restart and no build.
 
@@ -442,6 +445,39 @@ type one frame early and without its constraints (`go : List a -> a -> a` for
 a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
+
+### 0.1.15
+
+The first two findings of the first real playtest (2026-09-23, VS Code with
+0.1.14 installed).
+
+**F1, fixed: the panel refused VS Code's own `cspSource`.** With
+`ermine.preview.target` at `panel`, every render showed *"the preview page
+could not be built: buildPreviewHtml: cspSource "'self'
+https://*.vscode-cdn.net" contains a character that would change the policy"*.
+VS Code's real `webview.cspSource` is a space-separated LIST of CSP source
+expressions, one of them a quoted keyword (`'self' https://*.vscode-cdn.net`,
+MEASURED in that playtest); the 0.1.14 guard refused every space and quote, and
+every test had used a single bare token. The guard now splits the value on
+spaces/tabs and accepts each token only if it is exactly one CSP source
+expression: a quoted keyword (`'self'`), a scheme (`https:`), or a host with an
+optional scheme, `*.` wildcard, port and path. Anything else (`;`, `,`, `"`,
+`<`, `>`, `&`, `\`, a newline, an unquoted `self`) is still refused, naming the
+token. The policy itself is unchanged: `cspSource` is substituted verbatim, so
+for the real value the page's CSP is `default-src 'none'; script-src 'self'
+https://*.vscode-cdn.net 'unsafe-eval'; style-src 'self'
+https://*.vscode-cdn.net 'unsafe-inline'; img-src 'self'
+https://*.vscode-cdn.net data:;` (pinned by a test).
+
+**F2, recorded, not fixed: a zero-parameter report is refused.** Picking
+`core/src/test/resources/modules/Doc/SalesReport.e` → `report` (`report :
+Node`) answers 400 *"Doc.SalesReport.report is not a report: a report must be
+a function Params -> Node, not Node"*. The picker offers bare `Node` bindings on
+purpose, the runner refuses them; the **Preview** section above said `Node` was
+a report type and now says what is true. Whether the runner should accept
+`Node` or the picker should stop offering it is the user's decision (Q27 in
+`tracker/JSON-WIDGET-PLAYGROUND.md`). Until then the panel's playtest steps use
+the typed `core/src/test/resources/doc/Sales.e`.
 
 ### 0.1.14
 

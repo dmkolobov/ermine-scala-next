@@ -1,5 +1,21 @@
 # Playtest results: the Ermine preview in VS Code (0.1.14)
 
+## Findings
+
+The first real playtest, 2026-09-23: the user, in a real VS Code, extension
+0.1.14 installed, on this worktree.
+
+| id | what | cause | status |
+|---|---|---|---|
+| **F1** | With `ermine.preview.target` = `panel`, the panel opens and shows, verbatim: *the preview page could not be built: buildPreviewHtml: cspSource "'self' https://*.vscode-cdn.net" contains a character that would change the policy* | `cspSourceProblem` (`editor/vscode/src/preview-core.js`, 0.1.14) refused any space, quote, `;`, `,`, `<`, `>`, `&` or `\`. VS Code's real `webview.cspSource` is `'self' https://*.vscode-cdn.net` (MEASURED by the user): a space-separated list of CSP source expressions, one of them a quoted keyword. Every test used a single bare token (`"vscode-src"`, `"s"`), so no test could see it | **FIXED in 0.1.15, commit pending** (uncommitted in the worktree): each space/tab-separated token must be exactly one CSP source expression (a quoted keyword, a scheme-source, or a host-source); anything else is refused naming the token. The page's CSP for the real value is pinned exactly by a test. Group E needs 0.1.15 |
+| **F2** | **Ermine: Preview Report...** on `core/src/test/resources/modules/Doc/SalesReport.e` → `report` (`report : Node`) answers 400 *"Doc.SalesReport.report is not a report: a report must be a function Params -> Node, not Node"* | the runner requires `Params -> Result` (`json/Decode.scala:122-140`, `reportSignature`); the binding picker offers bare `Node` bindings knowingly (`lsp/Definitions.scala:393-397`). `editor/vscode/README.md` listed `Node` as a report type, which was false | **RECORDED, runner not changed.** README corrected (0.1.15). Checklist E1/E2/E9 and 30-minute rows 11 and *re-pick* now use the typed `core/src/test/resources/doc/Sales.e`; **E10 (pie/bar charts) has NO FIXTURE**. **The user's decision is pending (Q27 in `tracker/JSON-WIDGET-PLAYGROUND.md` §13):** (i) the runner treats `Node` as `{} -> Node`; (ii) `SalesReport` gains a parameter and the picker stops offering bare `Node` |
+
+**Setup fact, not a defect:** the first render showed only the JSON tab because
+the copied settings file (`tracker/playtest/settings.example.json` →
+`.vscode/settings.json`, `tracker/PLAYTEST-SETUP.md` §6) sets
+`ermine.preview.target` to `json` on purpose for Groups A–D. Group E sets it to
+`panel`; that is when F1 appeared.
+
 **Who fills this in:** you, while you run `tracker/WP-7-MANUAL-CHECKLIST.md`.
 **Who reads it:** the orchestrator. I read this file and act on it — every
 FAIL becomes a ticket or a fix, every SKIP becomes a decision about whether
@@ -129,16 +145,16 @@ become meaningless)
 
 | Step | Was | What it checks | Result | What you saw | Notes |
 |---|---|---|---|---|---|
-| **E1** | [new] | The panel opens BESIDE; the cursor stays in your editor; no JSON tab |  |  |  |
-| **E2** | [new] | `Doc.SalesReport` draws (the scorecard); no banner, no `preview panel: widget` line |  |  |  |
+| **E1** | [new] | The panel opens BESIDE on `Sales.e` → `report` (F2: not `SalesReport`); the cursor stays in your editor; no JSON tab |  |  |  |
+| **E2** | [new] | The typed `Sales` draws: heading, text, three tables, no error box (F2: was `Doc.SalesReport`'s scorecard); no banner, no `preview panel: widget` line |  |  |  |
 | **E3** | [new] | Console: no CSP refusal except at most `tmbllsprite.png`; list any other URL verbatim |  |  |  |
 | **E4** | [new] | `400: the key "fromDy" is not allowed here ($.params.fromDy)`; document dimmed |  |  |  |
 | **E5** | [new] | Hidden panel + wedge -> shown: the stuck banner. **F1: (a) posts reach a hidden webview / (b) they do not / (c) not determined** |  |  |  |
 | **E6** | [new] | The panel's Restart button: restart, then HELD, no re-render; `WpInt.e` put back |  |  |  |
 | **E7** | [new] | `bundle:watch` + a `scorecard.ts` edit: ONE reload line, the title changes, no restart |  |  |  |
 | **E8** | [new] | Files deleted -> *not built* page; rebuilt -> back. **Folder deleted: (i) page flipped? (ii) rebuild noticed?** |  |  |  |
-| **E9** | [new] | `table` draws through the writers' `runTabular`, three rows, no error box |  |  |  |
-| **E10** | [new] | The `pieChart` (`Share of sales`) and the bar chart draw |  |  |  |
+| **E9** | [new] | `Sales`'s items table draws through the writers' `runTabular`, eight rows, no error box (F2: was `SalesReport`'s three-row table) |  |  |  |
+| **E10** | [new] | **NO FIXTURE (F2)** until the runner accepts a zero-parameter report or `SalesReport` gains a parameter (the user's call, Q27): record SKIP |  |  |  |
 | **E11** | [new] | OPTIONAL, NO FIXTURE: a style-box click is inert (SKIP unless you wrote a report) |  |  |  |
 | **E12** | [new] | Two commands, one panel; close it and re-run: a new one, never two |  |  |  |
 | **E13** | [new] | `target: json` = tab only; `both` = tab then panel; `"tab"` refused once by name |  |  |  |
