@@ -1,7 +1,7 @@
 package com.clarifi.reporting
 
 import com.clarifi.reporting.ermine._
-import com.clarifi.reporting.ermine.json.{ ArgonautJson, Delivery, Encode, JsonBuilder, Schema, Validate, Wire, Zod }
+import com.clarifi.reporting.ermine.json.{ ArgonautJson, Delivery, Encode, JsonBuilder, Schema, SchemaMain, Validate, Wire, Zod }
 import com.clarifi.reporting.relational.{ ExtRel, SmallLit }
 import com.clarifi.reporting.ermine.rename.NewPipeline
 import com.clarifi.reporting.ermine.session.{ Session, SessionEnv }
@@ -914,13 +914,126 @@ object TestSchema extends Properties("Ermine JSON Schema") {
       }
     }
 
-  property("(e2) a recursive type's zod is lazy and annotated") = sessionProof { implicit s =>
+  property("(e2) a recursive type's zod is lazy, DECLARED and annotated z.ZodType<X> (WP-32)") = sessionProof { implicit s =>
     val schema = schemaAfter("data Tr = Trl Int | Trn Tr Tr", "Tr").fold(e => sys.error(e.report), identity)
     val src = Zod.render(schema).fold(e => sys.error(e), identity)
     assert(src.contains("z.lazy(() => Test_Tr)"), src)
-    assert(src.contains("export const Test_Tr: z.ZodTypeAny"), src)
+    assert(src.contains("/** Test.Tr */\nexport type Test_Tr =\n" +
+                        "  | { tag: \"Trl\"; args: [number] }\n" +
+                        "  | { tag: \"Trn\"; args: [Test_Tr, Test_Tr] };\n" +
+                        "export const Test_Tr: z.ZodType<Test_Tr> = "), src)
+    assert(!src.contains("ZodTypeAny"), src)
+    assert(!src.contains("z.infer<typeof Test_Tr>"), src)
     assert(src.contains("z.discriminatedUnion(\"tag\""), src)
   }
+
+  property("(e3) a recursive record is an interface, a mutual pair both declared, a non-recursive def keeps z.infer (WP-32)") =
+    sessionProof { implicit s =>
+      val decls = List(
+        "data Rk = Rk { rkLabel : String, rkNote : Maybe String, rkKids : List Rk }",
+        "data Mx = Mx1 Int | Mx2 My",
+        "data My = My1 { myX : Mx }",
+        "data Wrap = Wrap { wrapR : Rk, wrapM : Mx }").mkString("\n")
+      val schema = schemaAfter(decls, "Wrap").fold(e => sys.error(e.report), identity)
+      val src = Zod.render(schema).fold(e => sys.error(e), identity)
+      assert(src.contains("/** Test.Rk */\nexport interface Test_Rk {\n"), src)
+      assert(src.contains("  rkKids: Array<Test_Rk>;\n"), src)
+      assert(src.contains("  rkNote?: string;\n"), src)
+      assert(src.contains("export const Test_Rk: z.ZodType<Test_Rk> = "), src)
+      assert(src.contains("export type Test_Mx =\n  | { tag: \"Mx1\"; args: [number] }\n  | { tag: \"Mx2\"; args: [Test_My] };\n"), src)
+      assert(src.contains("export const Test_Mx: z.ZodType<Test_Mx> = "), src)
+      assert(src.contains("export interface Test_My {\n  myX: Test_Mx;\n}\n"), src)
+      assert(src.contains("export const Test_My: z.ZodType<Test_My> = "), src)
+      assert(src.contains("export type Test_Wrap = z.infer<typeof Test_Wrap>;"), src)
+      assert(!src.contains("export const Test_Wrap:"), src)
+      assert(!src.contains("ZodTypeAny"), src)
+    }
+
+  property("(e4) a multi-type bundle emits every definition once, with short names and aliases (WP-32)") =
+    sessionProof { implicit s =>
+      loadStatements(List(
+        "data Sh = Sh { shV : Int }",
+        "data UA = UA { uaS : Sh }",
+        "data UB = UB { ubS : Sh, ubT : Tb }",
+        "data Tb = Tbl | Tbn Tb").mkString("\n"), imps)
+      val src = SchemaMain.generate(List("--zod", "Test:UA", "Test:UB=Bee"), None,
+                                    List(("Test", "UA", None), ("Test", "UB", Some("Bee"))))
+        .fold(e => sys.error(e), identity)
+      def count(needle: String) = src.split(java.util.regex.Pattern.quote(needle), -1).length - 1
+      assert(count("export const Test_Sh =") == 1, src)
+      assert(count("export const Test_Tb: z.ZodType<Test_Tb> =") == 1, src)
+      assert(src.contains("// command: bin/ermine-schema --zod Test:UA Test:UB=Bee\n"), src)
+      assert(src.contains("export type UA = Test_UA;\nexport const UASchema = Test_UA;\n"), src)
+      assert(src.contains("export type Bee = Test_UB;\nexport const BeeSchema = Test_UB;\n"), src)
+      assert(!src.contains("export type UB ="), src)
+      assert(src.contains("export type Sh = Test_Sh;\n"), src)
+      assert(src.contains("export type Tb = Test_Tb;\n"), src)
+      assert(!src.contains("WidgetRegistry"), src)
+      // an unknown type is refused by name
+      val bad = SchemaMain.generate(Nil, None, List(("Test", "Nope", None)))
+      assert(bad == Left("the module Test declares no type Nope"), bad.toString)
+    }
+
+  /** The registry `bin/ermine-schema --widgets Layout.Widgets` finds, pinned:
+    * a widget added, renamed or retyped in Ermine changes this list. */
+  private val pinnedWidgets: List[(String, String)] = List(
+    "axisChart"         -> "AxisChartProps r",
+    "crosstab"          -> "CrosstabProps",
+    "drilldownBar"      -> "DrilldownBarProps r",
+    "drilldownPieChart" -> "PieChartProps r",
+    "drilldownTable"    -> "DrilldownTableProps r",
+    "heading"           -> "HeadingProps",
+    "headline"          -> "HeadlineProps",
+    "pieChart"          -> "PieChartProps r",
+    "scorecard"         -> "ScorecardProps r",
+    "styleBox"          -> "StyleBoxProps r",
+    "table"             -> "TableProps r",
+    "text"              -> "TextProps",
+    "treeMap"           -> "Unsupported")
+
+  property("(w1) the widget scan over Layout.Widgets finds exactly the pinned names, props types and sources (WP-32)") =
+    sessionProof { implicit s =>
+      val mods = SchemaMain.modulesUnder("Layout.Widgets").fold(e => sys.error(e), identity)
+      Session.loadModules(mods)
+      val found = SchemaMain.widgetsIn(mods).fold(e => sys.error(e), identity)
+      val got = found.map(f => (f.name, Schema.renderType(f.props))).sortBy(_._1)
+      assert(got == pinnedWidgets, got.mkString("\n"))
+      val src = SchemaMain.generate(List("--widgets", "Layout.Widgets"), Some(("Layout.Widgets", mods)), Nil)
+        .fold(e => sys.error(e), identity)
+      val registry = pinnedWidgets.filterNot(_._1 == "treeMap").map { case (n, t) =>
+        "  " + n + ": " + t.stripSuffix(" r") + ";\n" }.mkString
+      assert(src.contains("export interface WidgetRegistry {\n" + registry + "}\n"), src)
+      assert(src.contains("export type WidgetName = keyof WidgetRegistry;\n"), src)
+      assert(src.contains("export const WIDGET_PROP_SCHEMAS: { [K in WidgetName]: z.ZodType<WidgetRegistry[K]> } = {\n"), src)
+      assert(src.contains("  drilldownPieChart: PieChartPropsSchema,\n  drilldownTable:"), src)
+      assert(src.contains("export const UNSUPPORTED_WIDGETS: readonly string[] = [\"treeMap\"];\n"), src)
+      assert(src.contains("//   Layout.Widgets.Chart         no WidgetName term: not a widget\n"), src)
+      assert(src.contains("//   Layout.Widgets.PieChart      drilldownPieChart : PieChartProps r, pieChart : PieChartProps r\n"), src)
+      // CellFormat is reached from ten props types and emitted once
+      assert(src.split("export const Layout_Widgets_Format_CellFormat: z.ZodType<", -1).length == 2, src)
+      // the sources: a sha256 per .e file read, checked against the bytes on the classpath
+      def sha(bs: Array[Byte]) =
+        java.security.MessageDigest.getInstance("SHA-256").digest(bs).map(b => "%02x".format(b & 0xff)).mkString
+      (mods.map(_.replace('.', '/') + ".e") :+ "Layout/Doc.e") foreach { rel =>
+        val in = getClass.getClassLoader.getResourceAsStream("modules/" + rel)
+        val bytes = try in.readAllBytes() finally in.close()
+        assert(src.contains("// sha256 " + sha(bytes) + " " + rel + "\n"), rel + "\n" + src.take(6000))
+      }
+    }
+
+  property("(w2) one widget name at two props types is an error naming both declarations (WP-32)") =
+    sessionProof { implicit s =>
+      loadStatements(List(
+        "data DupA = DupA { dupA : Int }",
+        "data DupB = DupB { dupB : Int }",
+        "dupAName : WidgetName DupA",
+        "dupAName = WidgetName \"dup\"",
+        "dupBName : WidgetName DupB",
+        "dupBName = WidgetName \"dup\"").mkString("\n"), imps ++ Map("Layout.Doc" -> all))
+      val r = SchemaMain.generate(Nil, Some(("Test", List("Test"))), Nil)
+      assert(r == Left("the widget name \"dup\" is declared with different props types: " +
+                       "Test.dupAName : WidgetName DupA, Test.dupBName : WidgetName DupB"), r.toString)
+    }
 
   // ---------------------------------------------------------------------
   // (f) $ref: a recursive type exports once and validates at any depth

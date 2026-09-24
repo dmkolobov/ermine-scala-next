@@ -196,6 +196,29 @@ object Schema {
     } catch { case r: Reject => Left(r.error) }
   }
 
+  /** Several roots in ONE walk (WP-32): the `$defs` every root reaches,
+    * each emitted once however many roots share it, and one body per root
+    * (normally a `$ref`).  A root is `(type, module)`: the module resolves
+    * that root's unqualified field names, as `exportType`'s does.  An error
+    * names the root it came from.  `origins` maps each `$defs` key to the
+    * data type and arguments it instantiates, which the zod bundle uses to
+    * give a def its short TypeScript name. */
+  final case class Bundle(defs: List[(String, Json)], roots: List[Json],
+                          origins: Map[String, (Global, List[Type])])
+
+  def exportMany(roots: List[(Type, String)])(implicit s: SessionEnv): Either[Error, Bundle] = {
+    val ctx = new Ctx(roots.headOption.map(_._2).getOrElse("Builtin"), s)
+    var label = ""
+    try {
+      val bodies = roots.map { case (ty0, module) =>
+        ctx.module = module
+        label = module + ":" + renderType(ty0)
+        ctx.walk(ctx.abstractRowParameters(ty0), "$")
+      }
+      Right(Bundle(ctx.defs.toList.sortBy(_._1), bodies, ctx.origins.toMap))
+    } catch { case r: Reject => Left(Error(label + " " + r.error.path, r.error.message)) }
+  }
+
   /** The schema of a data type named by the module it is declared in, for
     * the `{module, name}` form of the LSP request and `bin/ermine-schema`'s
     * bare-name argument.  A type with no parameters, or whose parameters are
@@ -212,10 +235,12 @@ object Schema {
   // ---------------------------------------------------------------------
   // one walk
 
-  private final class Ctx(module: String, s: SessionEnv) {
+  private final class Ctx(var module: String, s: SessionEnv) {
     implicit val supply: Supply = Supply.create
     /** def name -> body; emitted sorted, so load order is unobservable. */
     val defs = mutable.HashMap[String, Json]()
+    /** def name -> the data type and arguments it instantiates. */
+    val origins = mutable.HashMap[String, (Global, List[Type])]()
     /** def names whose body is still being built (a recursive occurrence). */
     val open = mutable.HashSet[String]()
 
@@ -530,6 +555,7 @@ object Schema {
               if (arms.length == 1) arms.head else Json.obj("oneOf" -> Json.array(arms: _*))
             }
           defs += ((name, body))
+          origins += ((name, (g, args)))
         } finally open -= name
         ref
       }

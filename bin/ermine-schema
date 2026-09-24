@@ -4,6 +4,19 @@
 #   bin/ermine-schema -i Ord 'Ordering'
 #   bin/ermine-schema --zod -i Either 'Either String Int'
 #
+# Several types in ONE zod module (each definition once; each type also
+# exported under its own name, or the =Alias given):
+#
+#   bin/ermine-schema --zod Layout.Doc:Node=DocNode Layout.Widgets.Format:CellFormat
+#
+# Every widget: scan a module and every module under its directory for
+# `WidgetName T` terms and emit the props zod plus WidgetRegistry, WidgetName,
+# WIDGET_PROP_SCHEMAS and UNSUPPORTED_WIDGETS (about five seconds):
+#
+#   bin/ermine-schema --widgets Layout.Widgets Layout.Doc:Node=DocNode > widgets.ts
+#
+# --help prints the full usage.
+#
 # Only the modules named with -i (and their dependencies) are loaded, so this
 # starts in about a second rather than the REPL's thirteen.
 #

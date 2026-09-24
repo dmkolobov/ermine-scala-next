@@ -120,7 +120,11 @@ Defaults: `--db jdbc:sqlite::memory:`, `--dialect sqlite`, `--port 8080`,
 
 ```
 usage: ermine-schema [--zod] [-i Module ...] '<type expression>'
+       ermine-schema --zod Module:Type[=Alias] ...
+       ermine-schema --widgets Layout.Widgets [Module:Type[=Alias] ...]
 ```
+
+(the full text, with what each form does, is in `--help`; §6 "zod" below)
 
 **On the 2.11 branch** (`/home/dmitry/research/ermine/ermine-scala-wt-json211`,
 branch `json-encode-2.11`) the same code is present, ported by copy. There is no
@@ -780,11 +784,95 @@ $ bin/ermine-schema --zod -i Either 'Either String Int'
 export const Either_Either_String_Int = z.discriminatedUnion("tag", [z.object({ tag: z.literal("Left"), args: z.tuple([z.string()]) }).strict(), z.object({ tag: z.literal("Right"), args: z.tuple([z.number().int()]) }).strict()]);
 ```
 
-A tagged union maps 1:1 onto `z.discriminatedUnion("tag", ...)`. A recursive
-definition is emitted as `z.lazy` with a `: z.ZodTypeAny` annotation, because
-`tsc --strict` refuses a `const` whose inferred type depends on itself; the
-runtime check stays exact but its `z.infer` is `any`, which is why
-`client/src/props.ts` is hand-written and pinned against the generated zod.
+A tagged union maps 1:1 onto `z.discriminatedUnion("tag", ...)`.
+
+**Recursive types (WP-32).** `tsc --strict` refuses a `const` whose inferred
+type depends on itself (TS7022), so a recursive definition cannot be `z.infer`
+of its own schema. The generator therefore DECLARES the TypeScript type of every
+definition in a recursive component, in exactly the shape the zod accepts, and
+annotates the schema with it (zod's recipe for recursion):
+
+```
+$ bin/ermine-schema --zod -i Layout.Doc Node
+...
+/** Layout.Doc.Node */
+export type Layout_Doc_Node =
+  | { tag: "Widget"; name: string; props?: unknown }
+  | { tag: "VFlow"; children: Array<Layout_Doc_Node> }
+  ...
+export const Layout_Doc_Node: z.ZodType<Layout_Doc_Node> = z.discriminatedUnion("tag", [...]);
+```
+
+A record in such a component is an `export interface`; everything else is a
+`type`. A non-recursive definition keeps `export type X = z.infer<typeof X>`.
+Nothing transforms, so the schema's input and output types are the same. Until
+WP-32 these were annotated `z.ZodTypeAny` (so `z.infer` was `any`), which is why
+`client/src/props.ts` was hand-written.
+
+The declared type follows zod's inference, not taste: a `Json` field
+(`z.unknown()`) is an OPTIONAL key (`props?: unknown`), because zod's object
+inference makes every key whose type admits `undefined` optional, and the zod
+does accept an object without it.
+
+**Several types, one module.** `--zod` also takes any number of
+`Module:Type[=Alias]` arguments and exports them in ONE walk, so a definition
+several of them reach is emitted once:
+
+```
+$ bin/ermine-schema --zod Layout.Doc:Node=DocNode Layout.Widgets.Format:CellFormat
+```
+
+Every definition is exported under its qualified name (`Layout_Widgets_Format_CellFormat`)
+and, when it instantiates a data type at nothing but type variables and the name
+is unique in the module, under the type's own name too:
+`export type CellFormat = ...; export const CellFormatSchema = ...`. `=Alias`
+renames a root (`DocNode`). A short name two definitions would share is dropped
+for both and listed in the header, so importing it fails at `tsc`.
+
+**Every widget.** `--widgets Layout.Widgets` loads `Layout.Widgets` and every module
+under `Layout/Widgets/`, finds each term DECLARED there whose type is
+`Layout.Doc.WidgetName T`, evaluates it for its name string and exports `T` as
+above, then writes the registry:
+
+```
+$ bin/ermine-schema --widgets Layout.Widgets Layout.Doc:Node=DocNode Layout.Doc:Tab=DocTab Layout.Widgets.Format:CellFormat
+// Generated from Ermine by bin/ermine-schema (com.clarifi.reporting.ermine.json.Zod) -- do not edit.
+// command: bin/ermine-schema --widgets Layout.Widgets Layout.Doc:Node=DocNode ...
+//
+// scanned for `WidgetName T` terms: Layout.Widgets and every module under its directory
+//   Layout.Widgets               treeMap : no props (Unsupported)
+//   Layout.Widgets.AxisChart     axisChart : AxisChartProps r
+//   Layout.Widgets.Chart         no WidgetName term: not a widget
+//   ...
+// sources: the sha256 of every .e file this run read, by path under core/src/main/resources/modules
+// sha256 33db3a3d... Bool.e
+// ...
+export interface WidgetRegistry {
+  axisChart: AxisChartProps;
+  ...
+  drilldownPieChart: PieChartProps;
+  ...
+}
+export type WidgetName = keyof WidgetRegistry;
+export const WIDGET_PROP_SCHEMAS: { [K in WidgetName]: z.ZodType<WidgetRegistry[K]> } = { ... };
+export const UNSUPPORTED_WIDGETS: readonly string[] = ["treeMap"];
+```
+
+- An alias (`pieChartName` and `drilldownPieChartName`, both `PieChartProps r`) is
+  a second key with the same props type.
+- A name declared at an UNINHABITED type (a `data` with no constructors) is
+  reserved but unsupported: `Layout.Widgets` declares `data Unsupported` and
+  `treeMapName : WidgetName Unsupported`, and the name goes to
+  `UNSUPPORTED_WIDGETS`.
+- One name at two different props types is an error naming both terms.
+- A module with no `WidgetName` term is not a widget; the header says so.
+- The `sha256` lines cover every `.e` file the run read (93 for the call above),
+  for a JVM-free staleness check. A file on the classpath that differs from
+  `core/src/main/resources/modules/` is a warning on stderr (stale resources).
+- The output goes to stdout; the header records the exact command.
+
+About 5.5 s for the call above (5.40 s and 5.66 s measured), one JVM, against 38-40 s for `client/scripts/generate.sh`'s
+thirteen boots.
 
 ### The LSP request
 
@@ -820,9 +908,10 @@ check-generated: src/generated is up to date
 
 (28 seconds here, nine `bin/ermine-schema` boots.)
 
-Note: `--zod` inlines every `$def` it reaches into each generated module, so the
+Note: `--zod -i` inlines every `$def` it reaches into each generated module, so the
 shared chart types appear in both `axisChart.ts` and `drilldownBar.ts`. They are
-structurally identical and `check-generated.sh` guards them.
+structurally identical and `check-generated.sh` guards them. The one-module
+`--widgets` form above emits each once; WP-32 stage 2 moves the client onto it.
 
 ---
 
@@ -1887,7 +1976,7 @@ $ sbt -batch 'core/testOnly *TestJson *TestNamedFields *TestSchema *TestDecode *
 |---|---|---|
 | `TestJson` | 28 | the value walker: the whole mapping table, 100,000-element lists, 2,000 nested lists, the `Inline`/`Deferred` wrappers, and a sweep that classifies every registered stdlib `data` declaration |
 | `TestNamedFields` | 16 | named constructor fields over RANDOM declarations: the wire form, the selectors, positional construction and matching, interface-load parity (cold/warm `.ei`), the LSP symbol tree |
-| `TestSchema` | 27 | `Type => JSON Schema`, determinism, `$defs`, the relation arms, `Spread`, the zod render, the committed-fixture gate, and the encode/schema consistency property over generated (type, value) pairs |
+| `TestSchema` | 31 | `Type => JSON Schema`, determinism, `$defs`, the relation arms, `Spread`, the zod render, the committed-fixture gate, and the encode/schema consistency property over generated (type, value) pairs |
 | `TestDecode` | 13 | the params decoder: round trip, agreement with `Validate` over ~1,950 documents (each encoding plus twelve mutations), error paths, poisoned entry types, 100,000 records, a 100,000-level document |
 | `TestDoc` | 20 | the document writer: one connection per document, the row encoder per `PrimT`, delivery and threshold, buffered failure semantics, the token cache, the log lines |
 | `TestRunner` | 17 | the runner end to end over report modules GENERATED as Ermine source, every error path, the same requests over HTTP byte-for-byte, concurrency, and the `Sales.e` walkthrough |
