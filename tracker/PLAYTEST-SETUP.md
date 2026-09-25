@@ -479,7 +479,7 @@ rootless podman container `ermine-mssql`, listening on `127.0.0.1:1433` only. It
 | The tier | the walkthrough uses tier **s** (seed 42, 388 rows in the `sales` view). The PR-tier `db` gate needs **xs**. `scripts/db.sh verify sales` prints which tier is loaded |
 | **The profile lives in USER settings (tracker §8.1 A2)** | `ermine.preview.profiles` and `ermine.preview.profile` are read from user settings only (§6 has the JSON). A copy in `.vscode/settings.json` is ignored and named once, because a checked-in settings file could point the profile at another host and collect your password there |
 | The password | `ERMINE_DB_PASSWORD` in `~/.config/ermine/db.env` (mode 600). VS Code asks for it once per window and holds it in memory only. It is not in any setting or file the extension writes, and never in the channel |
-| Versions | extension **0.1.17**, a server compiled from the stage-2 tree, and the client bundle rebuilt (`npm run bundle` in `client/`) for the Trace view |
+| Versions | extension **0.1.18** (S2f: the trace as an Ermine report, charts fixed), a server compiled from the S2f tree, and the client bundle rebuilt (`npm run bundle` in `client/`) for the Trace view |
 | Unverified | every VS Code behaviour in group F. The server half was measured over the wire (`tracker/db/SERVER.md` §6.3, `tracker/db/OBSERVABILITY.md` §4) |
 
 ---

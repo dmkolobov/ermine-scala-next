@@ -14,7 +14,7 @@ the code and is marked that way.
 
 | What you need before step 0 | Where |
 |---|---|
-| The extension **0.1.17** installed. The installed one is 0.1.16 (`code --list-extensions --show-versions` printed `clarifi.ermine-lang@0.1.16` at 00:1x on 2026-09-25) | the orchestrator repackages `editor/vscode/ermine-lang-0.1.17.vsix` after review. The version is in `tracker/db/MORNING-2026-09-25.md`'s ORCHESTRATOR FILLS block |
+| The extension **0.1.18** installed (`code --list-extensions --show-versions` printed `clarifi.ermine-lang@0.1.18` at 08:24 on 2026-09-25; a VS Code window opened earlier runs the older one until Reload Window) | the orchestrator repackages `editor/vscode/ermine-lang-0.1.17.vsix` after review. The version is in `tracker/db/MORNING-2026-09-25.md`'s ORCHESTRATOR FILLS block |
 | A server compiled from THIS tree (`sbt core/compile core/copyResources`, which the orchestrator's gates run) | `tracker/PLAYTEST-SETUP.md` §2. A server from before stage 2 answers `ermine/preview/connect` with "method not found" (step 4's fallback) |
 | The client bundle rebuilt after the Trace view landed (`cd client && npm run bundle`) | `client/dist/browser/ermine-host.js` was rebuilt at 00:07 on 2026-09-25 by the panel role. Rebuild it again if `client/src/` changed since |
 | The rest of `tracker/PLAYTEST-SETUP.md` §1-§6 (the writers checkout for the pie chart, `.vscode/settings.json` for the workspace settings) | as for groups A-E |
