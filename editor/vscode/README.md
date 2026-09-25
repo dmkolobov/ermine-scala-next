@@ -526,6 +526,31 @@ a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
 
+### 0.1.18
+
+**WP-35 S2f: the trace as an Ermine report** (no setting, no new widget).
+**Ermine: Save Render Trace** writes the trace of the answer the panel is
+showing to `.ermine/preview/Doc.TraceReport/report.params.json`, the params
+file of `core/src/test/resources/modules/Doc/TraceReport.e` → `report`, a
+report whose parameters ARE a trace (`Layout.Trace`). **Ermine: Preview Render
+Trace** saves and then picks that report, so the panel draws the trace with
+ordinary typed widgets: a headline, time and row scorecards, a bar chart by
+phase, the relations sorted by time, a pie of time by relation and the SQL
+texts. An existing file is replaced only after a modal naming it; if a newer
+render answers while the modal is open, nothing is written. The report's own
+render is traced like any other, so saving while it is picked replaces the
+trace it shows (that is what the modal asks). Only the keys `Layout.Trace`
+declares are written. Needs a server with the `trace` key (DB stage 2b) and
+the `Layout.Trace` module (this build); with anything else the command says
+why and writes nothing.
+
+**Charts draw (S2f-1).** Every `axisChart` and `pieChart` used to draw as a
+black box in the panel: the writers draw Highcharts in styled mode, and those
+rules live in the writers' `javafxwriter.css`, which the panel did not load. It
+is now the fourth style sheet (a writers folder without it is reported as
+incomplete), each chart is 320 px tall and as wide as the page, and a
+headline's or scorecard's figures sit in a row.
+
 ### 0.1.17
 
 **WP-13, the extension half: database profiles and the prompted password.**

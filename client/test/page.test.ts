@@ -620,7 +620,7 @@ test("(pg-writers-global) WP-11: the writers' DOMContentLoaded listener, registe
     assert.deepStrictEqual(order, [], "nothing is posted before DOMContentLoaded");
     await new Promise((r) => d.addEventListener("DOMContentLoaded", r));
     const writers = core.previewWritersCheck({ dir: "/wr/web", source: "setting", problem: null },
-      withWriters ? ["htmlwriter.js", "common.css", "htmlwriter.css", "htmlwriter_classic.css"] : null);
+      withWriters ? ["htmlwriter.js", "common.css", "htmlwriter.css", "htmlwriter_classic.css", "javafxwriter.css"] : null);
     const env = core.panelSnapshot(core.panelView({ answers, writers }), 1);
     dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: env }));
     for (let i = 0; i < 40 && !d.querySelector(".ermine-widget-error") && hw.calls.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
@@ -819,9 +819,27 @@ test("(pg-f3-grid) F3: Grid rows lay out as CSS grid columns, and the writers' t
     "a one-column table's scroller gets its natural height, not the empty main part's 0px");
   for (const r of rules) {
     if (r.sel.startsWith(`#${PREVIEW_ROOT_ID}{`) || r.sel === `#${PREVIEW_ROOT_ID}` || r.sel.startsWith(".ermine-banner") || r.sel.startsWith(".ermine-hint") ||
-        r.sel.startsWith(".ermine-document.ermine-dimmed") || r.sel.startsWith(".ermine-page-error") || r.sel.startsWith(VIEWBAR_SEL)) continue;
+        r.sel.startsWith(".ermine-document.ermine-dimmed") || r.sel.startsWith(".ermine-page-error") || r.sel.startsWith(VIEWBAR_SEL) ||
+        // S2f-1: the one rule outside the root, restating the editor background over javafxwriter.css's `body{background-color:white}`
+        r.sel === "html body") continue;
     for (const sel of r.sel.split(",")) assert.ok(onPaper(sel), `unscoped document rule: ${sel}`);
   }
+});
+
+test("(pg-s2f-charts) S2f-1: charts are held to their cell at a fixed height, javafxwriter.css's body colour is countered, and figures lay out in a row", async () => {
+  const rules = await pageRules();
+  const chart = rules.find((r) => r.sel === `${PAPER_SEL} .timeseries,${PAPER_SEL} .piechart`);
+  assert.ok(chart, "a rule for the writers' chart divs, scoped to the document");
+  for (const d of ["position:relative!important", "width:100%!important", "height:320px!important"]) {
+    assert.ok(chart!.body.includes(d), `the chart rule has ${d} (the writers size a chart to the WINDOW, inline): ${chart!.body}`);
+  }
+  const body = rules.find((r) => r.sel === "html body");
+  assert.ok(body && body.body === "background-color:var(--vscode-editor-background)",
+    "the body keeps the editor background and nothing else is set outside the root");
+  assert.ok(rules.some((r) => r.sel === `${PAPER_SEL} .highcharts-legend-RightTable .highcharts-legend-item rect` && r.body === "display:none"),
+    "a RightTable pie legend's SVG symbols are hidden, as common.css does for the drilldown pie");
+  const row = rules.find((r) => r.sel === `${PAPER_SEL} .ermine-headline-figures,${PAPER_SEL} .ermine-scorecard-cards`);
+  assert.ok(row && /display:flex/.test(row.body) && /flex-wrap:wrap/.test(row.body) && /list-style:none/.test(row.body), "figures and cards are a wrapping row");
 });
 
 // ------------------------------------ WP-31: the panel's Document / JSON toggle

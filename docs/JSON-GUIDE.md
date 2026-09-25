@@ -1298,6 +1298,25 @@ one, not Int"*.
 The module is also exercised through `sbt 'core/Test/runMain com.clarifi.reporting.SalesReportDoc <file>'`,
 which writes the document through `Write.doc` on a SQLite connection.
 
+### `Layout.Trace`: a render trace as report parameters
+
+`Layout.Trace` (`core/src/main/resources/modules/Layout/Trace.e`) types the `trace` key of an
+`ermine/render` answer (`tracker/db/OBSERVABILITY.md` §4), so a report typed `Trace -> Node` takes a
+saved trace as its params. `core/src/test/resources/modules/Doc/TraceReport.e` is the example, and
+the editor's **Ermine: Save Render Trace** writes its params file. Three things in it are worth
+copying into your own params types:
+
+* **A key that may be absent is a `Maybe` field.** `sqlBytes : Maybe Int` decodes a missing key as
+  `Nothing`. A `Nullable` field needs the key, holding `null`.
+* **A JSON key that is an Ermine keyword cannot be a field** (`table`, `database`). Give the record a
+  `Spread Json` field: the decoder gathers every undeclared key into it, and you read the key from the
+  `JObj`. That record then accepts unknown keys. Every other record refuses them (`the key "nope" is
+  not allowed here`, at the key's path).
+* **Keys shared between records need one module per record**, because a selector is module-global
+  (`ms` is a key of phases, queries and setup entries). `Layout.Trace` re-exports the types and
+  constructors only, and its helpers match positionally. The relations it builds use
+  `relationWithHeader`, so an empty trace still renders.
+
 ### A servable widget report
 
 Here is a report that does both: typed widgets and a parameter type. It is the

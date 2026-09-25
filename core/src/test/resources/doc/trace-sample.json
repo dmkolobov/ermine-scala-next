@@ -1,0 +1,140 @@
+{
+ "v": 1,
+ "generation": 110,
+ "partial": false,
+ "wallMs": 51,
+ "phases": [
+  {
+   "name": "session",
+   "ms": 4.5
+  },
+  {
+   "name": "parse",
+   "ms": 0
+  },
+  {
+   "name": "compile",
+   "ms": 0,
+   "cached": true
+  },
+  {
+   "name": "decode",
+   "ms": 0.1
+  },
+  {
+   "name": "eval",
+   "ms": 2.6
+  },
+  {
+   "name": "layout",
+   "ms": 0.1
+  },
+  {
+   "name": "connect",
+   "ms": 0
+  },
+  {
+   "name": "sql-emit",
+   "ms": 0.8
+  },
+  {
+   "name": "db-execute",
+   "ms": 9.2
+  },
+  {
+   "name": "db-fetch",
+   "ms": 1.8
+  },
+  {
+   "name": "scan",
+   "ms": 30.7,
+   "attributed": true
+  },
+  {
+   "name": "check",
+   "ms": 0.1
+  },
+  {
+   "name": "other",
+   "ms": 1.2,
+   "attributed": true
+  }
+ ],
+ "queries": [
+  {
+   "path": "$.fetch[1]",
+   "delivery": "fetched",
+   "dialect": "mssql",
+   "sql": "select ([t1030144].[amount]) [amount], ([t1030144].[day]) [day], ([t1030144].[region]) [region], ([t1030144].[units]) [units] from [sales] [t1030144] order by [t1030144].[region] asc",
+   "sqlBytes": 182,
+   "statements": 1,
+   "sqlEmitMs": 0.4,
+   "execMs": 4.7,
+   "fetchMs": 1.7,
+   "dbMs": 6.4,
+   "ms": 36.7,
+   "rowsRead": 388,
+   "rows": 8,
+   "scanned": 8,
+   "columns": 0,
+   "bytes": 0,
+   "deferred": false
+  },
+  {
+   "path": "$.fetch[2]",
+   "delivery": "fetched",
+   "dialect": "mssql",
+   "sql": "select ([t1031168].[region]) [region], ([t1031168].[target]) [target] from [targets] [t1031168]",
+   "sqlBytes": 95,
+   "statements": 1,
+   "sqlEmitMs": 0.2,
+   "execMs": 3.5,
+   "fetchMs": 0,
+   "dbMs": 3.6,
+   "ms": 4.1,
+   "rowsRead": 8,
+   "rows": 8,
+   "scanned": 8,
+   "columns": 0,
+   "bytes": 0,
+   "deferred": false
+  },
+  {
+   "path": "$.children[0].props.pieRows",
+   "delivery": "inline",
+   "dialect": "mssql",
+   "sql": "select [amount],[region] from (values (225449.87999999998, 'china'), (172784.89, 'us-south'), (652859.45, 'Other')) as lit([amount],[region])",
+   "sqlBytes": 141,
+   "statements": 1,
+   "sqlEmitMs": 0.2,
+   "execMs": 0.9,
+   "fetchMs": 0,
+   "dbMs": 0.9,
+   "ms": 1.6,
+   "rowsRead": 3,
+   "rows": 3,
+   "scanned": 3,
+   "columns": 2,
+   "bytes": 225,
+   "deferred": false
+  }
+ ],
+ "totals": {
+  "dbMs": 11,
+  "otherMs": 40,
+  "wallMs": 51,
+  "queueMs": 0,
+  "relations": 3,
+  "queries": 3,
+  "rowsRead": 399,
+  "rows": 19,
+  "bytes": 225,
+  "documentBytes": 717
+ },
+ "connection": {
+  "kind": "profile",
+  "dialect": "mssql",
+  "database": "ErmineSales",
+  "profile": "sales-mssql"
+ }
+}

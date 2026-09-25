@@ -203,3 +203,69 @@ check (twin entries == original entries) is xs-only by design.
 |---|---|---|
 | T-1 | `statements` is always 1 today: a relation runs one SELECT. Keep the key (future `ExtSM` scans could run several) or drop it? | keep; it costs nothing |
 | T-2 | The partial trace shows a running query's rows as of its last event (the counters fold in at close), so a stuck `rs.next()` loop shows `rowsRead` 0. Publish the counter every N rows? | leave it until a stuck FETCH (not EXECUTE) is seen in practice |
+
+## 11. The trace as Ermine data (S2f, built 2026-09-25; NOT REVIEWED, NOT COMMITTED)
+
+Design §3.6's recommendation (Q-O4 a): the hand-built Trace view stays THE view, and the trace is
+also the PARAMETERS of an ordinary Ermine report. No wire change, no new setting, no new widget.
+
+| Part | What | Where |
+|---|---|---|
+| The types | `Trace` and one record per nested object (`TracePhase`, `TraceQuery`, `TraceSetup`, `TraceTotals`, `TraceConnection`, `TraceRunning`, `TraceTruncated`). Field names = the §4 keys, so Decode reads the server's JSON unchanged. A key the server leaves out is a `Maybe` field (absent -> Nothing). `generation` is `Json`. One module per record, because `ms`, `rows`, `path`, `sql`, `kind` and `queries` are keys of several records and a selector is module-global. `table` (setup) and `database` (connection) are Ermine KEYWORDS, so those two records carry a `Spread Json` that gathers them | `core/src/main/resources/modules/Layout/Trace.e`, `Layout/Trace/*.e` |
+| The helpers | `traceQueries`, `tracePhases`, `traceSql`, `traceTimes`, `traceRowCounts` build relations with `relationWithHeader`, so an empty trace still gives typed, empty relations (the Q21 lesson). Plus the numbers (`traceWallMs`, `traceDbMs`, ...) and the text (`traceConnectionLine`, `traceCaveat`). A relation has no row order, so the phase label carries its position (`01 session`) for the chart's ascending axis | the same |
+| The report | `report : Trace -> Node`: a headline (queries, wall ms, slowest relation ms), a caption, time and row scorecards, a bar chart of time by phase, the relations table sorted by total ms, a pie of time by relation, and the SQL table (a String column; the server's 16 KiB cap is stated under it) | `core/src/test/resources/modules/Doc/TraceReport.e` |
+| The fixture | §4's example with `encode` renamed `scan` | `core/src/test/resources/doc/trace-sample.json` |
+| The commands | **Ermine: Save Render Trace** writes the trace of the answer the panel shows (`panelAnswers.last`) to `.ermine/preview/Doc.TraceReport/report.params.json` (the dotted module name is the directory, as for every params file) through `applyWritePlan`. An existing file is replaced only after a modal. A newer answer arriving while the modal is open means nothing is written. **Ermine: Preview Render Trace** saves, then picks `Doc.TraceReport.report` through `commitPick`, the picker's own tail, so the wedge guard, the queue and the params watcher apply as they do to any report. Only the keys the types declare are written (`traceParamsOf`), so no url, user or host can reach a file that may be committed | `editor/vscode/src/preview-core.js` and `extension.js`, fenced `S2f trace as params` |
+
+**The recursion rule.** The trace report's own render is traced like any other: its answer carries
+the trace of its VALUES scans (on the held profile those are queries on the user's database, one per
+relation widget). Saving while it is picked writes THAT trace over the params file it is showing.
+The modal guards exactly that, and nothing re-saves automatically, so there is no loop.
+
+**The decoder's rule for unknown keys.** A record is CLOSED: an unknown key is REFUSED with a 400 at
+its path (`$.params.nope`, `$.params.queries[1].rowz`: MEASURED). Inside the two `Spread Json`
+records (setup, connection), an unknown key is GATHERED, not refused. The extension writes only the
+declared keys, so a newer server's extra key never reaches the report through the command.
+
+**Evidence (MEASURED, 2026-09-25).** `sbt 'core/testOnly com.clarifi.reporting.TestRunner -- -f trace'`: 2/2.
+`(trace-doc)`: 9 widgets `headline,text,scorecard,scorecard,axisChart,table,pieChart,table,text`;
+headline total 51, rowCount 3, largest 36.7; time {wall 51, db 11, other 40, queue 0}; rows {read 399,
+used 19}; 3 query rows with rowsRead 388/8/3; 13 phases. An empty trace renders 200, with 4 empty
+relations that keep their columns and the text `partial: still running eval after 300.9 ms`. The
+document goes to `core/target/trace-report/TraceReport.document.json`. `(trace-decode)`: the sample
+round-trips through an echo report; 8 optional keys each absent -> 200 and round-trip; setup (with
+`table`), running, truncated and a failed query round-trip; an unknown key -> 400 at its path; a
+missing `totals.rowsRead` -> 400 at `$.params.totals`; an unknown key in `connection` is gathered.
+`npm run test:preview` 476/476 (15 new in `test/trace-save.test.js`: the projection, the decisions, a
+glue model, glue pins, and the reverse mutants "trace saved from a stale generation", "writer
+bypassing the modal", "pick bypassing the guard" and "whitelist", each killed by name).
+Headless: `scratch-widget-preview/db/s2f/shot.js` feeds that document to the real panel as a render
+answer: `trace-report-dark.png`, `-light.png`, `-narrow.png` (390 px), no console errors.
+
+**Finding S2f-1 (MEASURED headlessly; affected every chart, not only this report). FIXED
+2026-09-25 by linking the sheet (below).** In the panel the `axisChart` and `pieChart` drew as BLACK boxes. The writers render Highcharts in styled mode
+(`styledMode: true` in `htmlwriter.js`), and the styled-mode rules live only in `javafxwriter.css`,
+which the panel deliberately does not load (tracker WP-11 D6). With those rules alone (508 of
+`javafxwriter.css`'s 780 rules, filtered by the harness) the charts draw:
+`scratch-widget-preview/db/s2f/old/trace-report-dark-with-chart-subset.png` (the pie's legend table
+still overlaps). Loading the whole file with no counters overlaps the charts (`old/...-with-chart-css.png`: its `.timeseries` is `position:fixed`). The checklist's
+E10 ("a pieChart draws") would have failed the same way.
+
+**The fix, chosen by measurement: LINK the sheet, not a copied subset.** `javafxwriter.css` is the
+fourth `<link>` (`preview-core.js` `PREVIEW_WRITERS_STYLES`; a writers folder without it is `half`,
+with the banner naming it). It has no `url()` except the in-document `#posNegGradient`, so no
+console noise. Three of its effects came from JavaFX's one-chart window and are countered in
+`client/src/host/page.ts` (`CHART_HEIGHT`): `body{background-color:white}` (the body is given the
+editor background back), `.timeseries{position:fixed;width:100%;height:100%}`, and the writers
+sizing each chart div to the WINDOW (`getHighestParentSize` climbs to `body` unless a parent has an
+INLINE height, then uses `$(window).height()`). A chart div is now `height:320px!important;
+width:100%!important`. Highcharts reads its container when it draws, so the chart is drawn at that
+size, not clipped. A RightTable pie legend's SVG symbols are hidden, as `common.css` already does
+for the drilldown pie. The headline figures and scorecard cards are laid out as a row (CSS only).
+MEASURED in both themes, 1100 px and 390 px: every chart container 1040x320 (330-335x320 narrow)
+with its SVG the same size (none clipped); fills `rgb(0, 187, 221)`, not black; table rows 19 px
+with stripes #fff / #E9E9E9, as before; no horizontal page scroll (390 of 390; it was 420 before);
+no console line. Screenshots: `scratch-widget-preview/db/s2f/salesreport-{dark,light}.png`,
+`trace-report-{dark,light}.png` (+ `-narrow`); the before shots are in `old/`. Tests:
+`npm run test:preview` 476/476 (the 3->4 sheet pins moved); client `npm run bundle && npm test`
+157 (156 pass, 1 skipped), with `(pg-s2f-charts)` new; `ermine-host.js` is 64,165 B of the 96 KiB cap.

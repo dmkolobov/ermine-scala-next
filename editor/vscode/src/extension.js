@@ -3174,7 +3174,17 @@ async function pickReport(context) {
     binding = binding.trim();
   }
 
-  picked = core.makePick(fileUri.toString(), file.fsPath, binding, moduleName, rootsFor(fileUri));
+  await commitPick(fileUri, file.fsPath, binding, moduleName, listed);
+}
+
+/**
+ * THE PICK ITSELF, and every pick goes through it: the picker above, and
+ * S2f's `Ermine: Preview Render Trace` (the trace report is picked HERE, not
+ * by setting `picked` and calling `renderNow`, so the wedge guard, the
+ * params machinery and everything else a pick does apply unchanged).
+ */
+async function commitPick(fileUri, fsPath, binding, moduleName, listed) {
+  picked = core.makePick(fileUri.toString(), fsPath, binding, moduleName, rootsFor(fileUri));
   // WP-22: a pick change clears the mark -- it was the OTHER report that
   // wedged -- and picking renders, which is consent in any case.
   applyGuard(core.guardReduce(wedgeMark, { type: "pick", pick: picked }));
@@ -3706,7 +3716,11 @@ async function activate(context) {
     vscode.commands.registerCommand(core.SKELETON_COMMAND, () => writeParamsSkeletonCommand(context)),
     // WP-13: the connection's two commands.
     vscode.commands.registerCommand(core.CONNECT_COMMAND, () => connectCommand()),
-    vscode.commands.registerCommand(core.DISCONNECT_COMMAND, () => disconnectCommand())
+    vscode.commands.registerCommand(core.DISCONNECT_COMMAND, () => disconnectCommand()),
+    // ---- S2f trace as params ----: the trace as the trace report's params
+    vscode.commands.registerCommand(core.SAVE_TRACE_COMMAND, () => saveRenderTrace(false)),
+    vscode.commands.registerCommand(core.PREVIEW_TRACE_COMMAND, () => saveRenderTrace(true))
+    // ---- end S2f trace as params ----
     // NOT "ermine.reloadModules": the server advertises it in
     // executeCommandProvider, and vscode-languageclient registers every such
     // command as a VS Code command itself (ExecuteCommandFeature), forwarding
@@ -3833,5 +3847,100 @@ function deactivate() {
   disposePreview();
   return stopQuietly(client);
 }
+
+// ---- S2f trace as params ----
+//
+// `Ermine: Save Render Trace` / `Ermine: Preview Render Trace` (DB programme
+// S2f; the decisions are preview-core's S2f region, the pins
+// test/trace-save.test.js).  THE ORDER, and every step is pinned:
+//   1. the source, decided ONCE from `panelAnswers.last` -- the CURRENT
+//      answer, the one the Trace view draws -- before anything is awaited;
+//   2. the trace report's file and module (`ermine/preview/reports`, as the
+//      picker asks it), its params path through `paramsPathsFor`;
+//   3. an existing params file is replaced only after THE MODAL;
+//   4. after the modal: the answer must still be `panelAnswers.last`
+//      (`traceSaveStillApplies`), and the bytes must be the ones the modal
+//      was about (`skeletonBytesStillApply`, the skeleton's TOCTOU rule);
+//   5. the write goes through `applyWritePlan`, the permission passed only
+//      when replacing;
+//   6. Preview: the trace report is picked through `commitPick`, the
+//      picker's own tail -- the guard, the queue and the render are the
+//      ordinary ones; nothing here sends a render.
+async function saveRenderTrace(preview) {
+  const name = preview ? "Preview Render Trace" : "Save Render Trace";
+  const say = (reason, message) => {
+    log(`preview: ${name} did nothing (${reason}): ${message}`);
+    vscode.window.showWarningMessage("Ermine: " + message);
+    return core.traceSaveResult({ problem: { reason, message } });
+  };
+  const asked = core.traceSaveSource(panelAnswers.last);
+  if (!asked.run) return say(asked.reason, asked.message);
+  if (!client) return say("no-client", "the language server is not running.");
+  const found = (await vscode.workspace.findFiles(core.TRACE_REPORT_GLOB, core.TRACE_REPORT_EXCLUDE)) || [];
+  const file = core.traceReportFile(found.map((uri) => uri.fsPath));
+  if (file.problem) return say(file.problem.reason, file.problem.message);
+  const fileUri = vscode.Uri.file(file.fsPath);
+  let listed;
+  try {
+    listed = await client.sendRequest("ermine/preview/reports", core.reportsParams(fileUri.toString()));
+  } catch (err) {
+    listed = { error: err && err.message ? err.message : String(err) };
+  }
+  if (listed && listed.error) return say("reports-failed", "the trace report did not load: " + listed.error);
+  const target = core.traceReportPick(fileUri.toString(), file.fsPath, listed && listed.module, rootsFor(fileUri));
+  if (target.problem) return say(target.problem.reason, target.problem.message);
+  const paths = paramsPathsFor(target.pick);
+  const verdict = core.skeletonCommandVerdict(target.pick, paths, !!client);
+  if (!verdict.run) return say(verdict.reason, verdict.message);
+  const existing = await readTextIfPresent(paths.paramsPath);
+  const replace = existing !== null;
+  if (replace) {
+    const question = core.traceSaveConfirmation(paths, asked.generation);
+    const choice = await vscode.window.showWarningMessage(question.message, { modal: true }, question.confirm);
+    if (!core.traceSaveConfirmed(choice)) {
+      log(`preview: ${name} was declined for ${paths.paramsPath}; it is untouched`);
+      return core.traceSaveResult({ abandoned: true });
+    }
+  }
+  const still = core.traceSaveStillApplies(asked, panelAnswers.last);
+  if (!still.apply) {
+    log(`preview: ${name} was abandoned — ${still.why}`);
+    vscode.window.showWarningMessage("Ermine: " + still.why);
+    return core.traceSaveResult({ abandoned: true });
+  }
+  const linked = await symlinkProblem(paths, [paths.paramsPath]);
+  if (linked) return say(linked.reason, linked.message);
+  const bytes = core.skeletonBytesStillApply(replace, existing, replace ? await readTextIfPresent(paths.paramsPath) : null,
+                                             paths.paramsPath);
+  if (!bytes.apply) return say(bytes.reason, bytes.message);
+  const plan = core.traceSavePlan(paths, asked.text, replace);
+  if (plan.problem) return say(plan.problem.reason, plan.problem.message);
+  let applied;
+  try {
+    await ensureDirectory(paths.dir);
+    applied = await applyWritePlan(plan.files, paths.paramsPath, replace);
+  } catch (err) {
+    return say("write-failed", 'could not write under "' + paths.dir + '" (' +
+               (err && err.message ? err.message : String(err)) + "), so nothing was written.");
+  }
+  for (const p of applied.problems) log(`preview: ${p.message}`);
+  if (applied.existed) {
+    return say("params-appeared", "a params file appeared at " + paths.paramsPath + " while the trace was being " +
+               "saved; it was left exactly as it is. Run the command again to replace it.");
+  }
+  if (applied.wrote.indexOf(core.WRITE_PARAMS) < 0) {
+    return say("write-failed", applied.problems.length ? applied.problems[0].message : "nothing was written.");
+  }
+  log("preview: " + core.traceSavedLine(paths, asked.generation, replace));
+  if (preview) {
+    // The ORDINARY pick: the picker's own tail, guard and all.
+    await commitPick(fileUri, file.fsPath, core.TRACE_REPORT_BINDING, listed.module, listed);
+  } else {
+    vscode.window.setStatusBarMessage("Ermine: trace of render " + asked.generation + " saved for " +
+                                      core.TRACE_REPORT_MODULE, 5000);
+  }
+  return core.traceSaveResult({ wrote: true, replaced: replace, target: paths.paramsPath });
+}
+// ---- end S2f trace as params ----
 
 module.exports = { activate, deactivate };

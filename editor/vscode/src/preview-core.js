@@ -4846,7 +4846,8 @@ function writeStep(file, paramsPath, allowExplicitOverwrite) {
       return { problem: problem("overwrite-not-permitted",
                                 'The preview was asked to REPLACE "' + printable(file.path) +
                                 "\" from somewhere that may not replace anything. Only the " +
-                                "\"Ermine: Write Params Skeleton\" command overwrites a params file, and " +
+                                "\"Ermine: Write Params Skeleton\" command (and, for the trace report's file, " +
+                                "\"Ermine: Save Render Trace\") overwrites a params file, and " +
                                 "only after you confirm it, so nothing was written.").problem };
     }
     // M-1 of the S4 review: the OVERWRITE needs BOTH the label AND the path.
@@ -5701,6 +5702,272 @@ function traceOutputLine(answer, roundTripMs) {
 }
 // ---- end S2d trace ----
 
+// ---- S2f trace as params ----
+//
+// DB programme S2f (scratch-widget-preview/db/DESIGN-OBSERVABILITY.md §3.6,
+// tracker/db/OBSERVABILITY.md "The trace as Ermine data").  The trace becomes
+// the PARAMETERS of an Ermine report: `Ermine: Save Render Trace` writes the
+// CURRENT answer's trace (`panelAnswers.last`, the one `traceOf` draws) to
+// the params file of `Doc.TraceReport`'s `report`, and `Ermine: Preview
+// Render Trace` saves and then picks that report through the ORDINARY pick
+// (`commitPick`, the picker's own tail), so the wedge guard, the queue and
+// the params-file machinery apply exactly as they do to any report.
+//
+// THE RULES, each a decision here and a pin in test/trace-save.test.js:
+//   * the trace saved is the one of the answer the command was run on, and
+//     the save is abandoned if a newer answer arrived meanwhile (the modal is
+//     an await) -- never `panelAnswers.good`, never `lastAnswer`;
+//   * the file is written through `applyWritePlan`, and an existing file is
+//     replaced only after the modal (the SAME rule as the skeleton command,
+//     with the same re-read before the write);
+//   * only the keys `Layout.Trace` declares are written (`traceParamsOf`): a
+//     key the server may add later, a url or a user can never reach a file
+//     the developer may commit, and the report never meets a key its decoder
+//     refuses;
+//   * THE RECURSION RULE: the trace report's own render is traced like any
+//     other.  Saving while it is the picked report writes ITS trace over the
+//     params file it is showing, which is exactly what the modal asks about.
+
+const SAVE_TRACE_COMMAND = "ermine.saveRenderTrace";
+const PREVIEW_TRACE_COMMAND = "ermine.previewRenderTrace";
+/** The report the trace is saved for: `core/src/test/resources/modules/Doc/TraceReport.e`. */
+const TRACE_REPORT_MODULE = "Doc.TraceReport";
+const TRACE_REPORT_BINDING = "report";
+const TRACE_REPORT_GLOB = "**/src/test/resources/modules/Doc/TraceReport.e";
+const TRACE_REPORT_EXCLUDE = "**/{target,node_modules}/**";
+const TRACE_REPORT_SUFFIX = ["src", "test", "resources", "modules", "Doc", "TraceReport.e"];
+/** The ONE string that consents to replacing the trace report's params file. */
+const TRACE_REPLACE = "Replace";
+
+// -- the projection onto Layout.Trace -------------------------------------
+
+function tpNum(v) { return typeof v === "number" && isFinite(v); }
+function tpInt(v) { return tpNum(v) && Math.floor(v) === v; }
+function tpStr(v) { return typeof v === "string"; }
+function tpBool(v) { return typeof v === "boolean"; }
+
+/**
+ * Copy `spec`'s keys of `src`: `[key, test, required]`.  A required key that
+ * is missing or of the wrong type is the answer `{missing: path}`; an
+ * optional one is left out (the decoder's `Maybe` reads an absent key as
+ * Nothing).  Nothing outside `spec` is ever copied.
+ */
+function tpPick(src, spec, at) {
+  const out = {};
+  if (!src || typeof src !== "object" || Array.isArray(src)) return { missing: at };
+  for (const [key, ok, required] of spec) {
+    const has = Object.prototype.hasOwnProperty.call(src, key);
+    const v = has ? src[key] : undefined;
+    if (has && ok(v)) out[key] = v;
+    else if (required) return { missing: at + "." + key };
+  }
+  return { value: out };
+}
+
+function tpList(src, each, at) {
+  if (!Array.isArray(src)) return { missing: at };
+  const out = [];
+  for (let i = 0; i < src.length; i++) {
+    const r = each(src[i], at + "[" + i + "]");
+    if (r.missing) return r;
+    out.push(r.value);
+  }
+  return { value: out };
+}
+
+const TP_PHASE = [["name", tpStr, true], ["ms", tpNum, true], ["attributed", tpBool], ["cached", tpBool]];
+// `table` is gathered by the record's `Spread Json` (an Ermine keyword); it
+// is the only extra key copied.
+const TP_SETUP = [["kind", tpStr, true], ["table", tpStr], ["created", tpBool], ["ms", tpNum, true], ["error", tpBool]];
+const TP_QUERY = [["path", tpStr, true], ["delivery", tpStr, true], ["dialect", tpStr], ["sql", tpStr],
+  ["sqlBytes", tpInt], ["statements", tpInt], ["sqlEmitMs", tpNum, true], ["execMs", tpNum, true],
+  ["fetchMs", tpNum], ["dbMs", tpNum, true], ["ms", tpNum, true], ["rowsRead", tpInt, true], ["rows", tpInt, true],
+  ["scanned", tpInt, true], ["columns", tpInt, true], ["bytes", tpInt, true], ["deferred", tpBool, true],
+  ["overThreshold", tpBool], ["error", tpBool], ["message", tpStr]];
+const TP_TOTALS = [["dbMs", tpNum, true], ["otherMs", tpNum, true], ["wallMs", tpNum, true], ["queueMs", tpNum, true],
+  ["relations", tpInt, true], ["queries", tpInt, true], ["rowsRead", tpInt, true], ["rows", tpInt, true],
+  ["bytes", tpInt, true], ["documentBytes", tpInt]];
+// `database` likewise (a keyword); never a url, user, host or password.
+const TP_CONNECTION = [["kind", tpStr, true], ["dialect", tpStr, true], ["database", tpStr], ["profile", tpStr]];
+const TP_RUNNING = [["path", tpStr], ["phase", tpStr], ["sql", tpStr], ["sinceMs", tpNum, true]];
+const TP_TRUNCATED = [["queries", tpInt, true], ["sqlShortened", tpBool, true]];
+
+/**
+ * The server's `trace` object projected onto EXACTLY the keys `Layout.Trace`
+ * declares (core/src/main/resources/modules/Layout/Trace.e and Trace/*.e),
+ * in TraceJson's order: `{value}`, or `{problem}` naming the first key the
+ * report could not decode.  `generation` is any JSON (the answer's own).
+ */
+function traceParamsOf(trace) {
+  const t = trace && typeof trace === "object" && !Array.isArray(trace) ? trace : null;
+  if (!t) return problem("no-trace", "this answer carries no trace (a server from before DB stage 2 sends none).");
+  const bad = (r) => problem("trace-not-decodable",
+    "the trace cannot be read as Layout.Trace: " + r.missing + " is missing or of the wrong type, so nothing was written.");
+  if (!tpInt(t.v)) return bad({ missing: "$.v" });
+  if (!Object.prototype.hasOwnProperty.call(t, "generation") || t.generation === undefined) return bad({ missing: "$.generation" });
+  if (!tpBool(t.partial)) return bad({ missing: "$.partial" });
+  if (!tpNum(t.wallMs)) return bad({ missing: "$.wallMs" });
+  const phases = tpList(t.phases, (p, at) => tpPick(p, TP_PHASE, at), "$.phases");
+  if (phases.missing) return bad(phases);
+  const queries = tpList(t.queries, (q, at) => {
+    const r = tpPick(q, TP_QUERY, at);
+    if (r.missing || !Object.prototype.hasOwnProperty.call(q, "setup")) return r;
+    const s = tpList(q.setup, (x, a) => tpPick(x, TP_SETUP, a), at + ".setup");
+    if (s.missing) return s;
+    // `setup` sits after `statements`, where TraceJson writes it
+    const out = {};
+    for (const k of Object.keys(r.value)) {
+      out[k] = r.value[k];
+      if (k === "statements" || (k === "sql" && !("statements" in r.value))) out.setup = s.value;
+    }
+    if (!("setup" in out)) out.setup = s.value;
+    return { value: out };
+  }, "$.queries");
+  if (queries.missing) return bad(queries);
+  const totals = tpPick(t.totals, TP_TOTALS, "$.totals");
+  if (totals.missing) return bad(totals);
+  const connection = tpPick(t.connection, TP_CONNECTION, "$.connection");
+  if (connection.missing) return bad(connection);
+  const value = {
+    v: t.v, generation: t.generation, partial: t.partial, wallMs: t.wallMs,
+    phases: phases.value, queries: queries.value, totals: totals.value, connection: connection.value,
+  };
+  if (t.running !== undefined) {
+    const r = tpPick(t.running, TP_RUNNING, "$.running");
+    if (r.missing) return bad(r);
+    value.running = r.value;
+  }
+  if (t.truncated !== undefined) {
+    const r = tpPick(t.truncated, TP_TRUNCATED, "$.truncated");
+    if (r.missing) return bad(r);
+    value.truncated = r.value;
+  }
+  return { value };
+}
+
+/** The params file's bytes: the projection, two-space JSON, one newline. */
+function traceParamsText(value) {
+  return JSON.stringify(value, null, 2) + "\n";
+}
+
+// -- the command's decisions ---------------------------------------------
+
+/**
+ * WHAT THE COMMAND SAVES, decided ONCE, when it is run: the CURRENT answer's
+ * trace -- `panelAnswers.last`, ok or failed, the same answer the Trace view
+ * draws.  `{run: true, answer, generation, text}` or `{run: false, reason,
+ * message}`.  The glue keeps `answer` to compare against after the modal.
+ */
+function traceSaveSource(last) {
+  if (!last || typeof last !== "object") {
+    return { run: false, reason: "no-answer",
+             message: "there is no render answer to save a trace from yet: render a report first." };
+  }
+  const p = traceParamsOf(last.trace);
+  if (p.problem) return { run: false, reason: p.problem.reason, message: p.problem.message };
+  return { run: true, reason: null, message: null, answer: last,
+           generation: last.generation === undefined ? null : last.generation, text: traceParamsText(p.value) };
+}
+
+/**
+ * DOES THE SAVE STILL DESCRIBE THE CURRENT ANSWER?  The modal is an await
+ * the user can leave open while a save-triggered render answers, and a
+ * trace written after that is the trace of a render the panel no longer
+ * shows.  Same answer object, or nothing is written.
+ */
+function traceSaveStillApplies(asked, lastNow) {
+  if (asked && asked.run === true && lastNow === asked.answer) return { apply: true, why: null };
+  return {
+    apply: false,
+    why: "a newer render answered (generation " + printable(lastNow && lastNow.generation) + ", the trace was of " +
+         printable(asked && asked.generation) + ") while the question was on screen, so nothing was written; " +
+         "run the command again to save the newer trace",
+  };
+}
+
+/** The modal, naming the file and the render. */
+function traceSaveConfirmation(paths, generation) {
+  return {
+    message: "Replace " + printable(paths && paths.paramsPath) + " with the trace of render " +
+             printable(generation) + "?\n\nThe trace report's parameters now in that file are REPLACED. " +
+             "If the trace report is what is picked, this is the trace of its OWN last render. " +
+             "This cannot be undone from here; git can.",
+    confirm: TRACE_REPLACE,
+  };
+}
+
+function traceSaveConfirmed(choice) {
+  return choice === TRACE_REPLACE;
+}
+
+/**
+ * The write plan: the params file ALONE (the schema beside it is refreshed by
+ * the ordinary render that follows).  `replace` is a strict `true`, and the
+ * overwrite mode still writes nothing unless `applyWritePlan` is handed the
+ * permission too (`writeStep`).
+ */
+function traceSavePlan(paths, text, replace) {
+  if (!paths || typeof paths !== "object" || paths.problem || !paths.paramsPath) {
+    return problem("no-params-path", "There is nowhere to write the trace report's params file, so nothing was written.");
+  }
+  return {
+    files: [{ what: WRITE_PARAMS, path: paths.paramsPath, text: String(text),
+              mode: replace === true ? WRITE_EXPLICIT_OVERWRITE : WRITE_IF_ABSENT }],
+  };
+}
+
+/**
+ * Which workspace file is the trace report: the one whose path ends in
+ * `src/test/resources/modules/Doc/TraceReport.e` (never a copy under
+ * `target/`), the shortest path first when a window holds several checkouts.
+ */
+function traceReportFile(fsPaths) {
+  const ok = (Array.isArray(fsPaths) ? fsPaths : []).filter((f) => {
+    if (typeof f !== "string") return false;
+    const parts = f.split(/[\\/]+/);
+    if (parts.indexOf("target") >= 0 || parts.indexOf("node_modules") >= 0) return false;
+    const tail = parts.slice(-TRACE_REPORT_SUFFIX.length);
+    return tail.length === TRACE_REPORT_SUFFIX.length && tail.every((p, i) => p === TRACE_REPORT_SUFFIX[i]);
+  }).sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0));
+  if (!ok.length) {
+    return problem("no-trace-report",
+                   "the trace report is not in this workspace (no " + TRACE_REPORT_SUFFIX.join("/") +
+                   "), so there is nowhere to save the trace for.");
+  }
+  return { fsPath: ok[0] };
+}
+
+/** The would-be pick of the trace report, or the reason there is none. */
+function traceReportPick(uri, fsPath, moduleName, roots) {
+  if (moduleName !== TRACE_REPORT_MODULE) {
+    return problem("trace-report-module",
+                   "the trace report's file declares module " + printable(moduleName) + ", not " +
+                   TRACE_REPORT_MODULE + ", so the trace was not saved.");
+  }
+  return { pick: makePick(uri, fsPath, TRACE_REPORT_BINDING, moduleName, roots) };
+}
+
+/** The channel line after a write. */
+function traceSavedLine(paths, generation, replaced) {
+  return (replaced === true ? "replaced " : "wrote ") + printable(paths && paths.paramsPath) +
+         " with the trace of render " + printable(generation) + " (" + TRACE_REPORT_MODULE + "." +
+         TRACE_REPORT_BINDING + " reads it as its parameters)";
+}
+
+/** `saveRenderTrace`'s answer, one shape for glue and model. */
+function traceSaveResult(over) {
+  const o = over && typeof over === "object" ? over : {};
+  return {
+    wrote: o.wrote === true,
+    replaced: o.replaced === true,
+    existed: o.existed === true,
+    abandoned: o.abandoned === true,
+    problem: o.problem || null,
+    target: o.target || null,
+  };
+}
+// ---- end S2f trace as params ----
+
 // ------------------------------------------------- the host page (WP-10, S1)
 
 /** The id of the one element the page draws into. */
@@ -5785,7 +6052,7 @@ function withStamp(uri, stamp) {
  *   client      `client/dist/browser/ermine-client.js`    required
  *   host        `client/dist/browser/ermine-host.js`      required
  *   writers     the writers' `web/htmlwriter.js`          optional; WP-11 (S4)
- *   styles      up to the writers' three CSS files, in    fills both through
+ *   styles      up to the writers' four CSS files, in    fills both through
  *               order: common.css, htmlwriter.css, a      `previewPageUris`
  *               theme (`PREVIEW_WRITERS_STYLES`)
  *
@@ -5813,8 +6080,8 @@ function buildPreviewHtml(uris, opts) {
     throw new Error("buildPreviewHtml: the writers script URI is not a non-empty string");
   }
   const styles = u.styles === undefined || u.styles === null ? [] : u.styles;
-  if (!Array.isArray(styles) || styles.length > 3 || styles.some((s) => typeof s !== "string" || !s.trim())) {
-    throw new Error("buildPreviewHtml: styles is at most three non-empty URI strings");
+  if (!Array.isArray(styles) || styles.length > PREVIEW_WRITERS_STYLES.length || styles.some((s) => typeof s !== "string" || !s.trim())) {
+    throw new Error("buildPreviewHtml: styles is at most four non-empty URI strings");
   }
   const scripts = [];
   if (typeof u.writers === "string") scripts.push(u.writers);
@@ -6030,7 +6297,7 @@ const PANEL_NOTICE_CSP = "default-src 'none'; style-src 'unsafe-inline';";
 // `window.ermine_htmlwriter` inside a `DOMContentLoaded` listener, and the
 // two root-relative sprite `url()`s its CSS carries.
 //
-// THE THREE STYLE SHEETS, chosen by reading the CSS files themselves (none
+// THE STYLE SHEETS (three, and a fourth since S2f-1), chosen by reading the CSS files themselves (none
 // has an `@import`; MEASURED by `grep`):
 //   * `common.css` -- the `.tabular` / `.tabular_wrapper` rules the table
 //     adapter's skeleton uses (`client/src/legacy.ts` `tableSkeleton`);
@@ -6046,7 +6313,16 @@ const PANEL_NOTICE_CSP = "default-src 'none'; style-src 'unsafe-inline';";
 //     empty box.  Consequence: of the two sprite `url()`s the design review
 //     named, only `common.css`'s (`/CIQDotNet/images/TopMenuBar/
 //     tmbllsprite.png?urwvid=1`, on `.headerlabel`) can appear in the console.
-//   * `javafxwriter.css` is JavaFX's and JavaFX is dead.
+//   * `javafxwriter.css` -- **ADDED 2026-09-25 (S2f-1, MEASURED headlessly)**:
+//     WP-11 left it out as "JavaFX's", but it is where the Highcharts
+//     STYLED-MODE rules live (780 rules, 808 `highcharts` selectors), and the
+//     writers draw every chart in styled mode (`styledMode: true`), so without
+//     it every `axisChart` / `pieChart` drew as a black box.  It has no `url()`
+//     but `#posNegGradient` (in-document), so it adds no console noise.  Its
+//     three single-chart-window effects (a white `body`, a `position:fixed`
+//     `.timeseries`, the writers' window-sized chart div) are countered in the
+//     page's own CSS (`client/src/host/page.ts`, `CHART_HEIGHT`); the tables'
+//     row heights and stripes are unchanged (MEASURED: 19 px, #fff / #E9E9E9).
 //
 // THE BANNER'S KIND, chosen among the reducer's nine (no tenth): `error`.
 //   The writers missing is a FAILURE the developer must act on (set the path),
@@ -6063,9 +6339,10 @@ const PANEL_NOTICE_CSP = "default-src 'none'; style-src 'unsafe-inline';";
 //   and the writers sentence rides on it after this separator (W5's pattern).
 const WRITERS_NOTE_SEPARATOR = " -- ";
 
-/** The writers bundle, and the three style sheets in link order. */
+/** The writers bundle, and the FOUR style sheets in link order (S2f-1 added
+ *  `javafxwriter.css`, the charts' styled-mode rules). */
 const PREVIEW_WRITERS_SCRIPT = "htmlwriter.js";
-const PREVIEW_WRITERS_STYLES = Object.freeze(["common.css", "htmlwriter.css", "htmlwriter_classic.css"]);
+const PREVIEW_WRITERS_STYLES = Object.freeze(["common.css", "htmlwriter.css", "htmlwriter_classic.css", "javafxwriter.css"]);
 const WRITERS_SETTING = "ermine.preview.writersPath";
 /** The DEFAULT, relative to `resolveServer().root`: the sibling checkout
  *  layout of the machine this was built on (MEASURED there: `readlink -f
@@ -6103,7 +6380,7 @@ function previewWritersDir(raw, folderPath, serverRoot) {
 /**
  * THE WRITERS' STATE, from a LISTING of their folder (`fs.readdirSync`'s names,
  * or null when it could not be read).  FAIL-CLOSED on the script:
- *   present  `htmlwriter.js` and all three style sheets;
+ *   present  `htmlwriter.js` and all four style sheets;
  *   half     `htmlwriter.js`, but not every style sheet (the script loads,
  *            the widgets draw unstyled);
  *   missing  no `htmlwriter.js` (or no folder) -- the page is built WITHOUT the
@@ -6147,7 +6424,9 @@ function previewWritersCheck(where, listing) {
       ". table, drilldownTable, the charts and styleBox show an error box instead; " + fix;
   } else if (state === "half") {
     message = "the legacy writers' style sheets are incomplete: " + where2 + " has " + PREVIEW_WRITERS_SCRIPT +
-      " but not " + missing.join(", ") + ", so the legacy widgets draw unstyled; " + fix;
+      " but not " + missing.join(", ") + ", so the legacy widgets draw unstyled" +
+      // REVIEW-S2F N5: that sheet alone is the charts' colours (S2f-1)
+      (missing.indexOf("javafxwriter.css") >= 0 ? " and the charts draw as black boxes" : "") + "; " + fix;
   }
   return Object.freeze({
     state, dir, source, problem: typeof w.problem === "string" ? w.problem : null,
@@ -7077,6 +7356,26 @@ function dressNotConnected(answer, state) {
 }
 
 module.exports = {
+  // ---- S2f trace as params ----
+  SAVE_TRACE_COMMAND,
+  PREVIEW_TRACE_COMMAND,
+  TRACE_REPORT_MODULE,
+  TRACE_REPORT_BINDING,
+  TRACE_REPORT_GLOB,
+  TRACE_REPORT_EXCLUDE,
+  TRACE_REPLACE,
+  traceParamsOf,
+  traceParamsText,
+  traceSaveSource,
+  traceSaveStillApplies,
+  traceSaveConfirmation,
+  traceSaveConfirmed,
+  traceSavePlan,
+  traceReportFile,
+  traceReportPick,
+  traceSavedLine,
+  traceSaveResult,
+  // ---- end S2f trace as params ----
   // WP-13 (extension half): profiles, the prompted password, the connect machine.
   TRIGGER_RECONNECTED,
   PROFILE_DIALECTS,

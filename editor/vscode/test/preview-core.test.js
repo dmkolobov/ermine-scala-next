@@ -7795,11 +7795,15 @@ test("glue pins (S3): the first-pick branch, the write path and the guard", () =
   // is unchanged and is now spelled out below: the write loop has exactly
   // two callers, one of which may replace a params file and one of which may
   // not, and the difference is the third ARGUMENT rather than the mode.
-  assert.strictEqual((src.match(/applyWritePlan\(/g) || []).length, 3,
-    pin("applyWritePlan has more than its definition and its two callers",
+  // **S2f MOVED THIS FROM 3 TO 4: the fourth is `saveRenderTrace`**, an
+  // explicit command that replaces the TRACE REPORT's params file after its
+  // own modal; test/trace-save.test.js pins that its permission is
+  // `replace` (= a file existed AND the modal was answered Replace).
+  assert.strictEqual((src.match(/applyWritePlan\(/g) || []).length, 4,
+    pin("applyWritePlan has more than its definition and its three callers",
         "that the write loop is reachable from `firstPickSchemaAndWrite` (the automatic path, which " +
-        "may never overwrite) and from `writeSkeletonNow` (U3's command, which may, once the user has " +
-        "confirmed it) and from nothing else"));
+        "may never overwrite), from `writeSkeletonNow` (U3's command, which may, once the user has " +
+        "confirmed it), from `saveRenderTrace` (S2f's command, the same rule) and from nothing else"));
   const refreshBody = src.slice(src.indexOf("async function refreshSchemaFile("),
                                 src.indexOf("async function refreshSchemaFor("));
   assert.ok(refreshBody.length > 0 && !/paramsPath/.test(refreshBody),
@@ -7923,8 +7927,10 @@ test("glue pins (S3): the first-pick branch, the write path and the guard", () =
   // S4 MOVED THIS FROM 2 TO 3: U3's command is a third write path and is
   // held to exactly the same rule (its own `if (linked)` statement is pinned
   // with the other two below).
-  assert.strictEqual((src.match(/await symlinkProblem\(/g) || []).length, 3,
-    pin("the symlink check is gone from one of the three write paths",
+  // S2f MOVED IT FROM 3 TO 4: `saveRenderTrace` is a fourth write path, held
+  // to the same rule (its check is pinned in test/trace-save.test.js).
+  assert.strictEqual((src.match(/await symlinkProblem\(/g) || []).length, 4,
+    pin("the symlink check is gone from one of the four write paths",
         "M-3: node's fs FOLLOWS symlinks and the editor's API is UNVERIFIED either way. MEASURED: " +
         "a <binding>.schema.json symlinked outside the workspace was written THROUGH from the " +
         "REFRESH path — which is reachable from an ANSWER, the one thing the tracker says an " +
@@ -10125,6 +10131,8 @@ test("glue pins (S4): U3's command, the overwrite chain, and D6's scan", () => {
         "command, after a modal the user answered"));
   assert.ok(writeBody.indexOf("core.skeletonCommandPlan(") > 0,
     pin("the overwrite plan is built somewhere other than writeSkeletonNow", "the same"));
+  // (S2f's `saveRenderTrace` passes `replace`, not `true`: its own pins are
+  // in test/trace-save.test.js.)
   assert.strictEqual((src.match(/applyWritePlan\(plan\.files, paths\.paramsPath, true\)/g) || []).length, 1,
     pin("the PERMISSION to replace a params file is passed from more or fewer than one call site",
         "U3: `explicitOverwrite` is refused unless its caller passes the permission, and exactly one " +
@@ -10559,16 +10567,18 @@ test("panel (html): scripts load writers -> client -> host, classic, stamped, an
     .indexOf('src="c.js?x=1&amp;v=a%20b"') > 0);
 });
 
-test("panel (html): the writers' CSS links are optional, in order, and at most three", () => {
+// S2f-1 MOVED THIS FROM THREE TO FOUR: `javafxwriter.css` carries the charts' styled-mode rules.
+test("panel (html): the writers' CSS links are optional, in order, and at most four", () => {
   const html = core.buildPreviewHtml({ cspSource: "s", client: "c.js", host: "h.js",
-    styles: ["web/common.css", "web/htmlwriter.css", "web/htmlwriter_classic.css"] });
+    styles: ["web/common.css", "web/htmlwriter.css", "web/htmlwriter_classic.css", "web/javafxwriter.css"] });
   assert.deepStrictEqual(html.match(/<link [^>]*>/g), [
     '<link rel="stylesheet" href="web/common.css">',
     '<link rel="stylesheet" href="web/htmlwriter.css">',
     '<link rel="stylesheet" href="web/htmlwriter_classic.css">',
+    '<link rel="stylesheet" href="web/javafxwriter.css">',
   ]);
   assert.strictEqual((core.buildPreviewHtml({ cspSource: "s", client: "c.js", host: "h.js" }).match(/<link/g) || []).length, 0);
-  assert.throws(() => core.buildPreviewHtml({ cspSource: "s", client: "c.js", host: "h.js", styles: ["a", "b", "c", "d"] }), /styles/);
+  assert.throws(() => core.buildPreviewHtml({ cspSource: "s", client: "c.js", host: "h.js", styles: ["a", "b", "c", "d", "e"] }), /styles/);
   assert.throws(() => core.buildPreviewHtml({ cspSource: "s", client: "c.js" }), /host script URI is missing/);
   assert.throws(() => core.buildPreviewHtml({ cspSource: "s", host: "h.js" }), /client script URI is missing/);
 });
@@ -12467,7 +12477,7 @@ const s4Page = (writers, stamp) =>
 const s4Scripts = (html) => html.match(/<script\b[^>]*>[\s\S]*?<\/script>/g) || [];
 const s4Links = (html) => html.match(/<link [^>]*>/g) || [];
 
-test("panel S4 (html): writers FIRST, then client and host; the three style sheets in order; zero inline scripts; the writers unstamped", () => {
+test("panel S4 (html): writers FIRST, then client and host; the four style sheets in order (S2f-1 added javafxwriter.css); zero inline scripts; the writers unstamped", () => {
   const html = s4Page(s4Check(WRITERS_OK));
   assert.deepStrictEqual(s4Scripts(html), [
     '<script src="U(/wr/web/htmlwriter.js)"></script>',
@@ -12481,14 +12491,16 @@ test("panel S4 (html): writers FIRST, then client and host; the three style shee
     '<link rel="stylesheet" href="U(/wr/web/common.css)">',
     '<link rel="stylesheet" href="U(/wr/web/htmlwriter.css)">',
     '<link rel="stylesheet" href="U(/wr/web/htmlwriter_classic.css)">',
+    '<link rel="stylesheet" href="U(/wr/web/javafxwriter.css)">',
   ]);
   assert.ok(html.indexOf("<link") < html.indexOf("</head>") && html.indexOf("</head>") < html.indexOf("<script"),
     "style sheets in the head, scripts after the root element");
   assert.ok(html.indexOf('<div id="' + core.PREVIEW_ROOT_ID + '"></div>') < html.indexOf("<script"));
-  // the three are exactly these, and neither the dark theme nor the JavaFX sheet
-  assert.deepStrictEqual(core.PREVIEW_WRITERS_STYLES.slice(), ["common.css", "htmlwriter.css", "htmlwriter_classic.css"]);
+  // the four are exactly these, and never the dark theme (S2f-1: the JavaFX
+  // sheet IS linked now, for the charts' Highcharts styled-mode rules)
+  assert.deepStrictEqual(core.PREVIEW_WRITERS_STYLES.slice(), ["common.css", "htmlwriter.css", "htmlwriter_classic.css", "javafxwriter.css"]);
   assert.strictEqual(core.PREVIEW_WRITERS_SCRIPT, "htmlwriter.js");
-  assert.ok(!/dark|javafx/.test(html));
+  assert.ok(!/dark/.test(html));
 });
 
 test("panel S4 (html): a missing writers folder builds the page WITHOUT them -- two scripts, no link; half loads the script and the sheets it has", () => {
@@ -12513,9 +12525,9 @@ test("panel S4 (html): a hostile writers folder is escaped -- no tag, no attribu
   const evil = '/x"><script>alert(1)</script><x a="';
   const html = s4Page(s4Check(WRITERS_OK, evil));
   assert.strictEqual((html.match(/<script/g) || []).length, 3);
-  assert.strictEqual((html.match(/<link/g) || []).length, 3);
+  assert.strictEqual((html.match(/<link/g) || []).length, 4);
   assert.ok(html.indexOf("alert(1)</script>") < 0);
-  assert.strictEqual((html.match(/&quot;&gt;&lt;script&gt;alert\(1\)&lt;\/script&gt;/g) || []).length, 4, "the script and the three links, each escaped");
+  assert.strictEqual((html.match(/&quot;&gt;&lt;script&gt;alert\(1\)&lt;\/script&gt;/g) || []).length, 5, "the script and the four links, each escaped");
 });
 
 test("panel S4 (csp): the page with the writers carries the S1 policy EXACTLY -- 'unsafe-eval' stays, no blob:, no font-src, no connect-src", () => {
@@ -12532,7 +12544,9 @@ test("panel S4 (csp): the page with the writers carries the S1 policy EXACTLY --
 test("panel S4 (writersState): present / half / missing from the listing, FAIL-CLOSED on htmlwriter.js", () => {
   const rows = [
     [WRITERS_OK, "present"],
-    [["htmlwriter.js", "common.css", "htmlwriter.css", "htmlwriter_classic.css"], "present"],
+    [["htmlwriter.js", "common.css", "htmlwriter.css", "htmlwriter_classic.css", "javafxwriter.css"], "present"],
+    // S2f-1: without javafxwriter.css the charts draw as black boxes, so it is half
+    [["htmlwriter.js", "common.css", "htmlwriter.css", "htmlwriter_classic.css"], "half"],
     [["htmlwriter.js", "common.css", "htmlwriter.css"], "half"],
     [["htmlwriter.js", "common.css", "htmlwriter.css", "htmlwriter_dark.css"], "half"],
     [["htmlwriter.js"], "half"],
@@ -12552,7 +12566,7 @@ test("panel S4 (check): what the page loads, the root it needs and the sentence 
   const present = s4Check(WRITERS_OK);
   assert.deepStrictEqual(
     { state: present.state, script: present.script, styles: present.styles.slice(), root: present.root, missing: present.missing.slice(), message: present.message },
-    { state: "present", script: "htmlwriter.js", styles: ["common.css", "htmlwriter.css", "htmlwriter_classic.css"], root: "/wr/web", missing: [], message: null });
+    { state: "present", script: "htmlwriter.js", styles: ["common.css", "htmlwriter.css", "htmlwriter_classic.css", "javafxwriter.css"], root: "/wr/web", missing: [], message: null });
   assert.strictEqual(core.writersLine(present), null, "a present folder writes no channel line");
   const missing = s4Check(["common.css"]);
   assert.strictEqual(missing.state, "missing");
@@ -12566,8 +12580,11 @@ test("panel S4 (check): what the page loads, the root it needs and the sentence 
   const half = s4Check(["htmlwriter.js", "common.css"]);
   assert.strictEqual(half.state, "half");
   assert.strictEqual(half.root, "/wr/web");
-  assert.deepStrictEqual(half.missing.slice(), ["htmlwriter.css", "htmlwriter_classic.css"]);
-  assert.match(half.message, /has htmlwriter\.js but not htmlwriter\.css, htmlwriter_classic\.css, so the legacy widgets draw unstyled/);
+  assert.deepStrictEqual(half.missing.slice(), ["htmlwriter.css", "htmlwriter_classic.css", "javafxwriter.css"]);
+  assert.match(half.message, /has htmlwriter\.js but not htmlwriter\.css, htmlwriter_classic\.css, javafxwriter\.css, so the legacy widgets draw unstyled and the charts draw as black boxes; /);
+  // REVIEW-S2F N5: only the chart sheet missing says so too
+  assert.match(s4Check(["htmlwriter.js", "common.css", "htmlwriter.css", "htmlwriter_classic.css"]).message,
+    /but not javafxwriter\.css, so the legacy widgets draw unstyled and the charts draw as black boxes; /);
   const dflt = core.previewWritersCheck({ dir: "/d/web", source: "default", problem: null }, null);
   assert.match(dflt.message, /no htmlwriter\.js in \/d\/web \(ermine\.preview\.writersPath is empty, so this is the default: the ermine-writers checkout beside this one\)/);
   const noDir = core.previewWritersCheck(core.previewWritersDir("", "/w", null), WRITERS_OK);
@@ -12697,7 +12714,7 @@ test("panel S4 model (present / half): the writers load first with their sheets;
   const m = panelGlueModel();
   const p = await s3OpenReady(m, "a");
   assert.match(s4Scripts(p.webview.html)[0], /\/ermine-writers\/writers\/html\/src\/main\/resources\/web\/htmlwriter\.js\)?"><\/script>$/);
-  assert.strictEqual(s4Links(p.webview.html).length, 3);
+  assert.strictEqual(s4Links(p.webview.html).length, 4, "S2f-1: four sheets, javafxwriter.css last");
   assert.deepStrictEqual(s4Error(p.last()), []);
   assert.ok(!m.logs.some((l) => /legacy writers/.test(l)), "a present folder writes no line");
   const h = panelGlueModel({ writersListing: ["htmlwriter.js", "common.css"] });

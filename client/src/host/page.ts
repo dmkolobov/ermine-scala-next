@@ -463,6 +463,32 @@ export const NO_RENDER_FUNCTION =
  * Everything document-side is scoped under `#${PREVIEW_ROOT_ID} .ermine-document`,
  * so nothing leaks onto the banner or the page around it.
  */
+/**
+ * S2f-1 (DB programme, 2026-09-25, MEASURED in a headless harness,
+ * scratch-widget-preview/db/s2f/): THE CHARTS.  The writers draw Highcharts
+ * in STYLED MODE (`styledMode: true` in htmlwriter.js), so every colour and
+ * fill comes from CSS, and those rules live only in the writers'
+ * `javafxwriter.css`, which the page did not link (every chart drew as a
+ * black box).  The extension now links it as the FOURTH sheet
+ * (`preview-core.js` `PREVIEW_WRITERS_STYLES`).  It was written for a JavaFX
+ * window holding ONE chart, and three of its effects are countered here:
+ *   * `body{background-color:white}` -- the page's body keeps the editor's
+ *     background (the only rule outside the root, and it restates the theme);
+ *   * `.timeseries{position:fixed;width:100%;height:100%}`, and the writers
+ *     size each chart's div to the WINDOW (`getHighestParentSize` walks up to
+ *     `body` unless a parent carries an INLINE height or `.widget_body`, then
+ *     uses `$(window).height()`): so a chart div is `CHART_HEIGHT` px tall and
+ *     as wide as its cell, `!important` over the writers' inline size.
+ *     Highcharts reads its container's size when it draws, so the chart is
+ *     DRAWN at that size, not clipped (MEASURED: container 1056x320);
+ *   * a `RightTable` pie legend's SVG symbols are hidden, as `common.css`
+ *     already does for the drilldown pie (its "wacky" swatch comment): the
+ *     HTML legend rows carry their own swatches.
+ * And the headline's figures and the scorecard's cards are laid out as a ROW
+ * of label-over-value pairs rather than the browser's default list layout
+ * (CSS only; the widgets' markup is unchanged).
+ */
+const CHART_HEIGHT = 320;
 const PAPER = `#${PREVIEW_ROOT_ID} .ermine-document`;
 /** WP-31: the JSON view's `<pre>`, drawn on the same paper as the document. */
 const JSON_PAPER = `#${PREVIEW_ROOT_ID} .ermine-json`;
@@ -533,6 +559,13 @@ ${TRACE_PAPER} .ermine-trace-note{background:#fff4ce;color:#4a3700;border-left:3
 ${TRACE_PAPER} .ermine-trace-empty{color:#555}
 ${TRACE_PAPER} .ermine-trace-rel{overflow-wrap:anywhere}
 @media (max-width:560px){${TRACE_PAPER}{padding:8px 10px}${TRACE_PAPER} .ermine-trace-queries .opt{display:none}${TRACE_PAPER} .ermine-trace-queries th,${TRACE_PAPER} .ermine-trace-queries td{padding:3px 4px}}
+html body{background-color:var(--vscode-editor-background)}
+${PAPER} .timeseries,${PAPER} .piechart{position:relative!important;width:100%!important;height:${CHART_HEIGHT}px!important}
+${PAPER} .highcharts-legend-RightTable .highcharts-legend-item rect{display:none}
+${PAPER} .ermine-headline-figures,${PAPER} .ermine-scorecard-cards{display:flex;flex-wrap:wrap;gap:6px 28px;margin:6px 0 10px;padding:0;list-style:none}
+${PAPER} .ermine-headline-figure,${PAPER} .ermine-scorecard-card{display:flex;flex-direction:column}
+${PAPER} .ermine-headline-figure dt,${PAPER} .ermine-scorecard-label{font-size:11px;color:#555}
+${PAPER} .ermine-headline-figure dd,${PAPER} .ermine-scorecard-value{margin:0;font-size:18px;font-weight:600;color:#222}
 ${PAPER}.ermine-offstage[hidden]{display:block;visibility:hidden;position:absolute;top:0;left:0;right:0;height:0;overflow:hidden;pointer-events:none}
 .ermine-banner{display:flex;gap:1em;align-items:center;padding:.4em .8em;margin-bottom:.6em;border-left:4px solid var(--vscode-focusBorder,#888)}
 .ermine-banner[hidden]{display:none}

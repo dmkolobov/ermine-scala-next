@@ -2373,4 +2373,144 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
       ((thrown.map(_.getMessage) ?= Some("boom")) :| "the fold did not throw") &&
         ((torn.get ?= 1) :| ("teardowns " + torn.get + ": the scan leaked its result set"))
     }
+
+  // =====================================================================
+  // S2f (DB programme): the render trace as Ermine data
+
+  /** The captured trace fixture: a warm `DbFetchTopN {"keep":2}` render on
+    * the held `sales-mssql` profile, ErmineSales tier s (tracker/db/
+    * OBSERVABILITY.md section 4, with the attributed phase as today's server
+    * names it, `scan`). */
+  private lazy val traceSample: Json =
+    parsed(new String(java.nio.file.Files.readAllBytes(
+      java.nio.file.Paths.get(exampleRoot, "trace-sample.json")), "UTF-8"))
+
+  /** Object keys in ANY order (the encoder writes a `Spread`'s keys after the
+    * declared fields, where the server wrote `table` / `database` among
+    * them); numbers by value, as `jsonEq`. */
+  def jsonEqAnyOrder(a: Json, b: Json): Boolean =
+    if (a.isNumber && b.isNumber) jsonEq(a, b)
+    else if (a.isArray && b.isArray) {
+      val (xs, ys) = (a.arrayOrEmpty, b.arrayOrEmpty)
+      xs.length == ys.length && xs.zip(ys).forall(p => jsonEqAnyOrder(p._1, p._2))
+    } else if (a.isObject && b.isObject) {
+      val (xs, ys) = (a.objectFieldsOrEmpty, b.objectFieldsOrEmpty)
+      xs.toSet == ys.toSet && xs.forall(k => jsonEqAnyOrder(a.field(k).get, b.field(k).get))
+    } else a == b
+
+  private def withKey(j: Json, path: List[String], f: Json => Option[Json]): Json = path match {
+    case Nil => j
+    case k :: Nil => j.withObject(o => f(o(k).getOrElse(Json.jNull)).fold(o - k)(v => o + (k, v)))
+    case k :: rest if k.forall(_.isDigit) =>
+      j.withArray(xs => xs.updated(k.toInt, withKey(xs(k.toInt), rest, f)))
+    case k :: rest => j.withObject(o => o + (k, withKey(o(k).get, rest, f)))
+  }
+
+  /** The document `Doc.TraceReport` renders for the sample, written where the
+    * headless screenshot harness reads it (scratch-widget-preview/db/s2f). */
+  private val traceDocOut = new File("core/target/trace-report/TraceReport.document.json")
+
+  property("(trace-doc) Doc.TraceReport renders the captured trace: its widgets, its totals, and an empty trace too") = secure {
+    val (st, text) = render(runner, "Doc.TraceReport", params(traceSample.nospaces))
+    if (st != 200) falsified :| ("status " + st + ": " + text.take(600))
+    else {
+      traceDocOut.getParentFile.mkdirs()
+      java.nio.file.Files.write(traceDocOut.toPath, text.getBytes("UTF-8"))
+      val root = parsed(text).field(Wire.Root).get
+      def widgets(j: Json): List[Json] =
+        if (str(j.field("tag")).contains("Widget")) List(j)
+        else j.field("children").map(_.arrayOrEmpty.flatMap(widgets)).getOrElse(Nil)
+      val ws = widgets(root)
+      val names = ws.flatMap(w => str(w.field("name")))
+      val head = ws.head.field("props").get
+      def cards(i: Int): Map[String, Double] =
+        rowMaps(ws.filter(w => str(w.field("name")).contains("scorecard"))(i).field("props").get.field("cards").get)
+          .map(m => m("tkLabel").string.get -> m("tkValue").number.flatMap(_.toDouble).get).toMap
+      val tables = ws.filter(w => str(w.field("name")).contains("table")).map(w => rowMaps(w.field("props").get.field("rows").get))
+      val phases = rowMaps(ws.find(w => str(w.field("name")).contains("axisChart")).get.field("props").get.field("chartRows").get)
+      println("TRACE-DOC widgets " + names.mkString(",") + "; headline " + head.nospaces.take(160) +
+              "; time " + cards(0) + "; rows " + cards(1) + "; " + text.length + " bytes -> " + traceDocOut)
+      // an EMPTY trace: no queries, no phases, the partial/running/truncated arms
+      val empty = withKey(withKey(withKey(withKey(traceSample, List("queries"), _ => Some(Json.jEmptyArray)),
+                    List("phases"), _ => Some(Json.jEmptyArray)), List("partial"), _ => Some(Json.jBool(true))),
+                    List("running"), _ => Some(Json.obj("phase" -> Json.jString("eval"), "sinceMs" -> Json.jNumber(300.9))))
+      val (st2, text2) = render(runner, "Doc.TraceReport", params(empty.nospaces))
+      val emptyRels = if (st2 == 200) rels(parsed(text2)) else Nil
+      ((names ?= List("headline", "text", "scorecard", "scorecard", "axisChart", "table", "pieChart", "table", "text")) :| names.toString) &&
+        ((num(head.field("total")) ?= Some(51.0)) :| head.nospaces) &&
+        ((num(head.field("rowCount")) ?= Some(3.0)) :| head.nospaces) &&
+        ((num(head.field("largest")) ?= Some(36.7)) :| head.nospaces) &&
+        // REVIEW-S2F MF-1: rowCount is totals.relations, and the scope names each figure
+        ((str(head.field("scope")) ?= Some("sales-mssql (mssql) / ErmineSales · Rows = relations, Total = render wall ms, Largest = slowest relation ms")) :| head.nospaces) &&
+        ((cards(0) ?= Map("1 wall" -> 51.0, "2 db" -> 11.0, "3 other" -> 40.0, "4 queue" -> 0.0)) :| cards(0).toString) &&
+        ((cards(1) ?= Map("1 rows read" -> 399.0, "2 rows used" -> 19.0, "3 queries" -> 3.0)) :| cards(1).toString) &&
+        ((tables.map(_.length) ?= List(3, 3)) :| tables.toString.take(400)) &&
+        ((tables.head.map(m => m("tqPath").string.get -> m("tqRowsRead").number.flatMap(_.toDouble).get).toMap ?=
+            Map("$.fetch[1]" -> 388.0, "$.fetch[2]" -> 8.0, "$.children[0].props.pieRows" -> 3.0)) :| tables.head.toString) &&
+        ((phases.length ?= 13) :| phases.toString.take(300)) &&
+        (phases.exists(m => m("tpLabel").string.contains("11 scan") && m("tpHow").string.contains("attributed")) :| phases.toString.take(600)) &&
+        ((st2 ?= 200) :| ("the empty trace: " + text2.take(600))) &&
+        // every relation of the empty trace is there, empty, WITH its columns
+        (emptyRels.nonEmpty && emptyRels.forall(r => r.field(Wire.Columns).exists(_.arrayOrEmpty.nonEmpty))
+           :| ("the empty trace's relations: " + emptyRels.map(_.nospaces.take(120)))) &&
+        ((emptyRels.filter(r => num(r.field(Wire.RowCount)).contains(0.0)).length ?= 4) :| emptyRels.map(_.nospaces.take(120)).toString) &&
+        (text2.contains("partial: still running eval after 300.9 ms") :| text2.take(900))
+    }
+  }
+
+  property("(trace-decode) the trace decodes as Layout.Trace: the sample round-trips, an absent optional key is Nothing, an unknown key is refused") = secure {
+    // the echo report: `rawWidget` encodes its argument with the reflective
+    // encoder, the inverse of the decoder, so the props ARE the decoded value
+    val echo = freshModule("RgTraceEcho")
+    writeModule(echo, "module " + echo + " where\n\nimport Layout.Doc\nimport Layout.Trace\n\n" +
+                      "report : Trace -> Node\nreport t = rawWidget \"echo\" t\n")
+    def at(j: Json) = render(runner, echo, params(j.nospaces))
+    def echoed(text: String) = parsed(text).field(Wire.Root).flatMap(_.field("props")).getOrElse(Json.jNull)
+    val (st, text) = at(traceSample)
+    // the keys the server leaves out when they do not apply, removed one at
+    // a time from the sample: each still decodes, and the echo omits it too
+    val optional = List(List("queries", "0", "dialect"), List("queries", "0", "sql"), List("queries", "0", "sqlBytes"),
+                        List("queries", "0", "statements"), List("queries", "0", "fetchMs"),
+                        List("totals", "documentBytes"), List("connection", "profile"), List("connection", "database"))
+    val dropped = optional.map { k =>
+      val j = withKey(traceSample, k, _ => None)
+      val (s, t) = at(j)
+      (k.mkString("."), s, if (s == 200) jsonEqAnyOrder(echoed(t), j) else false, t)
+    }
+    // the optional arms the sample does not exercise: setup (with the
+    // keyword key `table`, gathered by the Spread), running, truncated, the flags
+    val rich = withKey(withKey(withKey(withKey(traceSample,
+                 List("queries", "0", "setup"), _ => Some(Json.array(Json.obj("kind" -> Json.jString("memo"),
+                   "table" -> Json.jString("MemoHash_9f2c41"), "created" -> Json.jBool(false), "ms" -> Json.jNumber(0.8))))),
+                 List("running"), _ => Some(Json.obj("path" -> Json.jString("$.fetch[1]"), "sql" -> Json.jString("select 1"),
+                   "sinceMs" -> Json.jNumber(299.5)))),
+                 List("truncated"), _ => Some(Json.obj("queries" -> Json.jNumber(3), "sqlShortened" -> Json.jBool(true)))),
+                 List("queries", "2", "error"), _ => Some(Json.jBool(true)))
+    // REVIEW-S2F MF-2: the flag no other fixture carries
+    val richest = withKey(rich, List("queries", "1", "overThreshold"), _ => Some(Json.jBool(true)))
+    val richer = withKey(richest, List("queries", "2", "message"), _ => Some(Json.jString("no such table")))
+    val (stR, textR) = at(richer)
+    // refusals: an unknown key at the top and inside a query, a required key missing
+    val (stU, textU) = at(withKey(traceSample, List("nope"), _ => Some(Json.jNumber(1))))
+    val (stQ, textQ) = at(withKey(traceSample, List("queries", "1", "rowz"), _ => Some(Json.jNumber(1))))
+    val (stM, textM) = at(withKey(traceSample, List("totals", "rowsRead"), _ => None))
+    // ...and inside the two Spread records an unknown key is GATHERED, not refused
+    val (stS, textS) = at(withKey(traceSample, List("connection", "host"), _ => Some(Json.jString("127.0.0.1"))))
+    def err(t: String) = parsed(t).field("error").getOrElse(Json.jNull)
+    println("TRACE-DECODE sample " + st + "; optional " + dropped.map(d => d._1 + "=" + d._2).mkString(" ") +
+            "; rich " + stR + "; unknown top " + stU + " " + err(textU).nospaces + "; unknown in query " + stQ +
+            " " + err(textQ).nospaces + "; missing " + stM + " " + err(textM).nospaces + "; unknown in connection " + stS)
+    ((st ?= 200) :| text.take(600)) &&
+      (jsonEqAnyOrder(echoed(text), traceSample) :| ("the sample did not round-trip: " + echoed(text).nospaces.take(900))) &&
+      dropped.foldLeft(proved: Prop) { (acc, d) =>
+        acc && ((d._2 ?= 200) :| (d._1 + " absent: " + d._4.take(400))) && (d._3 :| (d._1 + " absent did not round-trip"))
+      } &&
+      ((stR ?= 200) :| textR.take(600)) &&
+      (jsonEqAnyOrder(echoed(textR), richer) :| ("setup/running/truncated/error did not round-trip: " + echoed(textR).nospaces.take(900))) &&
+      ((stU ?= 400) :| textU.take(300)) && ((str(err(textU).field("path")) ?= Some("$.params.nope")) :| textU) &&
+      ((stQ ?= 400) :| textQ.take(300)) && ((str(err(textQ).field("path")) ?= Some("$.params.queries[1].rowz")) :| textQ) &&
+      ((stM ?= 400) :| textM.take(300)) && ((str(err(textM).field("path")) ?= Some("$.params.totals")) :| textM) &&
+      ((stS ?= 200) :| textS.take(300)) &&
+      ((echoed(textS).field("connection").flatMap(_.field("host")).flatMap(_.string) ?= Some("127.0.0.1")) :| textS.take(600))
+  }
 }

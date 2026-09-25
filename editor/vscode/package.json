@@ -2,7 +2,7 @@
   "name": "ermine-lang",
   "displayName": "Ermine",
   "description": "Ermine language support: syntax highlighting, diagnostics, navigation, hover types, references, rename, symbols, completion and quick fixes, backed by bin/ermine-lsp.",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "publisher": "clarifi",
   "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {
@@ -231,6 +231,14 @@
       {
         "command": "ermine.disconnectDatabase",
         "title": "Ermine: Disconnect Database"
+      },
+      {
+        "command": "ermine.saveRenderTrace",
+        "title": "Ermine: Save Render Trace"
+      },
+      {
+        "command": "ermine.previewRenderTrace",
+        "title": "Ermine: Preview Render Trace"
       }
     ]
   },
@@ -242,7 +250,7 @@
   },
   "scripts": {
     "test": "node --test test/preview-core.test.js test/connect-core.test.js && node test/load-test.js && python3 test/grammar-test.py",
-    "test:preview": "node --test test/preview-core.test.js test/connect-core.test.js",
+    "test:preview": "node --test test/preview-core.test.js test/connect-core.test.js test/trace-save.test.js",
     "test:load": "node test/load-test.js",
     "test:grammar": "python3 test/grammar-test.py",
     "package": "vsce package"

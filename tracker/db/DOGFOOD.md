@@ -106,8 +106,8 @@ There is no password field. A profile with a `password` key is refused, and so i
 
 **If you put them in workspace settings by mistake:** they are ignored. The channel says
 `const SCOPE_NOTICE = "profiles set in workspace settings are ignored (user settings only)";`
-(`editor/vscode/src/preview-core.js:6529`) once, prefixed `settings: `, and the second status bar item reads
-`text: "$(database) workspace profiles ignored"` (`editor/vscode/src/preview-core.js:6993`).
+(`editor/vscode/src/preview-core.js:6808`) once, prefixed `settings: `, and the second status bar item reads
+`text: "$(database) workspace profiles ignored"` (`editor/vscode/src/preview-core.js:7272`).
 Both settings are declared `"scope": "application"` in `editor/vscode/package.json`.
 
 ## 3. Open the worktree, and the output channel
@@ -131,37 +131,37 @@ back to `panel` at the end.
 **Do:** nothing. When the language client is running, the extension connects the active profile.
 **Expect**, in order:
 
-1. The second status bar item shows `text: "$(key) " + id + ": password?"` (`editor/vscode/src/preview-core.js:6985`),
+1. The second status bar item shows `text: "$(key) " + id + ": password?"` (`editor/vscode/src/preview-core.js:7264`),
    i.e. **`sales-mssql: password?`** with a key icon, and the channel logs
-   `line: "db: asking for the password of " + labelText(label) + " (" + cause + ")",` (`editor/vscode/src/preview-core.js:6854`):
+   `line: "db: asking for the password of " + labelText(label) + " (" + cause + ")",` (`editor/vscode/src/preview-core.js:7133`):
    **`db: asking for the password of sales-mssql (mssql) @ 127.0.0.1 (running)`**. The label is
-   `return label.id + " (" + label.dialect + ")" + (label.host ? " @ " + label.host : "");` (`editor/vscode/src/preview-core.js:6754`).
-2. A password box titled `title: "Ermine: database password",` (`editor/vscode/src/preview-core.js:6620`)
-   with the prompt `prompt: "Password for " + who + " (profile " + (profile ? profile.id : "?") +` (`editor/vscode/src/preview-core.js:6621`)
-   `"). It is held in this window's memory only, until the window closes or you disconnect.",` (`editor/vscode/src/preview-core.js:6622`):
+   `return label.id + " (" + label.dialect + ")" + (label.host ? " @ " + label.host : "");` (`editor/vscode/src/preview-core.js:7033`).
+2. A password box titled `title: "Ermine: database password",` (`editor/vscode/src/preview-core.js:6899`)
+   with the prompt `prompt: "Password for " + who + " (profile " + (profile ? profile.id : "?") +` (`editor/vscode/src/preview-core.js:6900`)
+   `"). It is held in this window's memory only, until the window closes or you disconnect.",` (`editor/vscode/src/preview-core.js:6901`):
    **`Password for ermine @ 127.0.0.1 (profile sales-mssql). It is held in this window's memory only, until the window closes or you disconnect.`**
    It stays open if you click elsewhere (`ignoreFocusOut`).
 3. Type `ERMINE_DB_PASSWORD` from `~/.config/ermine/db.env` (read it with an editor. Do not paste it
    into any file or terminal command) and press Enter. The item turns to
-   `text: "$(sync~spin) " + id + ": connecting"` (`editor/vscode/src/preview-core.js:6988`) and the channel logs
-   `line: "db: connecting " + labelText(s.label) + " (password entered)",` (`editor/vscode/src/preview-core.js:6867`).
+   `text: "$(sync~spin) " + id + ": connecting"` (`editor/vscode/src/preview-core.js:7267`) and the channel logs
+   `line: "db: connecting " + labelText(s.label) + " (password entered)",` (`editor/vscode/src/preview-core.js:7146`).
 4. The server logs `log("preview: connected " + p.id + " (" + p.dialect + ") @ " + host + " / " + db + " in " + ms +` (`core/src/main/scala/com/clarifi/reporting/ermine/lsp/Preview.scala:2127`),
    which shows as `preview: connected sales-mssql (mssql) @ <host> / ErmineSales in 13 ms, seq 1`. The
    host is written `<host>` because the server scrubs the profile's host and user from its log. 13 ms
    was MEASURED by `TestPreviewDbLive` in a warm JVM (SERVER.md §6.3). A cold JVM is not measured (P1).
-5. The extension logs `line: "db: connected " + labelText(label) + (database ? " / " + database : "") +` (`editor/vscode/src/preview-core.js:6883`):
+5. The extension logs `line: "db: connected " + labelText(label) + (database ? " / " + database : "") +` (`editor/vscode/src/preview-core.js:7162`):
    **`db: connected sales-mssql (mssql) @ 127.0.0.1 / ErmineSales`**. The status bar item reads
-   `return { hidden: false, text: "$(database) " + labelText(s.label), severity: "none",` (`editor/vscode/src/preview-core.js:6981`):
+   `return { hidden: false, text: "$(database) " + labelText(s.label), severity: "none",` (`editor/vscode/src/preview-core.js:7260`):
    **`sales-mssql (mssql) @ 127.0.0.1`** with a database icon. Hover over it:
-   `tooltip: "connected: " + labelText(s.label) + (s.database ? "\ndatabase: " + s.database : "") +` (`editor/vscode/src/preview-core.js:6982`),
+   `tooltip: "connected: " + labelText(s.label) + (s.database ? "\ndatabase: " + s.database : "") +` (`editor/vscode/src/preview-core.js:7261`),
    so `connected: sales-mssql (mssql) @ 127.0.0.1`, `database: ErmineSales`, `server: 16.00.4295`
    (the version string was MEASURED in the connect answer, SERVER.md §6.3).
 
 **If not:**
 - no prompt and the item reads `sales-mssql: trace is verbose`: `ermine.trace.server` is `verbose`, and
-  the channel says so with `line: "db: NOT connecting " + labelText(label) + ": ermine.trace.server is \"verbose\" and would log the " +` (`editor/vscode/src/preview-core.js:6829`).
+  the channel says so with `line: "db: NOT connecting " + labelText(label) + ": ermine.trace.server is \"verbose\" and would log the " +` (`editor/vscode/src/preview-core.js:7108`).
   Set it to `off`.
-- you pressed Escape: `line: "db: no password given for " + labelText(s.label) + "; not connected",` (`editor/vscode/src/preview-core.js:6862`).
+- you pressed Escape: `line: "db: no password given for " + labelText(s.label) + "; not connected",` (`editor/vscode/src/preview-core.js:7141`).
   Nothing asks again on its own. Run **Ermine: Connect Database** or click the status bar item.
 - `sales-mssql: profile` with the message *this language server has no ermine/preview/connect (it is
   older than the extension)*: the server was not rebuilt from this tree (see "What you need").
@@ -203,7 +203,7 @@ document equals the in-memory original's, apart from row order (MEASURED, `TestD
    amounts in its SQL literal: `(225449.87999999998, 'china'), (172784.89, 'us-south'), (652859.45, 'Other')`.
    Summing Doubles gives the `...87999999998`, and the JSON tab may print it that way.
 5. **The JSON tab** (target `both`: `return Object.freeze({ tab: t === "json" || t === "both", panel: t === "panel" || t === "both" });`,
-   `editor/vscode/src/preview-core.js:5911`) has the same document. The pie's rows are inline under
+   `editor/vscode/src/preview-core.js:6178`) has the same document. The pie's rows are inline under
    `$.children[0].props.pieRows`, and `metTargets` is under `$.children[1]`.
 
 **Tier xs versus tier s (the S2 done-when).** At tier **xs** the same `{"keep": 2}` gives **north 4,350.75,
@@ -266,7 +266,7 @@ between keep 2 and keep 3: `keep` is applied in Ermine, after the scan (`take (k
 
 ## 8. The Trace view: what the database did for this render
 
-**Do:** in the panel's toolbar click **Trace**. The button is `showTrace = control("Trace", "trace");` (`client/src/host/page.ts:635`),
+**Do:** in the panel's toolbar click **Trace**. The button is `showTrace = control("Trace", "trace");` (`client/src/host/page.ts:668`),
 beside Document and JSON.
 
 **Expect** (the numbers are from server-trace's MEASURED `DbFetchTopN {"keep":2}` at tier s,
@@ -277,34 +277,34 @@ OBSERVABILITY.md §4, n=1. Yours will differ):
    line: **`sales-mssql (mssql) @ 127.0.0.1 / ErmineSales`**. The host comes from the extension's held
    connection (extension role, board 00:10), and the database from the server's trace.
 3. **The phase bar**: the blue `db` segment first, then the other phases (`session`, `eval`, `scan`,
-   ...). A segment gets a text label only when it is at least 12% wide: `sg.pct >= 12 ?` (`client/src/host/page.ts:781`).
+   ...). A segment gets a text label only when it is at least 12% wide: `sg.pct >= 12 ?` (`client/src/host/page.ts:814`).
    The legend below it lists every segment. At tier s most of the 40 ms outside the database is `scan`
    (30.7 ms): Ermine grouping 388 rows into 8 regions, because `groupBy ... (sumBy ...)` is a `Mem`
    and is not pushed into the SQL (OBSERVABILITY.md §9, finding 1).
-4. **The table.** Its headers come from `for (const [h, cls] of [["#", "num"], ["relation", ""], ["delivery", "opt"], ["rows", "num"], ["scanned", "num"],` (`client/src/host/page.ts:800`),
+4. **The table.** Its headers come from `for (const [h, cls] of [["#", "num"], ["relation", ""], ["delivery", "opt"], ["rows", "num"], ["scanned", "num"],` (`client/src/host/page.ts:833`),
    so: `#, relation, delivery, rows, scanned, db, total, dialect, share`. The rows are `$.fetch[1]`
    (fetched, rows 8, scanned **388**), `$.fetch[2]` (fetched, 8 and 8) and `$.children[0].props.pieRows`
-   (inline, 3 and 3). Under `$.fetch[1]` a note says `rows; Ermine reduced them to ${formatCount(q.rows)}` (`client/src/host/page.ts:838`),
+   (inline, 3 and 3). Under `$.fetch[1]` a note says `rows; Ermine reduced them to ${formatCount(q.rows)}` (`client/src/host/page.ts:871`),
    i.e. `the database returned 388 rows; Ermine reduced them to 8`.
-5. **The SQL.** Click `SQL · ${formatCount(bytes)} bytes` (`client/src/host/page.ts:848`) under `$.fetch[1]`
+5. **The SQL.** Click `SQL · ${formatCount(bytes)} bytes` (`client/src/host/page.ts:881`) under `$.fetch[1]`
    (`SQL · 182 bytes` in the example). The SQL appears in a grey box with a
-   `const copy = el("button", "ermine-trace-copy", "Copy");` (`client/src/host/page.ts:736`) button. Click
-   **Copy**. The button reads `clip.writeText(text).then(() => { button.textContent = "Copied"; },` (`client/src/host/page.ts:717`),
-   or, when the webview has no clipboard, `button.textContent = "Selected: press Ctrl+C";` (`client/src/host/page.ts:711`).
+   `const copy = el("button", "ermine-trace-copy", "Copy");` (`client/src/host/page.ts:769`) button. Click
+   **Copy**. The button reads `clip.writeText(text).then(() => { button.textContent = "Copied"; },` (`client/src/host/page.ts:750`),
+   or, when the webview has no clipboard, `button.textContent = "Selected: press Ctrl+C";` (`client/src/host/page.ts:744`).
    Paste it into `scripts/db.sh sql ErmineSales "<paste>"`: it prints `(388 rows affected)` at tier s,
    the `scanned` cell. The example's SQL is
    `select ([t1030144].[amount]) [amount], ... from [sales] [t1030144] order by [t1030144].[region] asc`.
    The alias numbers change on each render.
 6. **The status bar's preview item** reads `return { hidden: false, text: "$(json) Ermine: " + label + suffix, tooltip: tooltip + traceLine, severity: "none" };`
-   (`editor/vscode/src/preview-core.js:2163`) with the suffix `return wall === null ? "" : " · " + traceMs(wall);` (`editor/vscode/src/preview-core.js:5643`):
+   (`editor/vscode/src/preview-core.js:2163`) with the suffix `return wall === null ? "" : " · " + traceMs(wall);` (`editor/vscode/src/preview-core.js:5644`):
    **`Ermine: DbFetchTopN.report · 51 ms`**. Its tooltip ends with
-   `return "render " + traceMs(tt.wallMs || 0) + ": db " + traceMs(tt.dbMs || 0) + ", " +` (`editor/vscode/src/preview-core.js:5651`):
+   `return "render " + traceMs(tt.wallMs || 0) + ": db " + traceMs(tt.dbMs || 0) + ", " +` (`editor/vscode/src/preview-core.js:5652`):
    `render 51 ms: db 11 ms, 3 queries, 19 rows (sales-mssql / ErmineSales)`.
 7. **The channel** gets ONE line per render:
-   `return head + "ok " + traceMs(rt === null ? wall : rt) + " (" + (rt === null ? "" : "server " + traceMs(wall) + ": ") +` (`editor/vscode/src/preview-core.js:5699`),
+   `return head + "ok " + traceMs(rt === null ? wall : rt) + " (" + (rt === null ? "" : "server " + traceMs(wall) + ": ") +` (`editor/vscode/src/preview-core.js:5700`),
    e.g. `preview: render <G> ok <RT> ms (server 51 ms: db 11 ms, 3 queries, 19 rows; scan 31 ms, session 4.5 ms, other 4.8 ms) sales-mssql / ErmineSales`
    (panel role, board 00:08). The connection part is
-   `return (c.profile || "profile") + (c.host ? " @ " + c.host : "") + (c.database ? " / " + c.database : "");` (`editor/vscode/src/preview-core.js:5636`).
+   `return (c.profile || "profile") + (c.host ? " @ " + c.host : "") + (c.database ? " / " + c.database : "");` (`editor/vscode/src/preview-core.js:5637`).
    **The channel never contains SQL.**
 
 **If not:** `no trace: this answer carried none (a server from before DB stage 2 sends none)`: the
@@ -316,23 +316,23 @@ so run `npm run bundle` in `client/`.
 **Do:** **Ermine: Disconnect Database**. Then save the params file (a re-render).
 
 **Expect:**
-- The channel: `line: "db: disconnected " + labelText(s.label) + " by the user; the password is forgotten",` (`editor/vscode/src/preview-core.js:6944`),
-  then `() => log("db: the server let the connection go"),` (`editor/vscode/src/extension.js:3593`).
-  The status bar item reads `text: "$(database) " + id + ": not connected"` (`editor/vscode/src/preview-core.js:7007`).
+- The channel: `line: "db: disconnected " + labelText(s.label) + " by the user; the password is forgotten",` (`editor/vscode/src/preview-core.js:7223`),
+  then `() => log("db: the server let the connection go"),` (`editor/vscode/src/extension.js:3603`).
+  The status bar item reads `text: "$(database) " + id + ": not connected"` (`editor/vscode/src/preview-core.js:7286`).
   The panel keeps its last document until something re-renders.
 - The re-render is answered with the server's 503 (`private[lsp] val NotConnectedMessage = "not connected"`,
   `core/src/main/scala/com/clarifi/reporting/ermine/lsp/Preview.scala:2752`, reason
   `val NotConnected       = "not-connected"`, `core/src/main/scala/com/clarifi/reporting/ermine/lsp/Preview.scala:3060`).
   The extension rewords it:
-  `: s.label ? labelText(s.label) + " is " + (s.phase === "connecting" || s.phase === "prompting" ? "still connecting" : "not connected")` (`editor/vscode/src/preview-core.js:7070`)
-  and `" (" + why + ') -- run "' + CONNECT_COMMAND_TITLE + '", or click the database item in the status bar',` (`editor/vscode/src/preview-core.js:7075`).
+  `: s.label ? labelText(s.label) + " is " + (s.phase === "connecting" || s.phase === "prompting" ? "still connecting" : "not connected")` (`editor/vscode/src/preview-core.js:7349`)
+  and `" (" + why + ') -- run "' + CONNECT_COMMAND_TITLE + '", or click the database item in the status bar',` (`editor/vscode/src/preview-core.js:7354`).
   The banner is `e.status === 0 ? e.message :` (`client/src/host/index.ts:335`) plus the status, i.e.
   **`503: not connected (sales-mssql (mssql) @ 127.0.0.1 is not connected) -- run "Ermine: Connect Database", or click the database item in the status bar`**.
   The document below is dimmed (checklist E4). MEASURED on the wire by `TestPreviewDbLive`:
   `{"ok":false,"status":503,"message":"not connected","reason":"not-connected",...}`.
 - **Reconnect:** click the status bar item (or run **Ermine: Connect Database**). The password is
   forgotten, so the box asks again (step 4). After `db: connected ...` the last render is re-sent
-  once, and the line ends `(trigger ? "; re-sending the last render (" + trigger + ")" : ""),` (`editor/vscode/src/preview-core.js:6884`),
+  once, and the line ends `(trigger ? "; re-sending the last render (" + trigger + ")" : ""),` (`editor/vscode/src/preview-core.js:7163`),
   i.e. `; re-sending the last render (reconnected)`. The banner goes.
 
 **If not:** the render after Disconnect draws a document instead of a 503: the disconnect did not
@@ -344,19 +344,19 @@ reach the server. Look for `db: the disconnect request failed (...)` in the chan
 and type something wrong.
 
 **Expect:**
-- The channel: `line: "db: connect " + labelText(s.label) + " FAILED " + cls + " (" + reason + (forget ? ", password forgotten" : ", password kept") +` (`editor/vscode/src/preview-core.js:6922`),
+- The channel: `line: "db: connect " + labelText(s.label) + " FAILED " + cls + " (" + reason + (forget ? ", password forgotten" : ", password kept") +` (`editor/vscode/src/preview-core.js:7201`),
   i.e. `db: connect sales-mssql (mssql) @ 127.0.0.1 FAILED auth (connect-auth, password forgotten; attempt 1/3): login failed for <user> @ <host>: SQLServerException: Login failed for user '<user>'. ClientConnectionId:...`.
   The server builds the message from `"login failed for " + p.user.getOrElse("(no user)") + " @ " + hostAndDatabase(p.dialect, p.url)._1 +` (`core/src/main/scala/com/clarifi/reporting/ermine/lsp/Preview.scala:2111`)
   and then scrubs the user and host out of it. That is why you read `<user> @ <host>`, while the prompt
   said `ermine @ 127.0.0.1` (MEASURED by `TestPreviewDbLive`: answered in 36 ms, class `auth`, `kept:false`).
-- An error notification, `return "Ermine: " + labelText(s.label) + ": " + (s.cls || "connect") + ": " + (s.message || "the connect failed");` (`editor/vscode/src/preview-core.js:7015`),
-  with two buttons, `const CONNECT_RETRY = "Retry";` (`editor/vscode/src/preview-core.js:6380`) and
-  `const CONNECT_DISCONNECT = "Disconnect";` (`editor/vscode/src/preview-core.js:6381`), shown by
-  `vscode.window.showErrorMessage(text, core.CONNECT_RETRY, core.CONNECT_DISCONNECT).then((choice) => {` (`editor/vscode/src/extension.js:3619`).
-- The status bar item: `return { hidden: false, text: "$(database) " + id + ": " + (s.cls === "trace" ? "trace is verbose" : s.cls),` (`editor/vscode/src/preview-core.js:6996`),
+- An error notification, `return "Ermine: " + labelText(s.label) + ": " + (s.cls || "connect") + ": " + (s.message || "the connect failed");` (`editor/vscode/src/preview-core.js:7294`),
+  with two buttons, `const CONNECT_RETRY = "Retry";` (`editor/vscode/src/preview-core.js:6659`) and
+  `const CONNECT_DISCONNECT = "Disconnect";` (`editor/vscode/src/preview-core.js:6660`), shown by
+  `vscode.window.showErrorMessage(text, core.CONNECT_RETRY, core.CONNECT_DISCONNECT).then((choice) => {` (`editor/vscode/src/extension.js:3629`).
+- The status bar item: `return { hidden: false, text: "$(database) " + id + ": " + (s.cls === "trace" ? "trace is verbose" : s.cls),` (`editor/vscode/src/preview-core.js:7275`),
   i.e. **`sales-mssql: auth`**, with a warning colour.
 - With a report picked, the panel gets a banner:
-  `message: connectFailureText(s).replace(/^Ermine: /, "") + ' -- run "' + CONNECT_COMMAND_TITLE + '" to try again',` (`editor/vscode/src/preview-core.js:7029`),
+  `message: connectFailureText(s).replace(/^Ermine: /, "") + ' -- run "' + CONNECT_COMMAND_TITLE + '" to try again',` (`editor/vscode/src/preview-core.js:7308`),
   i.e. `503: sales-mssql (mssql) @ 127.0.0.1: auth: login failed for <user> @ <host>: ... -- run "Ermine: Connect Database" to try again`.
 - **Retry** opens the password box again. Type the right one: step 4's `db: connected ...`, and the
   last render is re-sent. An `auth` failure is never retried automatically, since the password was forgotten (NEW-2 retries only
@@ -376,22 +376,22 @@ sa, then `podman wait`, CONTAINER.md). Then save the params file.
   i.e. `preview: the held connection sales-mssql is gone (connection-lost)`, and answers the render with
   step 9's 503.
 - The extension gets `ermine/preview/disconnected` and logs
-  `line: "db: the server closed the connection of " + labelText(s.label) + " (" + (event.reason || "no reason") + "); reconnecting",` (`editor/vscode/src/preview-core.js:6934`).
+  `line: "db: the server closed the connection of " + labelText(s.label) + " (" + (event.reason || "no reason") + "); reconnecting",` (`editor/vscode/src/preview-core.js:7213`).
   It tries ONE reconnect with the held password (no prompt):
-  `line: "db: connecting " + labelText(label) + " (" + cause + (needsPassword ? ", password held" : ", no user") + ")",` (`editor/vscode/src/preview-core.js:6837`),
+  `line: "db: connecting " + labelText(label) + " (" + cause + (needsPassword ? ", password held" : ", no user") + ")",` (`editor/vscode/src/preview-core.js:7116`),
   i.e. `db: connecting sales-mssql (mssql) @ 127.0.0.1 (disconnected, password held)`.
 - With the server down, that connect fails with class `unreachable`, and the password is KEPT. **Since
   NEW-2 (extension, 2026-09-25 00:22) the extension then retries by itself, never prompting**: after
-  `const RECONNECT_DELAYS_MS = Object.freeze([5000, 15000]);` (`editor/vscode/src/preview-core.js:6676`),
+  `const RECONNECT_DELAYS_MS = Object.freeze([5000, 15000]);` (`editor/vscode/src/preview-core.js:6955`),
   that is 5 s and then 15 s later, three attempts in all. Each failure logs the step 10 line, which now ends
-  `"; attempt " + attempt + "/" + RECONNECT_ATTEMPTS +` (`editor/vscode/src/preview-core.js:6923`), e.g.
+  `"; attempt " + attempt + "/" + RECONNECT_ATTEMPTS +` (`editor/vscode/src/preview-core.js:7202`), e.g.
   `db: connect sales-mssql (mssql) @ 127.0.0.1 FAILED unreachable (connect-unreachable, password kept; attempt 1/3, retrying in 5 s): ...`.
   While a retry is armed, the status bar item reads
-  `return { hidden: false, text: "$(sync) " + id + ": reconnecting (" + s.retry.attempt + "/" + RECONNECT_ATTEMPTS + ")",` (`editor/vscode/src/preview-core.js:6999`),
+  `return { hidden: false, text: "$(sync) " + id + ": reconnecting (" + s.retry.attempt + "/" + RECONNECT_ATTEMPTS + ")",` (`editor/vscode/src/preview-core.js:7278`),
   i.e. **`sales-mssql: reconnecting (2/3)`** and then `(3/3)`. Its tooltip says `retrying automatically, 3 attempts in all`.
   An error notification (with NO Retry button) appears for the first failure and again for the last one,
   not for the one in the middle. A 503 banner shown while a retry is armed says
-  `: s.label && s.phase === "retrying" ? labelText(s.label) + " is reconnecting (attempt " + s.retry.attempt + "/" + RECONNECT_ATTEMPTS + " is armed)"` (`editor/vscode/src/preview-core.js:7069`).
+  `: s.label && s.phase === "retrying" ? labelText(s.label) + " is reconnecting (attempt " + s.retry.attempt + "/" + RECONNECT_ATTEMPTS + " is armed)"` (`editor/vscode/src/preview-core.js:7348`).
   If all three attempts fail, the item settles on **`sales-mssql: unreachable`** and the panel banner is
   `503: sales-mssql (mssql) @ 127.0.0.1: unreachable: ... -- run "Ermine: Connect Database" to try again`.
   The driver's own message text is not captured.
@@ -425,6 +425,57 @@ at xs, if the next thing to run is the `db` gate) and say which one on the board
 Put back what the walkthrough changed: `"ermine.preview.target"` back to `panel`,
 `git checkout -- core/src/test/resources/doc/DbFetchTopN.e` if you edited it, and delete
 `.ermine/preview/DbFetchTopN/` if you do not want the params file.
+
+---
+
+## 13. Preview the trace as an Ermine report
+
+(DB programme S2f, extension 0.1.18. It needs no database: run it before §12's tear-down to see a
+`DbFetchTopN` trace from the profile, or after it on the in-memory SQLite. `Layout.Trace` must be in
+the server you run, so rebuild it first: `sbt core/compile core/copyResources`.)
+
+**Do:** with `DbFetchTopN` → `report` rendered in the panel (step 5), run **Ermine: Preview Render Trace**
+(`"ermine.previewRenderTrace"`, `editor/vscode/src/preview-core.js:5732`).
+
+**Expect:**
+1. **The save.** With no file yet there is no question. The channel says
+   `"replaced " : "wrote "` (`editor/vscode/src/preview-core.js:5952`), i.e. `preview: wrote
+   <workspace>/.ermine/preview/Doc.TraceReport/report.params.json with the trace of render <G>
+   (Doc.TraceReport.report reads it as its parameters)`. The directory is the dotted module name, as
+   for every params file. The file holds the trace's keys in the server's order and nothing else. It
+   is written by `traceParamsText` from `traceParamsOf`, which copies only the keys `Layout.Trace`
+   declares, so a url or a user can never get in.
+2. **The pick.** The panel switches to `Doc.TraceReport.report` through the picker's own tail,
+   `core.TRACE_REPORT_BINDING, listed.module` (`editor/vscode/src/extension.js:3937`). It renders
+   like any report: the queue, the wedge guard and the params watcher all apply.
+3. **The document** (headless, from the captured tier-s trace: `scratch-widget-preview/db/s2f/trace-report-dark.png`):
+   a headline titled `"Render trace, generation "` (`core/src/test/resources/modules/Doc/TraceReport.e:70`) with
+   `Rows 3, Total 51.0, Largest 36.7` under a scope that names them (`Rows = relations, Total = render
+   wall ms, Largest = slowest relation ms`: the wall time includes work outside every relation, so it
+   is more than the relations' 42.4 ms), the caption `db 11.0 ms of 51.0 ms, 3 queries.`, two scorecards
+   `"Time (ms)"` (`core/src/test/resources/modules/Doc/TraceReport.e:76`) (1 wall 51.0, 2 db 11.0, 3 other 40.0,
+   4 queue 0.0; the number keeps the order, since a relation has none) and Rows (1 rows read 399,
+   2 rows used 19, 3 queries 3), a bar chart
+   `"Time by phase (ms)"` (`core/src/test/resources/modules/Doc/TraceReport.e:79`) with the bars `01 session` ...
+   `13 other`, the relations table sorted by Total ms (`$.fetch[1]` 388 read, 8 rows, 36.7 ms, 72%), a pie
+   `"Time by relation"` (`core/src/test/resources/modules/Doc/TraceReport.e:96`) and the SQL table.
+   Both charts are coloured and 320 px tall. (Finding S2f-1, FIXED 2026-09-25: the writers draw
+   Highcharts in styled mode, and the panel now links `javafxwriter.css`, which holds those rules.
+   Before that every chart was a black box: `scratch-widget-preview/db/s2f/old/`.) A black box now
+   means an older extension or a writers folder without `javafxwriter.css`.
+4. **The recursion.** Run **Ermine: Save Render Trace** now (the trace report is picked). Its params
+   file exists, so a modal asks: `now in that file are REPLACED` (`editor/vscode/src/preview-core.js:5892`).
+   **Replace** writes the trace of the trace report's OWN last render (three or more `inline` VALUES
+   relations, no fetch) and the watcher re-renders it. **Cancel** leaves the file byte for byte. If a
+   render answers while the modal is open, nothing is written and the warning starts
+   `a newer render answered (generation ` (`editor/vscode/src/preview-core.js:5882`).
+5. With the trace report not picked, **Save Render Trace** on its own shows the status bar message
+   `" saved for "` (`editor/vscode/src/extension.js:3939`) for 5 s and picks nothing.
+
+**If not:** `the trace report is not in this workspace` means the window has no
+`core/src/test/resources/modules/Doc/TraceReport.e`; `this answer carries no trace` (`editor/vscode/src/preview-core.js:5803`)
+means the answer came from a server from before DB stage 2 (or was built by the extension); a 404
+naming `Layout.Trace` means the server was not rebuilt.
 
 ---
 
