@@ -356,7 +356,7 @@ interface ClientGlobal {
   parseDocument(value: unknown): unknown;
   defaultRegistry(): unknown;
   render(target: Element, doc: unknown, registry: unknown, env: {
-    document: Document; fetchData: (token: string) => Promise<never>; htmlwriter?: unknown;
+    document: Document; fetchData: (token: string) => Promise<never>; htmlwriter?: unknown; idPrefix?: string;
   }): Promise<{ errors: readonly { path: string; widget: string; message: string }[] }>;
 }
 
@@ -596,6 +596,22 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
   let page = initialPage();
   let renders = 0;
   let token = 0;
+  // WP-36 MF-1: the id prefix of the render whose tables the writers still keep
+  // callbacks for.  Each render mints under its own prefix (`ermine_p<token>`),
+  // so a stale callback cannot find a new table by id; `retire` also drops the
+  // stale callbacks, so the writers' list does not grow with every render.
+  let drawnPrefix: string | null = null;
+  const retire = (prefix: string | null): void => {
+    if (prefix === null) return;
+    const hw = win.ermine_htmlwriter as { invalidateRegion?: unknown } | undefined;
+    if (hw && typeof hw.invalidateRegion === "function") {
+      try {
+        (hw.invalidateRegion as (uid: string) => void).call(hw, prefix);
+      } catch (e) {
+        log(`the writers could not drop the replaced render's tables (${prefix}): ${(e as Error)?.message ?? String(e)}`);
+      }
+    }
+  };
   const post = (m: unknown): void => {
     try { api.postMessage(m); } catch { /* nothing to tell: the channel IS the log */ }
   };
@@ -912,6 +928,8 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
     // finishes later writes into a slot that is no longer in the page.
     const slot = doc.createElement("div");
     area.replaceChildren(slot);
+    retire(drawnPrefix);
+    drawnPrefix = null;
     const d = page.host.document;
     if (d === null) return;
     const client = win.ErmineClient;
@@ -934,19 +952,25 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
       fail(`the document could not be read: ${(e as Error)?.message ?? String(e)}`);
       return;
     }
+    const prefix = `ermine_p${mine}`;
+    drawnPrefix = prefix;
     try {
       const result = await client.render(slot, parsed, client.defaultRegistry(), {
         document: doc,
         fetchData: refuseDeferred,
         // read at RENDER time, never at script-evaluation time (§2(e))
         htmlwriter: win.ermine_htmlwriter,
+        idPrefix: prefix,
       });
-      if (mine !== token) return;
+      // replaced while it rendered: the newer render retired this prefix before
+      // this one finished registering, so retire it again (WP-36 MF-1)
+      if (mine !== token) { retire(prefix); return; }
       for (const e of result.errors) log(`widget "${e.widget}" at ${e.path}: ${e.message}`);
       // the tree is attached now (the dispatcher appends it last)
       drawLegacy();
     } catch (e) {
       if (mine === token) fail(`the document could not be rendered: ${(e as Error)?.message ?? String(e)}`);
+      else retire(prefix);
     }
   };
 

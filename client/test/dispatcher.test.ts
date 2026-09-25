@@ -90,6 +90,98 @@ test("(d-layout) the four layout constructors build plain DOM containers", async
   assert.equal(panels[1]?.hasAttribute("hidden"), false);
 });
 
+test("(d-tab-shown) switching to a hidden tab runs the writers' resize once, or fires a window resize without it (WP-36)", async () => {
+  const table = { tag: "Widget", name: "table", props: tableProps };
+  const tabbed = doc({ tag: "Tabbed", tabs: [{ label: "one", content: table }, { label: "two", content: table }] });
+
+  // with runResize: exactly one call per switch to a hidden tab, none for the active one
+  {
+    const { dom, document, target } = newDom();
+    const hw = stubHtmlWriter();
+    let resizes = 0;
+    let events = 0;
+    const withResize = { ...hw, runResize: (): void => { resizes++; } };
+    dom.window.addEventListener("resize", () => { events++; });
+    const result = await render(target, parseDocument(tabbed), defaultRegistry(), { document, fetchData: refusingFetch, htmlwriter: withResize });
+    assert.deepStrictEqual(result.errors, []);
+    assert.equal(hw.calls.length, 2, "both tabs' tables are drawn eagerly");
+    assert.equal(resizes, 0, "nothing runs before a switch");
+    const tabs = target.querySelectorAll(".ermine-tab");
+    (tabs[1] as HTMLElement).click();
+    assert.equal(resizes, 1, "the switch to tab two runs runResize exactly once");
+    (tabs[1] as HTMLElement).click();
+    assert.equal(resizes, 1, "clicking the tab already showing runs nothing");
+    (tabs[0] as HTMLElement).click();
+    assert.equal(resizes, 2);
+    assert.equal(events, 0, "runResize present: no window event");
+  }
+
+  // without runResize: the window sees one resize event per switch
+  {
+    const { dom, document, target } = newDom();
+    let events = 0;
+    dom.window.addEventListener("resize", () => { events++; });
+    await render(target, parseDocument(tabbed), defaultRegistry(), env(document));
+    (target.querySelectorAll(".ermine-tab")[1] as HTMLElement).click();
+    assert.equal(events, 1);
+  }
+
+  // a host's onShown replaces the default and is handed the panel now showing
+  {
+    const { document, target } = newDom();
+    const shown: Element[] = [];
+    await render(target, parseDocument(tabbed), defaultRegistry(), { ...env(document), onShown: (e) => shown.push(e) });
+    (target.querySelectorAll(".ermine-tab")[1] as HTMLElement).click();
+    assert.equal(shown.length, 1);
+    assert.equal(shown[0]?.getAttribute("data-tab"), "1");
+    assert.equal(shown[0]?.hasAttribute("hidden"), false, "called after un-hiding");
+  }
+});
+
+test("(d-rerender-stale) after a re-render, a click on a never-visited tab builds the NEW render's rows only (WP-36 MF-1)", async () => {
+  // A fake of the writers' contract (READ: tables.js:1375-1376, :1598;
+  // ermine-htmlwriter.js:61, :2888): runTabular registers a build callback in a
+  // page-global list; the callback looks its element up BY ID when it runs and
+  // builds once, only if that element is visible; runResize runs every callback.
+  const { document, target } = newDom();
+  const callbacks: (() => void)[] = [];
+  const builds: { render: string; id: string; rows: number }[] = [];
+  let current = "";
+  const fake = {
+    runTabular(args: { id: string; relation: unknown[] }): void {
+      const render = current;
+      let built = false;
+      callbacks.push(() => {
+        const el = document.getElementById(args.id);
+        if (built || !el || !el.isConnected || el.closest("[hidden]")) return;
+        built = true;
+        builds.push({ render, id: args.id, rows: args.relation.length });
+      });
+    },
+    runResize(): void { for (const cb of callbacks) cb(); },
+  };
+  const two = inlineRelation(rel.columns, [["EMEA", 1], ["APAC", 2]]);
+  const one = inlineRelation(rel.columns, [["LATAM", 3]]);
+  const tabbed = (second: unknown) => doc({ tag: "Tabbed", tabs: [
+    { label: "one", content: { tag: "Widget", name: "table", props: { ...tableProps, rows: two } } },
+    { label: "two", content: { tag: "Widget", name: "table", props: { ...tableProps, rows: second } } },
+  ] });
+  const renderAs = async (name: string, second: unknown) => {
+    current = name;
+    const r = await render(target, parseDocument(tabbed(second)), defaultRegistry(), { document, fetchData: refusingFetch, htmlwriter: fake });
+    assert.deepStrictEqual(r.errors, []);
+    fake.runResize(); // the page's first draw builds what is visible
+    return r;
+  };
+  const a = await renderAs("A", two);
+  const b = await renderAs("B", one);
+  assert.notEqual(a.idPrefix, b.idPrefix, "each render mints under its own prefix");
+  builds.length = 0;
+  (target.querySelectorAll(".ermine-tab")[1] as HTMLElement).click();
+  assert.deepStrictEqual(builds.map((x) => [x.render, x.rows]), [["B", 1]],
+    "only render B's table builds, with B's one row; never render A's two");
+});
+
 test("(d-unknown) an unregistered widget renders an error box and does not throw", async () => {
   const { document, target } = newDom();
   const result = await render(target, parseDocument(doc({ tag: "Widget", name: "axisChart", props: {} })),

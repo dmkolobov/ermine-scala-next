@@ -466,6 +466,25 @@ test("(pg-boot-render-once) the DOM re-renders only when the document changes, n
   h.dom.window.close();
 });
 
+test("(pg-retire-prefix) WP-36 MF-1: each render gets its own id prefix, and the next render retires the previous one's with the writers' invalidateRegion", async () => {
+  const h = await harness();
+  const prefixes: (string | undefined)[] = [];
+  const retired: string[] = [];
+  const inner = h.win.ErmineClient!.render;
+  h.win.ErmineClient!.render = async (t, d, r, env) => { prefixes.push((env as { idPrefix?: string }).idPrefix); return inner(t, d, r, env); };
+  (h.win as unknown as Record<string, unknown>)["ermine_htmlwriter"] = { invalidateRegion: (p: string) => { retired.push(p); } };
+  let seq = 0;
+  await h.send(envelopeOf({ answers: okAnswers(1, "a") }, ++seq));
+  assert.deepStrictEqual(retired, [], "nothing to retire before the first render");
+  await h.send(envelopeOf({ answers: okAnswers(2, "b") }, ++seq));
+  assert.equal(prefixes.length, 2);
+  assert.ok(prefixes[0] && prefixes[1] && prefixes[0] !== prefixes[1], JSON.stringify(prefixes));
+  assert.deepStrictEqual(retired, [prefixes[0]], "the second render retired the first's prefix, once");
+  await h.send(envelopeOf({}, ++seq));
+  assert.deepStrictEqual(retired, [prefixes[0], prefixes[1]], "clearing the document retires the last render's too");
+  h.dom.window.close();
+});
+
 test("(pg-boot-banner) banner, dimming and the ONE button come from presentation(); Restart posts the intent", async () => {
   const h = await harness();
   let seq = 0;

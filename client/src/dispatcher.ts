@@ -31,8 +31,45 @@ export interface RenderEnv {
    *  native widgets are registered. */
   htmlwriter?: unknown;
   /** Prefix for the DOM ids widgets mint (the legacy renderers address tables by
-   *  id).  Defaults to "ermine". */
+   *  id).  MUST differ from every earlier render's on the same page (WP-36 MF-1:
+   *  the writers keep each table's build callback in a page-global list and look
+   *  its element up by id, so a reused id lets an OLD render's callback draw its
+   *  rows into a NEW table).  Defaults to `ermine_r<N>`, N counting renders in
+   *  this module, so the default is unique per page. */
   idPrefix?: string;
+  /** WP-36.  Called when a container un-hides content it rendered hidden (today:
+   *  a `tabbed` tab switch), with the element now showing.  Absent, the default
+   *  is `contentShown`'s: run the legacy writers' resize pass.  A host overrides
+   *  it only to observe or replace that pass. */
+  onShown?: (shown: Element) => void;
+}
+
+/** WP-36.  The ONE "content shown" hook: every container that renders content
+ *  hidden and later shows it calls this after un-hiding.  Why it exists: the
+ *  legacy table builds its DataTable ONLY while its element is visible
+ *  (ermine-writers tables.js:1375-1376 `if (isVisible(...))`), registering the
+ *  build as a resize callback (tables.js:1598); a table drawn inside a hidden
+ *  tab keeps its placeholder row until something runs those callbacks.  The
+ *  writers' `runResize` (ermine-htmlwriter.js:2888, exported :3568) runs them.
+ *  A table already built takes the callback's `isInit` branch (tables.js:1377),
+ *  which only resizes, so calling this on every switch rebuilds nothing twice
+ *  WITHIN one render.  Across renders the ids differ (`idPrefix`), so an older
+ *  render's callback finds no element and draws nothing, and the preview host
+ *  also retires the older render's callbacks (`invalidateRegion`, WP-36 MF-1).
+ *  Without a `runResize` export the fallback is a window `resize` event, which
+ *  the writers debounce 100 ms into the same `runResize` (ermine-htmlwriter.js:3521). */
+export function contentShown(env: RenderEnv, shown: Element): void {
+  if (env.onShown) {
+    env.onShown(shown);
+    return;
+  }
+  const hw = env.htmlwriter as { runResize?: unknown } | undefined;
+  if (hw && typeof hw.runResize === "function") {
+    (hw.runResize as () => void)();
+    return;
+  }
+  const win = env.document.defaultView;
+  if (win) win.dispatchEvent(new win.Event("resize"));
 }
 
 export interface WidgetContext {
@@ -75,7 +112,13 @@ export interface RenderError {
 
 export interface RenderResult {
   errors: RenderError[];
+  /** The id prefix this render minted under (WP-36 MF-1): a host retires it
+   *  with the writers' `invalidateRegion` when the render is replaced. */
+  idPrefix: string;
 }
+
+/** Renders so far in this module, for the default id prefix (WP-36 MF-1). */
+let renderSeq = 0;
 
 const ERROR_CLASS = "ermine-widget-error";
 
@@ -109,12 +152,12 @@ export async function render(
 ): Promise<RenderResult> {
   const errors: RenderError[] = [];
   let counter = 0;
-  const prefix = env.idPrefix ?? "ermine";
+  const prefix = env.idPrefix ?? `ermine_r${++renderSeq}`;
   const uid = (): string => `${prefix}_${++counter}`;
   target.innerHTML = "";
   const root = await renderNode(doc.root, "$.root", registry, env, errors, uid);
   target.appendChild(root);
-  return { errors };
+  return { errors, idPrefix: prefix };
 }
 
 async function renderNode(
@@ -202,12 +245,15 @@ async function renderTabbed(
     panels.appendChild(panel);
 
     button.addEventListener("click", () => {
+      const wasHidden = panel.hasAttribute("hidden");
       for (const b of Array.from(bar.children)) b.classList.remove("ermine-tab-active");
       button.classList.add("ermine-tab-active");
       for (const p of Array.from(panels.children)) {
         if (p.getAttribute("data-tab") === String(i)) p.removeAttribute("hidden");
         else p.setAttribute("hidden", "hidden");
       }
+      // WP-36: the legacy tables in a tab drawn hidden build only now.
+      if (wasHidden) contentShown(env, panel);
     });
   }
   return wrapper;

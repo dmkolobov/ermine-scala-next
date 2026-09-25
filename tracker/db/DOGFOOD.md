@@ -193,8 +193,8 @@ document equals the in-memory original's, apart from row order (MEASURED, `TestD
    (`core/src/test/resources/doc/DbFetchTopN.e:58`), drawn by the legacy writers. With `keep` 0 it has
    ONE slice, `Other`, the whole of tier s: **1,051,094.22**. (b) An error box, and that is expected:
    `, rawWidget "metTargets" met ])))` (`core/src/test/resources/doc/DbFetchTopN.e:63`) has no renderer,
-   so the box says `` title.textContent = `widget "${widget}" could not be rendered`; `` (`client/src/dispatcher.ts:88`)
-   with the reason `` : fail(`no renderer is registered under that name`); `` (`client/src/dispatcher.ts:253`).
+   so the box says `` title.textContent = `widget "${widget}" could not be rendered`; `` (`client/src/dispatcher.ts:131`)
+   with the reason `` : fail(`no renderer is registered under that name`); `` (`client/src/dispatcher.ts:299`).
    Its value (1 at tier s) is in the JSON tab.
 4. **Set `keep` to 2** in the params file and save. You get ONE re-render (checklist B8). The pie has
    three slices. At tier **s** (read with `scripts/db.sh sql` at 00:1x on 2026-09-25):
@@ -266,7 +266,7 @@ between keep 2 and keep 3: `keep` is applied in Ermine, after the scan (`take (k
 
 ## 8. The Trace view: what the database did for this render
 
-**Do:** in the panel's toolbar click **Trace**. The button is `showTrace = control("Trace", "trace");` (`client/src/host/page.ts:668`),
+**Do:** in the panel's toolbar click **Trace**. The button is `showTrace = control("Trace", "trace");` (`client/src/host/page.ts:684`),
 beside Document and JSON.
 
 **Expect** (the numbers are from server-trace's MEASURED `DbFetchTopN {"keep":2}` at tier s,
@@ -277,20 +277,20 @@ OBSERVABILITY.md §4, n=1. Yours will differ):
    line: **`sales-mssql (mssql) @ 127.0.0.1 / ErmineSales`**. The host comes from the extension's held
    connection (extension role, board 00:10), and the database from the server's trace.
 3. **The phase bar**: the blue `db` segment first, then the other phases (`session`, `eval`, `scan`,
-   ...). A segment gets a text label only when it is at least 12% wide: `sg.pct >= 12 ?` (`client/src/host/page.ts:814`).
+   ...). A segment gets a text label only when it is at least 12% wide: `sg.pct >= 12 ?` (`client/src/host/page.ts:830`).
    The legend below it lists every segment. At tier s most of the 40 ms outside the database is `scan`
    (30.7 ms): Ermine grouping 388 rows into 8 regions, because `groupBy ... (sumBy ...)` is a `Mem`
    and is not pushed into the SQL (OBSERVABILITY.md §9, finding 1).
-4. **The table.** Its headers come from `for (const [h, cls] of [["#", "num"], ["relation", ""], ["delivery", "opt"], ["rows", "num"], ["scanned", "num"],` (`client/src/host/page.ts:833`),
+4. **The table.** Its headers come from `for (const [h, cls] of [["#", "num"], ["relation", ""], ["delivery", "opt"], ["rows", "num"], ["scanned", "num"],` (`client/src/host/page.ts:849`),
    so: `#, relation, delivery, rows, scanned, db, total, dialect, share`. The rows are `$.fetch[1]`
    (fetched, rows 8, scanned **388**), `$.fetch[2]` (fetched, 8 and 8) and `$.children[0].props.pieRows`
-   (inline, 3 and 3). Under `$.fetch[1]` a note says `rows; Ermine reduced them to ${formatCount(q.rows)}` (`client/src/host/page.ts:871`),
+   (inline, 3 and 3). Under `$.fetch[1]` a note says `rows; Ermine reduced them to ${formatCount(q.rows)}` (`client/src/host/page.ts:887`),
    i.e. `the database returned 388 rows; Ermine reduced them to 8`.
-5. **The SQL.** Click `SQL · ${formatCount(bytes)} bytes` (`client/src/host/page.ts:881`) under `$.fetch[1]`
+5. **The SQL.** Click `SQL · ${formatCount(bytes)} bytes` (`client/src/host/page.ts:897`) under `$.fetch[1]`
    (`SQL · 182 bytes` in the example). The SQL appears in a grey box with a
-   `const copy = el("button", "ermine-trace-copy", "Copy");` (`client/src/host/page.ts:769`) button. Click
-   **Copy**. The button reads `clip.writeText(text).then(() => { button.textContent = "Copied"; },` (`client/src/host/page.ts:750`),
-   or, when the webview has no clipboard, `button.textContent = "Selected: press Ctrl+C";` (`client/src/host/page.ts:744`).
+   `const copy = el("button", "ermine-trace-copy", "Copy");` (`client/src/host/page.ts:785`) button. Click
+   **Copy**. The button reads `clip.writeText(text).then(() => { button.textContent = "Copied"; },` (`client/src/host/page.ts:766`),
+   or, when the webview has no clipboard, `button.textContent = "Selected: press Ctrl+C";` (`client/src/host/page.ts:760`).
    Paste it into `scripts/db.sh sql ErmineSales "<paste>"`: it prints `(388 rows affected)` at tier s,
    the `scanned` cell. The example's SQL is
    `select ([t1030144].[amount]) [amount], ... from [sales] [t1030144] order by [t1030144].[region] asc`.
@@ -476,6 +476,38 @@ the server you run, so rebuild it first: `sbt core/compile core/copyResources`.)
 `core/src/test/resources/modules/Doc/TraceReport.e`; `this answer carries no trace` (`editor/vscode/src/preview-core.js:5803`)
 means the answer came from a server from before DB stage 2 (or was built by the extension); a 404
 naming `Layout.Trace` means the server was not rebuilt.
+
+---
+
+## 14. The tabs: every tab's table has its rows
+
+(WP-36, client bundle only: rebuild it with `npm run bundle` in `client/`. Checklist item E16 is the
+same check on the in-memory `FetchTabs`.)
+
+**Do:** with the profile connected, **Ermine: Preview Report...** →
+`core/src/test/resources/doc/DbFetchTabs.e` → `report`. Click the SECOND tab, then each of the others.
+
+**Expect:** a tab per region (eight at tier s: `china` ... `us-west`). Each tab's table has its rows
+as soon as its tab is clicked. Headless at tier s the counts were 160, 64, 84, 108, 82, 90, 110 and 78
+`tbody tr` (`scratch-widget-preview/db/wp36/run-after.log`, MEASURED): each is twice the tab's rows
+in the document (80, 32, 42, 54, 41, 45, 55, 39), because the writers draw two `dataTable`s per
+table (the body and the row-header copy), each holding every row (MEASURED, same harness). The click runs
+`if (wasHidden) contentShown(env, panel);` (`client/src/dispatcher.ts:256`), and that runs the writers'
+resize pass, `(hw.runResize as () => void)();` (`client/src/dispatcher.ts:68`), which builds a table
+drawn while its tab was hidden.
+
+**Then re-render:** click the first tab, flip `showUnits` in the params file and save. After the
+re-render, click a tab you have not clicked since. **Expect:** that tab shows the NEW render's rows only
+(the `Units` column follows the new params), never the previous render's rows stacked above them. Each
+render mints its ids under its own prefix, `ermine_p${mine}` (`client/src/host/page.ts:955`), and
+retires the previous render's writers callbacks, `retire(drawnPrefix);` (`client/src/host/page.ts:931`)
+(WP-36 MF-1; headless: `scratch-widget-preview/db/wp36/review-rerender-after.log`, 10 `tbody tr` in 2
+tables for a 5-row tab, where the unfixed build drew 96 in 3 with the old dates,
+`scratch-widget-preview/db/wp36/review-rerender.log`).
+
+**If not:** a non-first tab showing ONE row that reads `...`, and keeping it after the click, is the
+WP-36 bug: the bundle is from before WP-36 (`scratch-widget-preview/db/wp36/run-before.log` shows
+160 then 1 for every other tab).
 
 ---
 

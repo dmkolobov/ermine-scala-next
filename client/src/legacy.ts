@@ -111,6 +111,15 @@ export interface HtmlWriter {
   getScrollbarDimensions?(): { sbw: number; sbh: number };
   showFullPrimaryColumn?(): boolean;
   tableScrollable?(): boolean;
+  /** WP-36.  Re-runs every registered update callback (ermine-htmlwriter.js:2888,
+   *  exported :3568); a table drawn while hidden builds on the first run that
+   *  finds it visible.  Called by the dispatcher's `contentShown`. */
+  runResize?(): void;
+  /** WP-36 MF-1.  Drops everything the writers keep for ids `uid` and `uid_*`,
+   *  the update callbacks included (ermine-htmlwriter.js:3036, :3095 calls
+   *  `trimUpdateCallbacksPfx`; exported :3601).  The preview host calls it
+   *  with a replaced render's `idPrefix`. */
+  invalidateRegion?(uid: string): void;
 }
 
 // ------------------------------------------------------- the legacy formats

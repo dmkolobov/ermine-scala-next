@@ -526,6 +526,18 @@ a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
 
+### 0.1.19
+
+**WP-36: a tabbed report's hidden tabs now get their rows** (no setting). The
+legacy writers build a table only while its element is visible, and the panel
+renders every tab at once with all but the first hidden, so a table in a
+hidden tab kept its placeholder row until a window resize happened to run the
+writers' rebuild. Switching to a tab now runs that rebuild for the tables it
+reveals, and each render draws under its own id prefix (the replaced render's
+writer callbacks are retired), so a rebuild after a re-render can never draw
+the previous snapshot's rows. Client bundle only; the extension's own code is
+unchanged.
+
 ### 0.1.18
 
 **WP-35 S2f: the trace as an Ermine report** (no setting, no new widget).
