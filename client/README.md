@@ -242,6 +242,45 @@ error).
 `(pg-json-render-while-json)`, `(pg-json-state)`, `(pg-json-text-only)` and `(pg-json-css)`
 pin this.
 
+**The Trace view** (WP-35's panel half, DB programme S2d, 2026-09-24). The toolbar's third
+button, **Trace**, shows what the last current render did, from the `trace` the server appends
+to every render answer (`scratch-widget-preview/db/DESIGN-OBSERVABILITY.md` §2). It is
+viewer-local like JSON (`restoredView` accepts `"trace"`), draws on the same white paper, and
+needs no setting.
+
+- **Where it comes from.** The extension's `traceOf` normalises the answer's `trace` and sends
+  it as the reducer's tenth kind, `{kind: "trace", trace, generation}`, right after the answer
+  pair in every snapshot. The reducer keeps it opaque and drops it when a `render` of another
+  generation arrives; it moves no banner and dims nothing.
+- **What it shows**, top to bottom: the headline (`render 412 ms: db 310 ms (75%), 2 queries,
+  396 rows · generation 12`); `from the failed render (generation n), status s` when the trace
+  came with an error; the connection (`sales-mssql (mssql) @ 127.0.0.1 / ErmineSales`, or
+  `in-memory sqlite (per render: memo tables are rebuilt every time)`); a phase bar drawn with
+  CSS widths only (db first, then the other phases in the server's order, then `other`;
+  widths sum to 100%; a segment is labelled when it is at least 12% wide and always has a
+  tooltip; a legend lists them all); a table with one row per relation (#, relation,
+  delivery, rows, scanned, db, total, dialect, and a bar scaled to the slowest); under each,
+  its SQL in a `<details>` holding a `<pre>` filled by `textContent` and a **Copy** button,
+  plus its setup statements and notes (deferred, "the database returned N rows; Ermine reduced them to M", over threshold, failed).
+- **Stuck.** A watchdog answer carries a partial trace: `stuck: partial trace, 60,001 ms so
+  far: ...`, then "partial: the watchdog answered before the render finished; this is what had
+  run, and this query was still running: $.fetch[1] (for 59,800 ms)" and that query's SQL.
+- **No trace.** After an answer without one: "no trace: this answer carried none (a server
+  from before DB stage 2 sends none)", or, after a failure, "no trace: the render did not
+  reach the server (or the server sends none)".
+- **Copy.** `navigator.clipboard.writeText` when the webview offers it ("Copied"); otherwise
+  the SQL is selected ("Selected: press Ctrl+C") and one line goes to the output channel.
+- **Colours**, fixed because the view is on paper: text #222 and #555 on #fff, segment labels
+  white on #0b5cad / #4d5761 / #646e78, `other` #222 on #e4e7ea, notes #4a3700 on #fff4ce.
+  MEASURED in a headless harness (`scratch-widget-preview/db/panel-trace/trace.js`): every
+  text element 5.19:1 or more in both themes (the lowest: white on the #646e78 segment). Under 560px wide the delivery, dialect and share
+  columns are hidden, so a 390px panel has no horizontal page scroll.
+
+`(h-trace-kind)`, `(h-trace-clears)` and `(pg-trace-toolbar)`, `(pg-trace-headline)`,
+`(pg-trace-bar)`, `(pg-trace-rows)`, `(pg-trace-sql-text)`, `(pg-trace-copy)`,
+`(pg-trace-partial)`, `(pg-trace-generation)`, `(pg-trace-stable)`, `(pg-trace-contrast)`, `(pg-trace-real)` pin
+this.
+
 **`gate_client`** (`scripts/gates.sh`, nightly tier since WP-10 S3) runs `npm test` here and
 prints one `SUMMARY <n> tests, <p> pass, <f> fail, <s> skipped` line. Without
 `node_modules` it is UNAVAILABLE (exit 3), not FAIL; a skip is counted, a failure fails it.

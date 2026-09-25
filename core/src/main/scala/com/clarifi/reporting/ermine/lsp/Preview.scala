@@ -2,6 +2,7 @@ package com.clarifi.reporting.ermine.lsp
 
 import java.nio.file.Path
 
+import com.clarifi.reporting.RenderTrace
 import com.clarifi.reporting.backends.{ Backends, Runners }
 import com.clarifi.reporting.ermine.json.{ Request => RunRequest, Runner, RunnerConfig }
 import com.clarifi.reporting.ermine.parsing.{ ErParseState, ModuleParsers }
@@ -26,7 +27,7 @@ import scalaparsers.Supply
   *
   * | state | thread | how it is safe |
   * |---|---|---|
-  * | `runner`, `delegating`, `rootsInUse`, `headerSupply`, `armed` | THE PREVIEW THREAD ALONE | never read or written anywhere else; no lock, because there is no second reader.  `SessionEnv` is not thread-safe and this is the whole reason the thread exists (§2.3).  `armed` is the watchdog task this thread scheduled: only this thread arms and disarms one, and the TIMER thread never touches the field, only the task object it was handed |
+  * | `runner`, `delegating`, `rootsInUse`, `headerSupply`, `armed`, and WP-13's `active`, `disconnected`, `connectSeq` | THE PREVIEW THREAD ALONE | never read or written anywhere else; no lock, because there is no second reader.  `SessionEnv` is not thread-safe and this is the whole reason the thread exists (§2.3).  `armed` is the watchdog task this thread scheduled: only this thread arms and disarms one, and the TIMER thread never touches the field, only the task object it was handed |
   * | `jobs`, `inFlight`, `cancelledInFlight`, `stopping`, `answeredInFlight`, `stuck`, `stuckWhy`, `stuckJob` | dispatch thread posts and cancels, preview thread consumes, TIMER thread fires | every access is inside `lock.synchronized`; the monitor is also the wait/notify channel.  Nothing that can block on the client -- an `Rpc.Answer`, a `notify` -- is ever called while holding it.  `answeredInFlight` moved under the lock in stage B: the watchdog answers from the timer thread, so the one-shot flag has a second writer and the log line `Rpc.deferredRequest` prints for a second answer is what it exists to keep out |
   * | `dirtyGeneration` | bumped by the dispatch thread, read by both | an `AtomicLong`.  It is the `stale` hint of §2.5 and nothing else depends on its value |
   * | `sessionUp`, `bootToken` | written by the preview thread, read by the dispatch thread | `@volatile`.  They are the ONLY thing the dispatch side learns about the render session, and it learns exactly one bit: "is there a session, so will the job I am about to enqueue boot one?" (§2.5's progress rule -- the `create` request is the dispatch thread's, the `$/progress` notifications the preview thread's).  A stale read costs at most one progress token that is never begun, never a wrong answer |
@@ -68,7 +69,11 @@ final class Preview(moduleRoots: () => List[String],
     * parameter is called `rawLog`: rule A5 is structural here rather than a
     * thing each call site has to remember (M2 of the WP-5 stage A review --
     * three lines had forgotten). */
-  private def log(s: String): Unit = rawLog(scrubUrls(s))
+  // ===== WP-13 profile (server-profile) =====
+  // Rule A10: the active profile's url, user and host join the scrub of
+  // every line, on whichever thread logs it (`scrubTerms` is volatile).
+  private def log(s: String): Unit = rawLog(scrubProfile(scrubUrls(s)))
+  // ===== end WP-13 profile =====
 
   // ------------------------------------------------------------------ queue
 
@@ -481,6 +486,45 @@ final class Preview(moduleRoots: () => List[String],
     * is never contended. */
   private lazy val headerSupply: Supply   = Supply.create
 
+  // ===== WP-13 profile (server-profile) =====
+  // tracker/db/SERVER.md §2.3 and §5.  THE HELD CONNECTION.  `active`,
+  // `disconnected` and `connectSeq` are PREVIEW THREAD ONLY, like `runner`:
+  // only the `Connect`/`Disconnect` jobs, `ensureSession`, `doRender`'s
+  // liveness check and `loop`'s exit read or write them.
+  //
+  //  - `active == null && !disconnected`: the implicit `local` profile,
+  //    stage A's per-run in-memory SQLite, exactly as before WP-13;
+  //  - `active != null`: a profile connected, its `Connection` HELD, and
+  //    the render session's delegate points at it
+  //    (`Runners.fromPersistentConnection`);
+  //  - `disconnected`: an `ermine/preview/disconnect` (or a held connection
+  //    found dead) happened and no `connect` has succeeded since: every
+  //    render answers 503 "not connected" with reason `not-connected`
+  //    (Q-S2 (a)); a schema still works (it scans nothing).
+  //
+  // THE HELD CONNECTION IS OWNED HERE AND NOT BY THE DELEGATE, so
+  // `discardSession` -- which runs UNWATCHED on Q10's recovery path --
+  // still closes nothing and cannot block (WP-14's S3 note).  Closes happen
+  // in `closeOffThread`, bounded by `CloseWaitMillis`.
+  private var active: Active      = null
+  private var disconnected        = false
+  private var connectSeq          = 0L
+
+  /** The profile scrub (A10): `(pattern, placeholder)` pairs for the active
+    * (or last attempted) profile's url, user and host.  Written by the
+    * preview thread, read by every thread that logs, hence volatile. */
+  @volatile private var scrubTerms: List[(scala.util.matching.Regex, String)] = Nil
+
+  /** A10 over one string: the active profile's url, user and host. */
+  private[reporting] def scrubProfile(s: String): String = applyScrub(scrubTerms, s)
+
+  /** For server-trace's connection line (DESIGN-OBSERVABILITY §5):
+    * `(id, dialect, seq)` of the held profile, or `None` for the implicit
+    * in-memory `local`.  PREVIEW THREAD ONLY. */
+  private[reporting] def activeConnection: Option[(String, String, Long)] =
+    Option(active) map (a => (a.profile.id, a.profile.dialect, a.seq))
+  // ===== end WP-13 profile =====
+
   // -------------------------------------------------------- the dispatch side
 
   /** `ermine/render` (§4), from the dispatch thread.  Parses the request,
@@ -622,6 +666,48 @@ final class Preview(moduleRoots: () => List[String],
         }
         answerAll("schema", acted)
     }
+
+  // ===== WP-13 profile (server-profile) =====
+  /** `ermine/preview/connect {profile: {id, dialect, url, user?, driver?,
+    * scanner?}, password?}` (§4, SERVER.md §2), from the dispatch thread.
+    *
+    * VALIDATION HAPPENS HERE, BEFORE ANY SOCKET and before the queue
+    * (`ConnectRequest.parse`): a malformed profile, an unknown dialect, a
+    * URL whose subprotocol disagrees with the dialect, a URL carrying
+    * credentials (A9), a relative or missing `jdbc:sqlite:` file (Q-S5 (b))
+    * are answered at once with class `profile`.  A valid request becomes a
+    * `Connect` QUEUE JOB, so it runs after the render in flight and before
+    * the render the extension re-sends on `ok` (§7.2's switch sequence).
+    * Not "latest wins": a connect is not a render, and dropping one would
+    * leave a request unanswered.  The body is redacted in the wire log
+    * (`Rpc.Redacted`, WP-1) and nothing here logs it. */
+  def connect(id: Json, params: Json, answer: Rpc.Answer): Unit =
+    ConnectRequest.parse(params) match {
+      case Left(why) =>
+        log("preview: connect refused before any socket: " + why)
+        answer(Right(connectFailure(ClassProfile, why, kept = true)))
+      case Right(req) => enqueueAnswering("connect", Connect(id, req, answer))
+    }
+
+  /** `ermine/preview/disconnect {}` -> `{ok: true}`, a queue job for the
+    * same ordering reason as `connect`. */
+  def disconnect(id: Json, params: Json, answer: Rpc.Answer): Unit =
+    enqueueAnswering("disconnect", Disconnect(id, answer))
+
+  /** `schema`'s enqueue, shared by the two profile jobs: refused while
+    * dead, stopping or stuck (the stuck refusal carries Q8's marker). */
+  private def enqueueAnswering(what: String, job: Answering): Unit = {
+    val acted = lock.synchronized {
+      if (!alive)        refuse(job, Left((Rpc.InternalError, "the preview thread is not running")),
+                                 "the preview thread is not running")
+      else if (stopping) refuse(job, Left((Rpc.RequestCancelled, "the preview is shutting down")),
+                                "the preview is shutting down")
+      else if (stuck)    refuse(job, Right(job.stuckRefusal(stuckWhy)), stuckWhy)
+      else { jobs.enqueue(job); lock.notifyAll(); Nil }
+    }
+    answerAll(what, acted)
+  }
+  // ===== end WP-13 profile =====
 
   /** One refusal, in the shape `render` and `schema` both collect.  The
     * reason is PASSED, not recovered from the answer (review nit 2): only
@@ -897,12 +983,26 @@ final class Preview(moduleRoots: () => List[String],
         // that holds a job on a latch in the seam is holding it INSIDE the
         // watched window, which is what makes the watchdog testable at all.
         job match { case a: Answering => arm(a); case _ => () }
+        // ===== S2b trace (server-trace) =====
+        // the render's trace starts HERE, as the job leaves the queue (its
+        // queue time ends) and inside the watched window, with the
+        // connection this job will use (a connect is a job of its own, so
+        // it cannot change under a running render)
+        job match {
+          case r: Render => r.trace.start(); r.trace.connection = traceConnection()
+          case _         => ()
+        }
+        // ===== end S2b trace =====
         beforeJob(job)
         job match {
           case r: Render        => doRender(r)
           case s: Schema        => doSchema(s)
           case Invalidate(ps)   => doInvalidate(ps)
           case DiscardSession   => discardSession("asked to")
+          // ===== WP-13 profile (server-profile) =====
+          case c: Connect       => doConnect(c)
+          case d: Disconnect    => doDisconnect(d)
+          // ===== end WP-13 profile =====
         }
       } catch {
         case e: Throwable =>
@@ -1245,6 +1345,11 @@ final class Preview(moduleRoots: () => List[String],
       alive = false
       guard(lock.synchronized { stopping = true })
       guard(drainOnDeath())
+      // ===== WP-13 profile (server-profile) =====
+      // The held connection ends with the thread that owns it (bounded).
+      guard(if (active != null) { val a = active; active = null
+                                  closeOffThread(a.conn, "the held connection of " + a.profile.id) })
+      // ===== end WP-13 profile =====
       guard(log("preview: thread stopped"))
     }
   }
@@ -1481,7 +1586,16 @@ final class Preview(moduleRoots: () => List[String],
     * with `doSchema`; what is left here is the connection, the document and
     * the size cap. */
   private def doRender(r: Render): Unit =
-    placeAndSession(r.req.uri, r.req.roots, r.progress, r) match {
+    // ===== WP-13 profile (server-profile) =====
+    // Q-S2 (a): after a disconnect, or a held connection found dead, every
+    // render is the 503 with reason `not-connected` -- answered BEFORE the
+    // placement and the boot, so a disconnected preview costs no boot.
+    if (!heldConnectionUsable())
+      finish(r, failure(r.req.generation, 503, NotConnectedMessage, None, Some(Reason.NotConnected)))
+    else
+    // ===== end WP-13 profile =====
+    // S2b trace (server-trace): `boot` when this job booted the session, `session` otherwise
+    tracedSession(r)(placeAndSession(r.req.uri, r.req.roots, r.progress, r)) match {
       case Left(no)      => finish(r, failure(r.req.generation, no.status, no.message, None, no.reason))
       case Right(module) =>
         // §4 / §7.2: WP-13's `disconnect` leaves the delegate unset and
@@ -1496,11 +1610,14 @@ final class Preview(moduleRoots: () => List[String],
         // is the `disconnect` job, and that ticket owns the property
         // that pins the 503.
         if (!delegating.connected)
-          finish(r, failure(r.req.generation, 503, "not connected", None))
+          // WP-13: reachable now (a schema booted the session while
+          // disconnected, then a connect raced nothing -- or a future path
+          // clears the delegate); the same 503 and reason as above.
+          finish(r, failure(r.req.generation, 503, NotConnectedMessage, None, Some(Reason.NotConnected)))
         else {
           val body = "{\"" + RunRequest.Params + "\":" + Json.print(r.req.params) + "}"
           val out  = new java.lang.StringBuilder
-          runner.renderText(module, r.req.binding, body, out) match {
+          runner.renderText(module, r.req.binding, body, out, r.trace) match { // S2b trace (server-trace): (the trace argument)
             case Left(e) =>
               // DD-1: the ONE place a render learns that the EVALUATION
               // failed.  `>= 500` is `Runner`'s `Failed`; see `evalFailed`
@@ -1517,13 +1634,14 @@ final class Preview(moduleRoots: () => List[String],
               // to parse -- and counted over the `StringBuilder` the
               // writer filled, without materialising a second copy of
               // a document that is by hypothesis too big.
-              val bytes = utf8Length(out)
+              val bytes = r.trace.phase("check")(utf8Length(out)) // S2b trace (server-trace)
+              r.trace.documentBytes(bytes)
               val cap   = maxDocumentBytes
               if (bytes > cap)
                 finish(r, failure(r.req.generation, 500,
                   "document too large for the panel: " + bytes +
                   " bytes exceeds ermine.preview.maxDocumentBytes (" + cap + ")", None))
-              else Json.parse(out.toString) match {
+              else r.trace.phase("check")(Json.parse(out.toString)) match { // S2b trace (server-trace)
                 case Left(why) =>
                   finish(r, failure(r.req.generation, 500,
                     "the rendered document is not JSON: " + why, None))
@@ -1844,8 +1962,14 @@ final class Preview(moduleRoots: () => List[String],
     else unwatched(job) { beginProgress(progress) {
       val t0  = System.nanoTime
       val del = new DelegatingRun
-      Backends.scannerFor(StageABackend, "default") match {
-        case Left(why) => Left("no scanner for " + StageABackend + ": " + why)
+      // ===== WP-13 profile (server-profile) =====
+      // The dialect and variant come from the HELD profile when there is
+      // one, else stage A's implicit `local` (SERVER.md §2.3).
+      val (dialect, variant) =
+        if (active != null) (active.profile.dialect, active.profile.scanner) else (StageABackend, "default")
+      // ===== end WP-13 profile =====
+      Backends.scannerFor(dialect, variant) match {
+        case Left(why) => Left("no scanner for " + dialect + ": " + why)
         case Right(sc) =>
           // ================= THE BACKEND SEAM (WP-13 / WP-14) =================
           // Stage A wires the ONE backend `core/src/test/resources/doc/Sales.e`
@@ -1863,7 +1987,16 @@ final class Preview(moduleRoots: () => List[String],
           // WP-14 adds `disconnect`/recycle, which CLOSE what `clear()`
           // returns.  Nothing else in this file knows what is behind the
           // delegate; the 503 above is the one place that asks.
-          del.use(Runners.SQLite(StageAUrl))
+          //
+          // ===== WP-13 profile (server-profile): BUILT =====
+          // A held profile: the delegate's target is its connection, never
+          // closed by a run (`fromPersistentConnection`), never a
+          // per-request login (`DB.RunUser` is not the tool, §7.2).  No
+          // profile and never disconnected: stage A's line, unchanged.
+          // Disconnected: the delegate stays UNSET, so a schema boots and
+          // answers while a render is the 503.
+          if (active != null) del.use(Runners.fromPersistentConnection(active.conn))
+          else if (!disconnected) del.use(Runners.SQLite(StageAUrl))
           // ====================================================================
           val r = new Runner(RunnerConfig(roots = roots, run = del, scanner = sc))
           r.bootFailure match {
@@ -1908,9 +2041,11 @@ final class Preview(moduleRoots: () => List[String],
 
   private def discardSession(why: String): Unit = {
     if (runner != null) log("preview: discarding the render session (" + why + ")")
-    // WP-14: the connection a `connect` opened is closed here, from what
-    // `clear()` answers.  Stage A's target opens one connection per run and
-    // closes it again, so there is nothing to close.
+    // WP-13 AS BUILT: this still closes NOTHING.  The held connection is
+    // owned by `active` and closed only by `doConnect` (the previous one),
+    // `doDisconnect`, `dropActive` and `loop`'s exit, each through
+    // `closeOffThread`'s bounded wait -- so this method, which Q10's
+    // recovery runs UNWATCHED, cannot block on a dead socket (WP-14 S3).
     if (delegating != null) delegating.clear()
     runner = null; delegating = null; rootsInUse = Nil
     // The dispatch thread's one bit (§2.5's progress rule): cleared LAST,
@@ -1918,6 +2053,138 @@ final class Preview(moduleRoots: () => List[String],
     // will really pay.
     sessionUp = false
   }
+
+  // ===== WP-13 profile (server-profile) =====
+
+  /** `ermine/preview/connect` on the preview thread.  The request was
+    * validated on the dispatch thread (`ConnectRequest.parse`); what is left
+    * can only be learnt by trying: the driver class, the socket, the login.
+    *
+    * THE PASSWORD goes into a `Properties` entry for `getConnection` and is
+    * referenced by nothing in this file afterwards; the job object holding
+    * the request is dropped when the job ends.  The driver's `Connection`
+    * keeps it until closed (*external*, §7.2) -- true of the heap, not of
+    * this code.
+    *
+    * ON FAILURE nothing changes: a held connection stays held, a
+    * disconnected preview stays disconnected.  ON SUCCESS the previous
+    * connection is closed off-thread with a bounded wait, the render session
+    * is discarded (its scanner is baked into the `Runner`, §7.2 step 4), the
+    * new one becomes `active`, and the answer carries `host` and `database`
+    * parsed from the URL (never the password), `server` (the product
+    * version the driver reports) and `seq`, a per-process counter of
+    * successful connects. */
+  private def doConnect(c: Connect): Unit = {
+    val p     = c.req.profile
+    val terms = scrubTermsFor(p)
+    def failWith(cls: String, kept: Boolean, msg: String): Unit =
+      finish(c, connectFailure(cls, applyScrub(terms, msg), kept))
+    Backends.scannerFor(p.dialect, p.scanner) match {
+      case Left(why) => failWith(ClassProfile, kept = true, why)   // parse checked it; kept as the backstop
+      case Right(_)  =>
+        val driver = p.driver getOrElse defaultDriver(p.dialect)
+        val t0     = System.nanoTime
+        val opened: Either[Throwable, java.sql.Connection] =
+          try {
+            Class.forName(driver)
+            val props = new java.util.Properties
+            p.user foreach { u =>
+              props.setProperty("user", u)
+              c.req.password foreach (pw => props.setProperty("password", pw))
+            }
+            // The preview thread must not sit in a login longer than the
+            // watchdog allows it: mssql-jdbc's own `loginTimeout` (seconds,
+            // *external*), per connection -- never the process-wide
+            // `DriverManager.setLoginTimeout`.  Other dialects: the watchdog.
+            if (isMsSql(p.dialect) && !hasProperty(p.url, "loginTimeout"))
+              props.setProperty("loginTimeout", loginTimeoutSeconds(timeoutMillis).toString)
+            Right(java.sql.DriverManager.getConnection(p.url, props))
+          } catch { case e: Throwable => Left(e) }   // Throwable, A10: a driver's static init is a LinkageError
+        val ms = (System.nanoTime - t0) / 1000000L
+        opened match {
+          case Left(e) =>
+            val (cls, kept) = classify(e)
+            log("preview: connect " + p.id + " (" + p.dialect + ") failed in " + ms + " ms: " + cls +
+                (if (kept) "" else " (the password is not kept)") + ": " + applyScrub(terms, describe(e)))
+            val msg =
+              if (cls == ClassAuth)
+                "login failed for " + p.user.getOrElse("(no user)") + " @ " + hostAndDatabase(p.dialect, p.url)._1 +
+                ": " + describe(e)
+              else if (cls == ClassDriver) "driver " + driver + ": " + describe(e)
+              else describe(e)
+            failWith(cls, kept, msg)
+          case Right(conn) =>
+            val (host, db0) = hostAndDatabase(p.dialect, p.url)
+            val db     = if (db0.nonEmpty) db0 else try Option(conn.getCatalog).getOrElse("") catch { case _: Throwable => "" }
+            val server = try Option(conn.getMetaData.getDatabaseProductVersion).getOrElse("") catch { case _: Throwable => "" }
+            val old    = active
+            discardSession("profile changed")
+            if (old != null) closeOffThread(old.conn, "the previous connection (" + old.profile.id + ")")
+            connectSeq += 1
+            active       = Active(p, conn, host, db, connectSeq)
+            disconnected = false
+            scrubTerms   = terms
+            log("preview: connected " + p.id + " (" + p.dialect + ") @ " + host + " / " + db + " in " + ms +
+                " ms, seq " + connectSeq)
+            finish(c, connectOk(p.id, p.dialect, host, db, server, connectSeq))
+        }
+    }
+  }
+
+  /** `ermine/preview/disconnect`: discard the session, close the held
+    * connection (bounded), and answer every later render 503 until a
+    * `connect` succeeds (Q-S2 (a)).  Idempotent; `{ok: true}` always. */
+  private def doDisconnect(d: Disconnect): Unit = {
+    discardSession("disconnected")
+    if (active != null) {
+      val a = active
+      active = null
+      closeOffThread(a.conn, "the held connection (" + a.profile.id + ")")
+      log("preview: disconnected " + a.profile.id)
+    } else log("preview: disconnect with no profile connected")
+    disconnected = true
+    finish(d, Json.obj("ok" -> Json.Bool(true)))
+  }
+
+  /** May a render go ahead?  False while disconnected.  With a held
+    * connection, one cheap `isValid` (a round trip, *external*) before the
+    * render: a dead connection is DROPPED here -- session discarded,
+    * connection closed, `ermine/preview/disconnected {reason:
+    * "connection-lost"}` sent -- and the render answers the 503, which the
+    * extension's reconnect-and-re-render then replaces (§7.2). */
+  private def heldConnectionUsable(): Boolean =
+    if (disconnected) false
+    else if (active == null) true
+    else {
+      val ok = try active.conn.isValid(ValidSeconds) catch { case _: Throwable => false }
+      if (!ok) dropActive(DisconnectedLost)
+      ok
+    }
+
+  private def dropActive(reason: String): Unit = {
+    val a = active
+    discardSession("the held connection was lost")
+    active = null
+    disconnected = true
+    if (a != null) closeOffThread(a.conn, "the lost connection (" + a.profile.id + ")")
+    log("preview: the held connection " + (if (a != null) a.profile.id else "") + " is gone (" + reason + ")")
+    guard(notify(DisconnectedNotification, Json.obj("reason" -> Json.Str(reason))))
+  }
+
+  /** Close a connection on a daemon thread and wait at most
+    * `CloseWaitMillis` for it: a close that hangs on a dead socket costs a
+    * parked daemon thread, never the preview thread (WP-14 S3). */
+  private def closeOffThread(conn: java.sql.Connection, what: String): Unit = {
+    val t = new Thread(new Runnable {
+      def run(): Unit = try conn.close() catch { case _: Throwable => () }
+    }, "ermine-preview-close")
+    t.setDaemon(true)
+    t.start()
+    try t.join(CloseWaitMillis) catch { case _: InterruptedException => Thread.currentThread.interrupt() }
+    if (t.isAlive) log("preview: closing " + what + " did not finish in " + CloseWaitMillis +
+                       " ms; left to a daemon thread")
+  }
+  // ===== end WP-13 profile =====
 
   /** Answer one render, honouring an in-flight `$/cancelRequest` (§2.5: the
     * work was not interrupted, the ANSWER is replaced).  Outside `lock`,
@@ -1936,10 +2203,79 @@ final class Preview(moduleRoots: () => List[String],
     // evaluation finished after the deadline, and the client has had its
     // failure.  Say so once in the log -- a render that came back after the
     // watchdog gave up on it is worth knowing about -- and send nothing.
-    if (!mine) log("preview: job " + Json.print(j.id) + " finished after the watchdog answered it")
+    // S2b trace (server-trace): the late job's whole trace goes to the log, never to the wire
+    if (!mine) log("preview: job " + Json.print(j.id) + " finished after the watchdog answered it" + lateTrace(j))
     else if (cancelled) j.answer(Left((Rpc.RequestCancelled, "cancelled")))
-    else j.answer(Right(result))
+    // WP-13 (A10): while a profile is known, its url/user/host are scrubbed
+    // from the answer's `message`/`error` -- never from a document or a
+    // trace (`scrubAnswerMessages`).
+    else j.answer(Right(scrubAnswerMessages(scrubTerms, withTrace(j, result, partial = false)))) // S2b trace (server-trace): withTrace
   }
+
+  // ===== S2b trace (server-trace) =====
+  // DB programme stage 2b (tracker/db/OBSERVABILITY.md).  The `trace` key
+  // is APPENDED LAST to every render answer a job that RAN sends: ok,
+  // failed (a Runner 4xx/5xx, a placement 404, the size cap, a crash) and
+  // the watchdog's stuck answer (`partial: true`, naming what is running).
+  // A render REFUSED before it ran (displaced, stuck, queued behind a
+  // wedge) never started its trace and carries none.
+  //
+  // THE GENERATION TIE: the trace is a field of the `Render` job, created
+  // with it and answered with it, and `Rpc.Answer` is one-shot; a later
+  // job has a later trace object, so a displaced or late job's trace
+  // cannot reach another job's answer.  It carries the answer's own
+  // `generation` as well, so a client can check the pairing.
+  //
+  // Building the trace must never cost the answer: any failure here leaves
+  // the answer as it was and says so in the log.
+
+  /** `result` with `trace` appended, when `j` is a render that started. */
+  private def withTrace(j: Answering, result: Json, partial: Boolean): Json = j match {
+    case r: Render if r.trace.started =>
+      result match {
+        case Json.Obj(fs) if !fs.exists(_._1 == "trace") =>
+          try {
+            if (!partial) r.trace.finish()
+            Json.Obj(fs ::: List("trace" -> TraceJson(r.trace.snapshot(partial), r.req.generation, traceScrub)))
+          } catch { case e: Throwable =>
+            guard(log("preview: trace not attached: " + messageOf(e)))
+            result
+          }
+        case other => other
+      }
+    case _ => result
+  }
+
+  /** A10 and A5 over a string the trace carries (SQL text, messages). */
+  private def traceScrub(s: String): String = scrubProfile(scrubUrls(s))
+
+  private def lateTrace(j: Answering): String = j match {
+    case r: Render if r.trace.started =>
+      try { r.trace.finish(); ": " + TraceJson.summary(r.trace.snapshot()) } catch { case _: Throwable => "" }
+    case _ => ""
+  }
+
+  /** The phase of the front half: `boot` when the render session did not
+    * exist before and does after, `session` otherwise. */
+  private def tracedSession[A](r: Render)(body: => A): A = {
+    val had = runner != null
+    val t0  = System.nanoTime
+    try body
+    finally r.trace.addPhase(if (!had && runner != null) "boot" else "session", System.nanoTime - t0)
+  }
+
+  /** The trace's connection line, read on the preview thread at job start
+    * (DESIGN-OBSERVABILITY §5): server-profile's `activeConnection` for the
+    * profile and dialect, the connect answer's `database`; the implicit
+    * `local` is the per-render in-memory SQLite. */
+  private def traceConnection(): RenderTrace.Connection =
+    activeConnection match {
+      case Some((id, dialect, _)) =>
+        RenderTrace.Connection("profile", dialect,
+                               Option(active).map(_.database).filter(_.nonEmpty), Some(id))
+      case None => RenderTrace.Connection.InMemory
+    }
+  // ===== end S2b trace =====
 
   private def document(generation: Json, doc: Json, stale: Boolean): Json =
     Json.Obj(List("ok" -> Json.Bool(true), "document" -> doc, "generation" -> generation) ++
@@ -2112,7 +2448,7 @@ final class Preview(moduleRoots: () => List[String],
       // same is true of every other -32800 here (a displaced render, a
       // cancelled one, the shutdown drain).
       guard(if (cancelled) job.answer(Left((Rpc.RequestCancelled, "cancelled")))
-            else job.answer(Right(job.stuckRefusal(why))))
+            else job.answer(Right(withTrace(job, job.stuckRefusal(why), partial = true)))) // S2b trace (server-trace): partial trace
       queued foreach {
         case a: Answering =>
           guard(releaseToken(a))
@@ -2273,9 +2609,9 @@ object Preview {
 
   /** What the preview thread does, in queue order (§2.5).
     *
-    * WP-13 adds `Connect(profile, password, answer)` and `Disconnect`; each
-    * is a case of this type and a branch of `runJob`, and `Connect` -- which
-    * answers a request -- is an `Answering`.
+    * WP-13 AS BUILT: `Connect(id, request, answer)` and `Disconnect(id,
+    * answer)`; each is a case of this type and a branch of `runJob`, and
+    * both answer a request, so both are `Answering`.
     *
     * `Answering` IS THE INVARIANT "no request is left unanswered", written
     * where the reader of a new job kind will meet it: `runJob`'s `finally`,
@@ -2343,6 +2679,14 @@ object Preview {
                           progress: Json, answer: Rpc.Answer) extends Answering {
     def refusal(message: String): Json = failure(req.generation, 500, message, None)
     def stuckRefusal(message: String): Json = withStuck(refusal(message))
+    // ===== S2b trace (server-trace) =====
+    /** This render's trace (tracker/db/OBSERVABILITY.md).  Made WITH the job,
+      * on the dispatch thread at enqueue, so its queue time is measured; NOT
+      * a constructor field, so the case class's equality and `copy` are as
+      * they were.  Written by the preview thread only; the watchdog reads a
+      * snapshot of it. */
+    val trace: RenderTrace = new RenderTrace()
+    // ===== end S2b trace =====
   }
 
   /** Q7: a schema job carries the same three things a render does -- the
@@ -2358,6 +2702,291 @@ object Preview {
 
   final case class Invalidate(paths: Set[Path]) extends Job
   case object DiscardSession extends Job
+
+  // ===== WP-13 profile (server-profile) =====
+  /** `ermine/preview/connect` as a queue job.  Its crash refusal (a bug in
+    * this file, since `doConnect` catches every `Throwable` of the driver's)
+    * is the connect failure shape with class `unreachable`, kept. */
+  final case class Connect(id: Json, req: ConnectRequest, answer: Rpc.Answer) extends Answering {
+    def progress: Json = null
+    def refusal(message: String): Json = connectFailure(ClassUnreachable, message, kept = true)
+    def stuckRefusal(message: String): Json = withStuck(refusal(message))
+    override def toString: String = "Connect(" + Json.print(id) + ", " + req + ")"
+  }
+
+  /** `ermine/preview/disconnect` as a queue job. */
+  final case class Disconnect(id: Json, answer: Rpc.Answer) extends Answering {
+    def progress: Json = null
+    def refusal(message: String): Json =
+      Json.obj("ok" -> Json.Bool(false), "message" -> Json.Str(scrubUrls(message)))
+    def stuckRefusal(message: String): Json = withStuck(refusal(message))
+  }
+
+  /** A preview connection profile (§7.1, SERVER.md §2.1 shape (a)): what
+    * the extension reads from `ermine.preview.profiles` (user scope) and
+    * sends for the active `ermine.preview.profile` id.  `scanner` is the
+    * variant (`default` / `noTransactions`). */
+  final case class Profile(id: String, dialect: String, url: String, user: Option[String],
+                           driver: Option[String], scanner: String) {
+    override def toString: String = "Profile(" + id + ", " + dialect + ")"   // never the url
+  }
+
+  /** The request.  `toString` never prints the password or the url. */
+  final case class ConnectRequest(profile: Profile, password: Option[String]) {
+    override def toString: String =
+      "ConnectRequest(" + profile + (if (password.isDefined) ", password [redacted]" else "") + ")"
+  }
+
+  /** The held connection and what the connect answer said about it. */
+  private[lsp] final case class Active(profile: Profile, conn: java.sql.Connection,
+                                       host: String, database: String, seq: Long)
+
+  /** The four connect failure classes (§8.3 as amended: `connect` is
+    * spelled `unreachable`; Q-S3 (a) adds `profile`). */
+  val ClassAuth        = "auth"
+  val ClassDriver      = "driver"
+  val ClassUnreachable = "unreachable"
+  val ClassProfile     = "profile"
+
+  /** §4's render 503 text while disconnected. */
+  private[lsp] val NotConnectedMessage = "not connected"
+
+  /** `ermine/preview/disconnected {reason}` and its one reason today. */
+  private val DisconnectedNotification = "ermine/preview/disconnected"
+  private[reporting] val DisconnectedLost = "connection-lost"
+
+  /** Bounded waits: a close off-thread, and `isValid` before a render. */
+  private val CloseWaitMillis = 2000L
+  private val ValidSeconds    = 2
+
+  /** mssql-jdbc's `loginTimeout`, seconds: half the watchdog, 1..15; 15
+    * when the watchdog is off.  Always below `ermine.preview.timeoutSeconds`. */
+  private[reporting] def loginTimeoutSeconds(watchdogMillis: Long): Int = {
+    val t = (watchdogMillis / 1000L).toInt
+    if (t <= 0) 15 else math.max(1, math.min(15, t / 2))
+  }
+
+  private def isMsSql(dialect: String): Boolean =
+    Set("mssql", "sqlserver")(dialect.toLowerCase(java.util.Locale.ROOT))
+
+  /** The driver class per dialect, `Runners`' own choices (`Backends.scala`). */
+  private[reporting] def defaultDriver(dialect: String): String =
+    dialect.toLowerCase(java.util.Locale.ROOT) match {
+      case "sqlite"                  => "org.sqlite.JDBC"
+      case "mssql" | "sqlserver"     => "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+      case "mysql"                   => "org.gjt.mm.mysql.Driver"
+      case "postgres" | "postgresql" => "org.postgresql.Driver"
+      case "vertica"                 => "com.vertica.Driver"
+      case other                     => other
+    }
+
+  /** The URL prefix each dialect's driver accepts (lower case). */
+  private def subprotocol(dialect: String): String =
+    dialect.toLowerCase(java.util.Locale.ROOT) match {
+      case "sqlite"                  => "jdbc:sqlite:"
+      case "mssql" | "sqlserver"     => "jdbc:sqlserver:"
+      case "mysql"                   => "jdbc:mysql:"
+      case "postgres" | "postgresql" => "jdbc:postgresql:"
+      case "vertica"                 => "jdbc:vertica:"
+      case _                         => "jdbc:"
+    }
+
+  /** Rule A9 (§8.1), the extension's regex restated server-side, plus the
+    * `//user:pass@host` userinfo form. */
+  private val CredentialKey =
+    "(?i)(^|[;?&:])\\s*(password|pwd|user|username|integratedsecurity|authentication)\\s*=".r
+  private val UserInfo = "(?i)^jdbc:[a-z0-9:]*//[^/;?]*@".r
+
+  private def hasProperty(url: String, key: String): Boolean =
+    ("(?i)[;?&]\\s*" + java.util.regex.Pattern.quote(key) + "\\s*=").r.findFirstIn(url).isDefined
+
+  /** What follows `jdbc:sqlite:` with a `file:` prefix and a `?query`
+    * removed: `:memory:` or `""` (in-memory), else a path. */
+  private def sqlitePath(url: String): String = {
+    val rest = url.substring("jdbc:sqlite:".length)
+    val noQ  = rest.indexOf('?') match { case -1 => rest; case i => rest.substring(0, i) }
+    if (noQ.toLowerCase(java.util.Locale.ROOT).startsWith("file:")) noQ.substring(5) else noQ
+  }
+  private def isMemory(path: String): Boolean = path.isEmpty || path == ":memory:"
+  private val WindowsAbsolute = "^[A-Za-z]:[\\\\/].*".r
+
+  /** `ermine/preview/connect`'s request, VALIDATED (SERVER.md §2.4/§2.5):
+    * every refusal here is class `profile`, before any socket.  No message
+    * echoes the url, the user or the password. */
+  object ConnectRequest {
+    def parse(params: Json): Either[String, ConnectRequest] = {
+      def optStr(j: Json, k: String): Either[String, Option[String]] = j / k match {
+        case None | Some(Json.Null) => Right(None)
+        case Some(Json.Str(s)) if s.trim.nonEmpty => Right(Some(s))
+        case Some(Json.Str(_)) => Left("\"" + k + "\" is empty")
+        case Some(other) => Left("\"" + k + "\" is a string, not a " + jsonType(other))
+      }
+      def reqStr(j: Json, k: String, what: String): Either[String, String] =
+        optStr(j, k).flatMap(_.toRight("the profile needs \"" + k + "\" (" + what + ")"))
+      params / "profile" match {
+        case Some(prof @ Json.Obj(_)) =>
+          for {
+            id       <- reqStr(prof, "id", "its name")
+            dialect  <- reqStr(prof, "dialect", "sqlite, mssql, mysql, postgres or vertica")
+            url      <- reqStr(prof, "url", "a JDBC URL without credentials")
+            user     <- optStr(prof, "user")
+            driver   <- optStr(prof, "driver")
+            scanner  <- optStr(prof, "scanner")
+            password <- optStr(params, "password")
+            p         = Profile(id, dialect, url.trim, user, driver, scanner getOrElse "default")
+            _        <- validate(p, password)
+          } yield ConnectRequest(p, password)
+        case Some(other) => Left("\"profile\" is an object, not a " + jsonType(other))
+        case None        => Left("ermine/preview/connect needs a \"profile\" object")
+      }
+    }
+  }
+
+  /** The pre-socket checks, in the order a developer would fix them. */
+  private[reporting] def validate(p: Profile, password: Option[String]): Either[String, Unit] = {
+    val lower = p.url.toLowerCase(java.util.Locale.ROOT)
+    val want  = subprotocol(p.dialect)
+    Backends.scannerFor(p.dialect, p.scanner) match {
+      case Left(why) => Left(why)
+      case Right(_) =>
+        if (!lower.startsWith("jdbc:"))
+          Left("the url of profile " + p.id + " is not a JDBC URL (it must start with jdbc:)")
+        else if (CredentialKey.findFirstIn(p.url).isDefined || UserInfo.findFirstIn(p.url).isDefined)
+          Left("the url of profile " + p.id + " carries credentials; credentials belong in \"user\" and the prompt")
+        else if (!lower.startsWith(want)) {
+          val sub = lower.drop(5).takeWhile(c => c != ':' && c != '/')
+          Left("dialect " + p.dialect + " does not match a jdbc:" + sub + ": URL (it needs " + want + ")")
+        } else if (password.isDefined && p.user.isEmpty)
+          Left("a password was sent for profile " + p.id + ", which has no \"user\"")
+        else if (want == "jdbc:sqlite:") {
+          val path = sqlitePath(p.url)
+          if (isMemory(path)) Right(())
+          else {
+            val absolute = WindowsAbsolute.pattern.matcher(path).matches ||
+              (try java.nio.file.Paths.get(path).isAbsolute catch { case _: Throwable => false })
+            val name = try Option(java.nio.file.Paths.get(path).getFileName).map(_.toString).getOrElse(path)
+                       catch { case _: Throwable => path }
+            if (!absolute)
+              Left("relative jdbc:sqlite: paths are refused; give the absolute path of " + name)
+            else if (!(try java.nio.file.Files.isRegularFile(java.nio.file.Paths.get(path)) catch { case _: Throwable => false }))
+              Left("the SQLite file " + name + " does not exist (sqlite-jdbc would create an empty one)")
+            else Right(())
+          }
+        } else Right(())
+    }
+  }
+
+  /** `host` and `database` for the connect answer, from the URL alone
+    * (never the password; the url itself is never answered).  SQLite:
+    * host `local`, database the file's name.  An unparsed part is "". */
+  private[reporting] def hostAndDatabase(dialect: String, url: String): (String, String) = {
+    val lower = url.toLowerCase(java.util.Locale.ROOT)
+    def props: Map[String, String] =
+      url.split(';').drop(1).toList.flatMap { kv =>
+        kv.indexOf('=') match {
+          case -1 => Nil
+          case i  => List(kv.substring(0, i).trim.toLowerCase(java.util.Locale.ROOT) -> kv.substring(i + 1).trim)
+        }
+      }.toMap
+    if (lower.startsWith("jdbc:sqlite:")) {
+      val path = sqlitePath(url)
+      ("local", if (isMemory(path)) ":memory:"
+                else try Option(java.nio.file.Paths.get(path).getFileName).map(_.toString).getOrElse("")
+                     catch { case _: Throwable => "" })
+    } else if (lower.startsWith("jdbc:sqlserver:")) {
+      val rest = url.substring("jdbc:sqlserver:".length).stripPrefix("//")
+      val host0 = rest.takeWhile(c => c != ':' && c != ';' && c != '\\' && c != '/')
+      val ps = props
+      val host = if (host0.nonEmpty) host0 else ps.getOrElse("servername", "")
+      (host, ps.get("databasename") orElse ps.get("database") getOrElse "")
+    } else {
+      val i = lower.indexOf("//")
+      if (i < 0) ("", "")
+      else {
+        val rest = url.substring(i + 2)
+        val host = rest.takeWhile(c => c != ':' && c != '/' && c != ';' && c != '?')
+        val afterHost = rest.dropWhile(_ != '/')
+        (host, afterHost.drop(1).takeWhile(c => c != '?' && c != ';' && c != '/'))
+      }
+    }
+  }
+
+  /** §8.3's classifier over the driver's exception, SQLState and vendor code
+    * only (never the message): `(class, kept)`. */
+  private[reporting] def classify(e: Throwable): (String, Boolean) = {
+    val chain = Iterator.iterate(e)(_.getCause).takeWhile(_ != null).take(8).toList
+    val sqls  = chain.collect { case s: java.sql.SQLException => s }
+    def code(n: Int)      = sqls.exists(_.getErrorCode == n)
+    def state(s: String)  = sqls.exists(x => x.getSQLState == s)
+    if (chain.exists(_.isInstanceOf[ClassNotFoundException]) || chain.exists(_.isInstanceOf[LinkageError]))
+      (ClassDriver, true)
+    else if (code(18486) || code(18487) || code(18488)) (ClassAuth, true)
+    else if (code(18456) || state("28000")) (ClassAuth, false)
+    else if (sqls.exists(s => s.getSQLState == "08001" &&
+                              Option(s.getMessage).exists(_.startsWith("No suitable driver"))))
+      (ClassDriver, true)
+    else (ClassUnreachable, true)
+  }
+
+  /** A driver throwable as one line: its class and its message (the scrub
+    * is the caller's). */
+  private def describe(e: Throwable): String =
+    e.getClass.getSimpleName + ": " + messageOf(e)
+
+  /** `{ok: true, id, dialect, host, database, server, seq}`. */
+  private[reporting] def connectOk(id: String, dialect: String, host: String, database: String,
+                                   server: String, seq: Long): Json =
+    Json.obj("ok" -> Json.Bool(true), "id" -> Json.Str(id), "dialect" -> Json.Str(dialect),
+             "host" -> Json.Str(host), "database" -> Json.Str(database),
+             "server" -> Json.Str(server), "seq" -> Json.num(seq.toInt))
+
+  /** `{ok: false, class, message, kept, reason}`; `reason` is Q-S4 (a)'s
+    * `connect-<class>`. */
+  private[reporting] def connectFailure(cls: String, message: String, kept: Boolean): Json =
+    Json.obj("ok" -> Json.Bool(false), "class" -> Json.Str(cls),
+             "message" -> Json.Str(scrubUrls(message)), "kept" -> Json.Bool(kept),
+             "reason" -> Json.Str(connectReason(cls)))
+
+  private[reporting] def connectReason(cls: String): String = cls match {
+    case ClassAuth        => Reason.ConnectAuth
+    case ClassDriver      => Reason.ConnectDriver
+    case ClassProfile     => Reason.ConnectProfile
+    case _                => Reason.ConnectUnreachable
+  }
+
+  /** A10's patterns for one profile: the url literally, then the host and
+    * the user as whole tokens.  A token is bounded by anything but a
+    * letter, digit, `_`, `-` (and for the user also `.` and `/`), so the
+    * user `ermine` is scrubbed from `user 'ermine'` but not from
+    * `ermine.preview.timeoutSeconds` or `ermine/render`.  Terms shorter than
+    * three characters are not scrubbed (they would eat ordinary words). */
+  private[reporting] def scrubTermsFor(p: Profile): List[(scala.util.matching.Regex, String)] = {
+    def lit(s: String) = java.util.regex.Pattern.quote(s)
+    val host = hostAndDatabase(p.dialect, p.url)._1
+    List(Some(p.url).map(u => (lit(u).r, "<url>")),
+         Some(host).filter(h => h.length >= 3 && h != "local")
+           .map(h => (("(?<![A-Za-z0-9_-])" + lit(h) + "(?![A-Za-z0-9_-])").r, "<host>")),
+         p.user.filter(_.length >= 3)
+           .map(u => (("(?<![A-Za-z0-9_./-])" + lit(u) + "(?![A-Za-z0-9_./-])").r, "<user>"))).flatten
+  }
+
+  private[reporting] def applyScrub(terms: List[(scala.util.matching.Regex, String)], s: String): String =
+    if (s == null) "" else terms.foldLeft(s) { case (acc, (re, to)) =>
+      re.replaceAllIn(acc, java.util.regex.Matcher.quoteReplacement(to)) }
+
+  /** The profile scrub over an ANSWER: only its top-level `message` and
+    * `error` strings, never `document` or `trace` (a document may well
+    * contain the word the user name happens to be). */
+  private[reporting] def scrubAnswerMessages(terms: List[(scala.util.matching.Regex, String)], j: Json): Json =
+    if (terms.isEmpty) j
+    else j match {
+      case Json.Obj(fs) => Json.Obj(fs map {
+        case (k @ ("message" | "error"), Json.Str(s)) => k -> Json.Str(applyScrub(terms, s))
+        case kv => kv
+      })
+      case other => other
+    }
+  // ===== end WP-13 profile =====
 
   /** Q7's answer to a SHADOWED PICK: the picked file is not the file this
     * session's root chain resolves its module to (`Preview.shadowedPick`).
@@ -2421,6 +3050,19 @@ object Preview {
     val HeaderDeeperThanPath = "header-deeper-than-path"
     val NotPlaced          = "not-placed"
     val Shadowed           = "shadowed"
+    // ===== WP-13 profile (server-profile) =====
+    // Q-S4 (a), decided by the user 2026-09-24: the vocabulary GAINS five
+    // spellings, same contract (closed, stable, and only this file mints
+    // them).  `not-connected` is the render 503 while disconnected; the
+    // four `connect-*` are the `reason` of a failed `ermine/preview/connect`
+    // answer, one per `class`.  A render 503 from anything else, and every
+    // `Runner` answer, still carries no `reason`.
+    val NotConnected       = "not-connected"
+    val ConnectAuth        = "connect-auth"
+    val ConnectDriver      = "connect-driver"
+    val ConnectUnreachable = "connect-unreachable"
+    val ConnectProfile     = "connect-profile"
+    // ===== end WP-13 profile =====
   }
 
   /** Why a pick could not be PLACED: the wire `reason` and the human
@@ -2626,6 +3268,16 @@ object Preview {
     server.onNotification("$/cancelRequest") { params =>
       params / "id" foreach preview.cancel
     }
+    // ===== WP-13 profile (server-profile) =====
+    // §4: both are preview-queue jobs; `connect`'s body is redacted in the
+    // wire log by `Rpc.Redacted` (WP-1) before this handler ever sees it.
+    server.onRequestDeferredWithId("ermine/preview/connect") { (id, params, answer) =>
+      preview.connect(id, params, answer)
+    }
+    server.onRequestDeferredWithId("ermine/preview/disconnect") { (id, params, answer) =>
+      preview.disconnect(id, params, answer)
+    }
+    // ===== end WP-13 profile =====
     preview
   }
 }

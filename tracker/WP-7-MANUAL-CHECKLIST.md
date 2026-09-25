@@ -34,6 +34,13 @@ fixture back.** Needs extension **0.1.16** and a server rebuilt from the WP-34
 tree (`sbt core/compile core/copyResources`, then restart the language server).
 E2 gains a `SalesReport` sub-step; E1, E2's main step and E9 stay on `Sales`.
 
+**AMENDED 2026-09-25 BY DB STAGE 2e: Group F (the database, F1–F12) is new.** It runs the preview
+against the local SQL Server (`ermine-mssql`, `ErmineSales`) through a profile in USER settings and a
+prompted password, and reads the panel's new **Trace** view. It needs extension **0.1.17**, a server
+compiled from the stage-2 tree and a rebuilt client bundle. Its narrative twin, with timings and
+fallbacks, is `tracker/db/DOGFOOD.md`. Its quotes are checked against their lines by
+`tracker/db/dogfood-citecheck.py`.
+
 ## Before you start
 
 | | |
@@ -137,7 +144,7 @@ carried; 4 and 5 are new with the panel (WP-10).
 
 ## If you only have 30 minutes
 
-Fourteen steps, in this order. The first ten are the cheapest ten that
+Fourteen steps, in this order (seventeen with the database's three, 15–17, added 2026-09-25). The first ten are the cheapest ten that
 between them say whether the loop works at all, whether the disk-writing half
 works, and whether the wedge guard closes the loop it was built for; the last
 four are the panel steps that settle the most (whether a document draws at
@@ -163,6 +170,12 @@ with `ermine.preview.target` at `json` (the settings file's value); set it to
 | — | *re-pick* | **Ermine: Preview Report...** → `core/src/test/resources/doc/Sales.e` → `report` again, and check the `Sales` heading and three tables are back: E8 and E9 both need E2's document (was `Doc/SalesReport.e`: F2) |
 | 13 | **E8** | deleting the bundle files flips the page; deleting the folder is the open question the typings predict |
 | 14 | **E9** | `table` through the writers' `runTabular` — WP-11's done-when, human since WP-9 |
+| 15 | **F4** | the database: ONE password prompt naming `ermine @ 127.0.0.1`, then the status bar reads `sales-mssql (mssql) @ 127.0.0.1` (needs 0.1.17, `scripts/db.sh status` OK, the profile in USER settings: F1–F3's setup) |
+| 16 | **F5** | `DbFetchTopN` draws from `ErmineSales` at tier s: china, us-south, Other in the pie — DB-PLAN S2's done-when |
+| 17 | **F8** | the Trace view: the SQL, `scanned` 388 against `rows` 8, db time against the rest, and the one channel line |
+
+Steps 15–17 were added by DB stage 2e (2026-09-25) and are the database's cheapest three. If F4
+fails, F5 and F8 mean nothing.
 
 If any of 1–4 fails, stop and report: nothing after it means anything. If
 **E1** or **E2** fails, E5, E6, E8 and E9 mean nothing either.
@@ -1053,6 +1066,128 @@ instrumentation below is what tells the two apart.
 - **Optional, the error case:** with E4's failing params in place, click **JSON**: the text is the four fields `status`, `message`, `path`, `reason` of the banner, NOT the tab's whole `{ "ok": false, ... }` answer (no `ok`, no `generation`): that gap is stated, and Q28 in `tracker/JSON-WIDGET-PLAYGROUND.md` asks whether to close it.
 - **Failure:** the two texts in (3) differ; the tables redraw (a flash, or a channel render line) on a click; after (5) the tables are one-row skeletons (the writers drew a hidden document: the off-stage rule failed in the webview); (6) comes back as Document; the view is sent to the extension (a channel line on a click); a writers popup or tooltip drawn offset by the banner-plus-toolbar height (the root is now `position:relative`, WP-31 review N3). **Paste:** the channel, and the first 20 lines of each text in (3) if they differ.
 - **Bears on:** WP-31's done-when; whether `setState` survives a `webview.html` re-set in the real webview (UNVERIFIED: read from the `@types/vscode` docs only, never observed).
+
+---
+
+## Group F — the database
+
+**What this group is for.** DB programme stage 2 (tracker/DB-PLAN.md §4 S2, S5): the preview renders
+against a real SQL Server 2022 (`ermine-mssql`, rootless podman, `ErmineSales`) through a **profile**
+in USER settings and a **prompted password**. The render answer carries a **trace** that the panel's
+**Trace** view draws. The narrative version, with timings and fallbacks, is
+**`tracker/db/DOGFOOD.md`**: F1-F12 are its steps 0-12, in its order. **Every step below is NEVER RUN
+in a VS Code.** The server half was MEASURED over the wire by `TestPreviewDbLive` and
+`TestRenderTraceLive` (tracker/db/SERVER.md §6.3, tracker/db/OBSERVABILITY.md §4 and §8). The
+extension and panel halves are tested in node and JSDOM only. The quotes are checked against
+their lines by `tracker/db/dogfood-citecheck.py`.
+
+**Standing setup for F1-F12** (it differs from A-E):
+
+- **Extension 0.1.17** (profiles, the password prompt, the Trace view's glue) and a server compiled
+  from this tree. The client bundle must be rebuilt after the Trace view (`npm run bundle` in `client/`).
+- **`"ermine.preview.target": "both"`** in `.vscode/settings.json`, so one render fills the panel and
+  the JSON tab. F12 sets it back to `panel`.
+- **The profile in USER settings**, never in `.vscode/settings.json` (F2).
+- **ErmineSales at tier s** (seed 42). `scripts/db.sh verify sales` says which tier is loaded.
+  F6 changes it and puts it back.
+- The password is `ERMINE_DB_PASSWORD` in `~/.config/ermine/db.env`. Type it into the box; do not
+  paste it into a file, a terminal or `tracker/PLAYTEST-RESULTS.md`.
+
+### F1 [new] — The database is up, and holds tier s — **NEVER RUN**
+
+- **Setup:** a terminal in the worktree.
+- **Do:** `scripts/db.sh status`, then `scripts/db.sh verify sales`.
+- **Expect:** five lines ending `(( rc == 0 )) && echo "status OK" || echo "status DEGRADED"` (`scripts/db.sh:222`), i.e. `status OK`, exit 0, including `echo "login $LOGIN ok via 127.0.0.1:1433 suser=$who tls=$enc"` (`scripts/db.sh:216`) with `tls=TRUE` (MEASURED 2026-09-25 00:0x). `verify` ends with `` verify ${c.domain} mssql tier=${stamp.tier} seed=${stamp.seed ?? "-"} loaded= `` (`data/src/load/mssql.ts:150`), i.e. `verify sales mssql tier=s seed=42 loaded=... OK`.
+- **Failure:** `status DEGRADED` or a nonzero exit: run `scripts/db.sh up` (4-5 s) and record that you had to. `tier=xs` or `tier=m`: run `scripts/db.sh load sales --tier s` (1.23 s with verify) and record it. **Paste:** both outputs (they contain no password).
+- **Bears on:** DB-PLAN S0/S1; every step below.
+
+### F2 [new] — The profile goes in USER settings, and a workspace copy is ignored — **NEVER RUN**
+
+- **Setup:** F1 passed; the window from `tracker/PLAYTEST-SETUP.md` §5 closed or not yet opened.
+- **Do:** **Preferences: Open User Settings (JSON)**, add `ermine.preview.profiles` (one profile, `sales-mssql`, dialect `mssql`, the URL `jdbc:sqlserver://127.0.0.1:1433;databaseName=ErmineSales;encrypt=true;trustServerCertificate=true`, user `ermine`) and `"ermine.preview.profile": "sales-mssql"`. The exact JSON is in `tracker/db/DOGFOOD.md` §2 and `tracker/PLAYTEST-SETUP.md` §6. *Optional:* copy the same two keys into `.vscode/settings.json` too, for one window, to see that they are refused.
+- **Expect:** with the keys in user settings only, nothing is said. With a workspace copy as well, the channel says once `const SCOPE_NOTICE = "profiles set in workspace settings are ignored (user settings only)";` (`editor/vscode/src/preview-core.js:6529`), prefixed `settings: `, and the user value is used. With the keys ONLY in workspace settings, the status bar item reads `text: "$(database) workspace profiles ignored"` (`editor/vscode/src/preview-core.js:6993`) and nothing connects.
+- **Failure:** a workspace-only profile that connects, or prompts for a password. That is the A2 hole this rule closes. **Paste:** the channel's `settings:` and `db:` lines.
+- **Bears on:** tracker §8.1 A2; WP-13.
+
+### F3 [new] — Open the worktree and the Ermine channel — **NEVER RUN**
+
+- **Setup:** F2's user settings; `"ermine.preview.target": "both"` in `.vscode/settings.json`.
+- **Do:** `code /home/dmitry/research/ermine/ermine-scala-wt-widget-preview` (ONE folder). Open any `.e` file. Run **Ermine: Show Language Server Output**.
+- **Expect:** A1's activation. The channel **Ermine** is where every `db:` line (the extension's) and `preview:` line (the extension's and the server's) of F4-F11 appears.
+- **Failure:** as A1.
+- **Bears on:** F4-F11.
+
+### F4 [new] — The first activation asks for the password ONCE, and connects — **NEVER RUN**
+
+- **Setup:** F3; no password entered yet in this window.
+- **Do:** wait for the password box. Type the password and press Enter.
+- **Expect:** (1) before you type: a second status bar item, `text: "$(key) " + id + ": password?"` (`editor/vscode/src/preview-core.js:6985`), i.e. `sales-mssql: password?`, and the channel line `line: "db: asking for the password of " + labelText(label) + " (" + cause + ")",` (`editor/vscode/src/preview-core.js:6854`), i.e. `db: asking for the password of sales-mssql (mssql) @ 127.0.0.1 (running)`. (2) The box is titled `title: "Ermine: database password",` (`editor/vscode/src/preview-core.js:6620`), and its prompt is `prompt: "Password for " + who + " (profile " + (profile ? profile.id : "?") +` (`editor/vscode/src/preview-core.js:6621`) followed by `"). It is held in this window's memory only, until the window closes or you disconnect.",` (`editor/vscode/src/preview-core.js:6622`), i.e. **`Password for ermine @ 127.0.0.1 (profile sales-mssql). It is held in this window's memory only, until the window closes or you disconnect.`** The typed characters are masked. (3) After Enter: `text: "$(sync~spin) " + id + ": connecting"` (`editor/vscode/src/preview-core.js:6988`) and `line: "db: connecting " + labelText(s.label) + " (password entered)",` (`editor/vscode/src/preview-core.js:6867`). Then the server's `log("preview: connected " + p.id + " (" + p.dialect + ") @ " + host + " / " + db + " in " + ms +` (`core/src/main/scala/com/clarifi/reporting/ermine/lsp/Preview.scala:2127`), which reads `preview: connected sales-mssql (mssql) @ <host> / ErmineSales in <ms> ms, seq 1` (the server scrubs the host from its log; 13 ms MEASURED warm, SERVER.md §6.3). Then `line: "db: connected " + labelText(label) + (database ? " / " + database : "") +` (`editor/vscode/src/preview-core.js:6883`), i.e. `db: connected sales-mssql (mssql) @ 127.0.0.1 / ErmineSales`. (4) The item settles on `return { hidden: false, text: "$(database) " + labelText(s.label), severity: "none",` (`editor/vscode/src/preview-core.js:6981`), i.e. **`sales-mssql (mssql) @ 127.0.0.1`**. Its tooltip is `tooltip: "connected: " + labelText(s.label) + (s.database ? "\ndatabase: " + s.database : "") +` (`editor/vscode/src/preview-core.js:6982`), with `database: ErmineSales` and `server: 16.00.4295`. (5) **Restart Language Server** afterwards: NO prompt (the password is held), a reconnect, `(running, password held)`. **Developer: Reload Window**: the prompt comes back.
+- **Failure:** two prompts; no prompt; the password visible in the channel; `sales-mssql: trace is verbose` (then `ermine.trace.server` is `verbose`: `line: "db: NOT connecting " + labelText(label) + ": ermine.trace.server is \"verbose\" and would log the " +`, `editor/vscode/src/preview-core.js:6829`); `sales-mssql: profile` saying the server has no `ermine/preview/connect` (the server was not rebuilt). **Paste:** every `db:` and `preview: connect` line. Check first that the password is not in them.
+- **Bears on:** WP-13 done-when (the prompted password end to end, moved there from WP-12(a): DECISIONS Q-V3); A1, A3, A7.
+
+### F5 [new] — `DbFetchTopN` draws from ErmineSales, and the JSON tab agrees — **NEVER RUN**
+
+- **Setup:** F4 connected.
+- **Do:** **Ermine: Preview Report...** → `core/src/test/resources/doc/DbFetchTopN.e` → `report` (`Query -> Fetch Node`). The first pick writes and opens `.ermine/preview/DbFetchTopN/report.params.json`. Set `"keep": 2` in it and **save**.
+- **Expect:** (1) the first render (skeleton `keep` 0, from `let value = 0;`, `editor/vscode/src/preview-core.js:3272`, INFERRED) draws a pie built from the `pieChart (PieChartProps "Sales by region" "Sales" "region" "amount"` line (`core/src/test/resources/doc/DbFetchTopN.e:58`) with ONE slice, `Other`, worth 1,051,094.22. The first render after a connect rebuilds the session: MEASURED 2.2 s in `TestPreviewDbLive`. (2) After the save: ONE re-render, and the pie has **china 225,449.88, us-south 172,784.89, Other 652,859.45** (tier s, read with `scripts/db.sh sql` on 2026-09-25; the same three values are in OBSERVABILITY.md §4's MEASURED trace). (3) The second widget, `, rawWidget "metTargets" met ])))` (`core/src/test/resources/doc/DbFetchTopN.e:63`), is an error box, **by design**: `` title.textContent = `widget "${widget}" could not be rendered`; `` (`client/src/dispatcher.ts:88`) with the reason `` : fail(`no renderer is registered under that name`); `` (`client/src/dispatcher.ts:253`). (4) The JSON tab (`both`: `return Object.freeze({ tab: t === "json" || t === "both", panel: t === "panel" || t === "both" });`, `editor/vscode/src/preview-core.js:5911`) shows the pie's rows under `$.children[0].props.pieRows` and `metTargets` = 1. An amount may print as `225449.87999999998` (a Double sum).
+- **Failure:** a 503 `not connected` (F4 did not finish); a 500 naming `sales` (ErmineSales is empty: `scripts/db.sh load sales --tier s`); the pie as an error box saying `env.htmlwriter ...` (the writers are missing, E14); numbers from tier xs (`north`, `east`) while F1 said tier s. **Paste:** the channel from the command on, and the JSON tab's `pieRows`.
+- **Bears on:** DB-PLAN S2 done-when ("the panel renders `DbFetchTopN` from `ErmineSales` at tier `s`"); WP-13.
+
+### F6 [new] — Change the tier under the panel; tier xs equals the in-memory original — **NEVER RUN**
+
+- **Setup:** F5's panel, with `keep` 2.
+- **Do:** (1) `scripts/db.sh load sales --tier m` (about 3 s), then save the params file (a re-render). (2) `scripts/db.sh load sales --tier xs` (about 1.2 s), save again. (3) `scripts/db.sh load sales --tier s`, save again.
+- **Expect:** each load prints `` load ${c.domain} mssql tier=${p.manifest.tier} seed= `` (`data/src/load/mssql.ts:95`) with `verify=OK` (MEASURED 3.03 s at m and 1.15 s at xs with verify, LOADER.md §2). **Nothing re-renders until you save.** (1) At m the pie shows m's top two of 12 regions. Nobody has read those amounts: check them with `scripts/db.sh sql ErmineSales "SELECT region, SUM(amount) FROM sales GROUP BY region ORDER BY 2 DESC"`. (2) At xs: **north 4,350.75, east 4,175.50, Other 4,155.75** and `metTargets` **2**, the same as the in-memory `core/src/test/resources/doc/FetchTopN.e` (MEASURED equal modulo row order by `TestDbReports` and `TestPreviewDbLive`). (3) Back to F5's numbers.
+- **Failure:** the numbers do not change after a save; `db.sh load` hangs at the DDL while the preview is connected (then run **Ermine: Disconnect Database**, and record it: INFERRED possible, never observed). **Paste:** the load lines and the channel's `preview: render` lines.
+- **Bears on:** DB-PLAN S2's second done-when half ("the JSON tab shows the same totals SQLite shows for tier `xs`"); D11 tiers.
+
+### F7 [new] — Edit the parameters: `keep` 2 → 3 — **NEVER RUN**
+
+- **Setup:** F6 left the database at tier s.
+- **Do:** change `"keep": 2` to `"keep": 3` in the params file and **save**.
+- **Expect:** ONE re-render in place, not revealed (B8). The pie has **china 225,449.88, us-south 172,784.89, france 154,111.45, Other 498,748.00**. The Trace view's SQL for `$.fetch[1]` is the same as at `keep` 2: `take (keep q)` runs in Ermine.
+- **Failure:** B8's.
+- **Bears on:** WP-8 on a DB-backed report.
+
+### F8 [new] — The Trace view: the SQL, rows scanned, db time versus the rest — **NEVER RUN**
+
+- **Setup:** F7's panel (or F5's).
+- **Do:** click **Trace** in the panel's toolbar. Open `SQL · ... bytes` under `$.fetch[1]`, click **Copy**, and run the SQL with `scripts/db.sh sql ErmineSales "<paste>"`. Hover over the preview's status bar item. Read the channel's last line.
+- **Expect** (the numbers are server-trace's MEASURED `DbFetchTopN {"keep":2}` at tier s, n=1, OBSERVABILITY.md §4; yours will differ): (1) the button, `showTrace = control("Trace", "trace");` (`client/src/host/page.ts:635`), is pressed. (2) The headline, from `` `render ${formatMs(wall)}` `` (`client/src/host/page.ts:330`): `render 51 ms: db 11 ms (22%), 3 queries, 19 rows (399 read) · generation <G>`. (3) The connection line, starting at `c.profile ?? "profile"` (`client/src/host/page.ts:344`): **`sales-mssql (mssql) @ 127.0.0.1 / ErmineSales`**. (4) The phase bar: `db` in blue, then `session`, `eval`, `scan`, and the rest. A segment carries its label only when `sg.pct >= 12 ?` (`client/src/host/page.ts:781`) holds. The legend lists them all; `scan` (~31 ms) is Ermine grouping 388 rows into 8. (5) The table's headers come from `for (const [h, cls] of [["#", "num"], ["relation", ""], ["delivery", "opt"], ["rows", "num"], ["scanned", "num"],` (`client/src/host/page.ts:800`), so `#, relation, delivery, rows, scanned, db, total, dialect, share`. Its rows are `$.fetch[1]` fetched 8 / **388**, `$.fetch[2]` fetched 8 / 8, and `$.children[0].props.pieRows` inline 3 / 3. Under `$.fetch[1]` a note ends `rows; Ermine reduced them to ${formatCount(q.rows)}` (`client/src/host/page.ts:838`), i.e. `the database returned 388 rows; Ermine reduced them to 8`. (6) `SQL · ${formatCount(bytes)} bytes` (`client/src/host/page.ts:848`) opens a grey box with `const copy = el("button", "ermine-trace-copy", "Copy");` (`client/src/host/page.ts:736`). The button then reads `clip.writeText(text).then(() => { button.textContent = "Copied"; },` (`client/src/host/page.ts:717`), or else `button.textContent = "Selected: press Ctrl+C";` (`client/src/host/page.ts:711`). The pasted SQL prints `(388 rows affected)`, equal to the `scanned` cell. (7) The status bar: `return { hidden: false, text: "$(json) Ermine: " + label + suffix, tooltip: tooltip + traceLine, severity: "none" };` (`editor/vscode/src/preview-core.js:2163`) with `return wall === null ? "" : " · " + traceMs(wall);` (`editor/vscode/src/preview-core.js:5643`), i.e. `Ermine: DbFetchTopN.report · 51 ms`. The tooltip's last line is `return "render " + traceMs(tt.wallMs || 0) + ": db " + traceMs(tt.dbMs || 0) + ", " +` (`editor/vscode/src/preview-core.js:5651`), i.e. `render 51 ms: db 11 ms, 3 queries, 19 rows (sales-mssql / ErmineSales)`. (8) The channel has ONE line for the render, `return head + "ok " + traceMs(rt === null ? wall : rt) + " (" + (rt === null ? "" : "server " + traceMs(wall) + ": ") +` (`editor/vscode/src/preview-core.js:5699`), e.g. `preview: render <G> ok <RT> ms (server 51 ms: db 11 ms, 3 queries, 19 rows; scan 31 ms, session 4.5 ms, other 4.8 ms) sales-mssql / ErmineSales`. It contains NO SQL.
+- **Failure:** no Trace button (the bundle is stale: `npm run bundle` in `client/`); `no trace: this answer carried none (a server from before DB stage 2 sends none)` (the server is stale); a `scanned` cell that differs from the pasted SQL's row count; any SQL in the channel; the phase bar wider than the panel. **Paste:** the headline, the table as text, and the channel line.
+- **Bears on:** the user's observability brief (*"the queries generated, the results scanned, time spent in db vs elsewhere"*); Q-O1..Q-O6 (DECISIONS.md, taken by the orchestrator, NOT by you: say here if you disagree).
+
+### F9 [new] — Disconnect: the 503 banner names the fix; reconnect asks again — **NEVER RUN**
+
+- **Setup:** F8.
+- **Do:** **Ermine: Disconnect Database**. Save the params file. Then click the database status bar item and type the password.
+- **Expect:** (1) `line: "db: disconnected " + labelText(s.label) + " by the user; the password is forgotten",` (`editor/vscode/src/preview-core.js:6944`), then `() => log("db: the server let the connection go"),` (`editor/vscode/src/extension.js:3593`). The item reads `text: "$(database) " + id + ": not connected"` (`editor/vscode/src/preview-core.js:7007`). (2) The re-render is answered with the server's `private[lsp] val NotConnectedMessage = "not connected"` (`core/src/main/scala/com/clarifi/reporting/ermine/lsp/Preview.scala:2752`), status 503, and the reason `val NotConnected       = "not-connected"` (`core/src/main/scala/com/clarifi/reporting/ermine/lsp/Preview.scala:3060`) (MEASURED on the wire). The panel's banner, built by `: s.label ? labelText(s.label) + " is " + (s.phase === "connecting" || s.phase === "prompting" ? "still connecting" : "not connected")` (`editor/vscode/src/preview-core.js:7070`), `" (" + why + ') -- run "' + CONNECT_COMMAND_TITLE + '", or click the database item in the status bar',` (`editor/vscode/src/preview-core.js:7075`) and `e.status === 0 ? e.message :` (`client/src/host/index.ts:335`), reads **`503: not connected (sales-mssql (mssql) @ 127.0.0.1 is not connected) -- run "Ermine: Connect Database", or click the database item in the status bar`**, and the document is dimmed. (3) The click asks for the password again (F4's box). After `db: connected ...` the line ends `(trigger ? "; re-sending the last render (" + trigger + ")" : ""),` (`editor/vscode/src/preview-core.js:6884`), i.e. `; re-sending the last render (reconnected)`, and the banner goes.
+- **Failure:** a document instead of the 503 after Disconnect; a reconnect with no prompt (the password was not forgotten); no re-render after the reconnect. **Paste:** the `db:` lines and the banner text.
+- **Bears on:** Q-S2 (a); A8's "forgotten on Disconnect".
+
+### F10 [new] — A wrong password: auth, forgotten, Retry — **NEVER RUN**
+
+- **Setup:** F9 connected.
+- **Do:** **Ermine: Disconnect Database**, then **Ermine: Connect Database**, and type a wrong password. Then click **Retry** and type the right one.
+- **Expect:** (1) `line: "db: connect " + labelText(s.label) + " FAILED " + cls + " (" + reason + (forget ? ", password forgotten" : ", password kept") +` (`editor/vscode/src/preview-core.js:6922`), i.e. `db: connect sales-mssql (mssql) @ 127.0.0.1 FAILED auth (connect-auth, password forgotten; attempt 1/3): login failed for <user> @ <host>: SQLServerException: Login failed for user '<user>'. ...`. The message is built by `"login failed for " + p.user.getOrElse("(no user)") + " @ " + hostAndDatabase(p.dialect, p.url)._1 +` (`core/src/main/scala/com/clarifi/reporting/ermine/lsp/Preview.scala:2111`), and the server then scrubs the user and host out of it (MEASURED: `auth`, `kept:false`, 36 ms). (2) An error notification, `return "Ermine: " + labelText(s.label) + ": " + (s.cls || "connect") + ": " + (s.message || "the connect failed");` (`editor/vscode/src/preview-core.js:7015`), with the buttons `const CONNECT_RETRY = "Retry";` (`editor/vscode/src/preview-core.js:6380`) and `const CONNECT_DISCONNECT = "Disconnect";` (`editor/vscode/src/preview-core.js:6381`), shown by `vscode.window.showErrorMessage(text, core.CONNECT_RETRY, core.CONNECT_DISCONNECT).then((choice) => {` (`editor/vscode/src/extension.js:3619`). (3) The item reads `return { hidden: false, text: "$(database) " + id + ": " + (s.cls === "trace" ? "trace is verbose" : s.cls),` (`editor/vscode/src/preview-core.js:6996`), i.e. `sales-mssql: auth`. (4) The panel's banner is `message: connectFailureText(s).replace(/^Ermine: /, "") + ' -- run "' + CONNECT_COMMAND_TITLE + '" to try again',` (`editor/vscode/src/preview-core.js:7029`). (5) **Retry** asks again. The right password connects and re-sends the last render. An `auth` failure is never retried automatically (NEW-2 retries only `unreachable`/`driver` with a held password).
+- **Failure:** Retry connects without asking (a rejected password was kept: A8); the password in any line; no Retry button. **Record in the notes** whether `<user> @ <host>` in the notification reads as a defect to you. The prompt names `ermine @ 127.0.0.1`, while the failure scrubs both.
+- **Bears on:** A8; Q-S3/Q-S4 (the `auth` class and `connect-auth` reason).
+
+### F11 [new] — Stop the database while connected; the bounded retry brings it back — **NEVER RUN**
+
+- **Setup:** F10 connected. **Rewritten for NEW-2** (extension, 2026-09-25 00:22): a failed `unreachable`/`driver` connect with a held password is retried unattended, and a render's 503 connects once first.
+- **Do:** (a) `scripts/db.sh down`, save the params file, and watch the status bar for about 25 s WITHOUT running `up`. (b) Save again (a render), then `scripts/db.sh up` at once, and wait about 20 s. (c) Once (b) has settled, repeat `down`, let the chain run out (about 25 s), run `up`, and save the params file.
+- **Expect** (the order of the first two is a race, INFERRED): (1) the server logs `log("preview: the held connection " + (if (a != null) a.profile.id else "") + " is gone (" + reason + ")")` (`core/src/main/scala/com/clarifi/reporting/ermine/lsp/Preview.scala:2170`), i.e. `... sales-mssql is gone (connection-lost)`, and answers the render 503. (2) The extension logs `line: "db: the server closed the connection of " + labelText(s.label) + " (" + (event.reason || "no reason") + "); reconnecting",` (`editor/vscode/src/preview-core.js:6934`) and connects with the held password: `line: "db: connecting " + labelText(label) + " (" + cause + (needsPassword ? ", password held" : ", no user") + ")",` (`editor/vscode/src/preview-core.js:6837`), i.e. `(disconnected, password held)`. (3) That fails with `unreachable`, password kept, and is retried after `const RECONNECT_DELAYS_MS = Object.freeze([5000, 15000]);` (`editor/vscode/src/preview-core.js:6676`), three attempts in all. Each failure line ends with `"; attempt " + attempt + "/" + RECONNECT_ATTEMPTS +` (`editor/vscode/src/preview-core.js:6923`), e.g. `(connect-unreachable, password kept; attempt 1/3, retrying in 5 s)`. While a retry is armed the item reads `return { hidden: false, text: "$(sync) " + id + ": reconnecting (" + s.retry.attempt + "/" + RECONNECT_ATTEMPTS + ")",` (`editor/vscode/src/preview-core.js:6999`), i.e. **`sales-mssql: reconnecting (2/3)`** and then `(3/3)`. An error notification (NO Retry button) appears for the first failure and for the last one only. After the third failure the item reads `sales-mssql: unreachable` and the panel banner ends `-- run "Ermine: Connect Database" to try again`. (4) In (b) the chain's next attempt finds the server up: `db: connected ...`, and the last render is re-sent, with no click and no prompt. (5) In (c) the chain is over, but the save's 503 first logs `` `preview: render ${mine} answered 503 not connected; connecting once before showing it` `` (`editor/vscode/src/extension.js:2407`), connects without a prompt, and the render draws, with no banner. **Nothing in F11 ever prompts.**
+- **Failure:** the render waits the whole `ermine.preview.timeoutSeconds` instead of answering 503 (record the time); any prompt; more than three attempts in one chain, or retries continuing after **Ermine: Disconnect Database**; a banner in (c) although `up` had finished. **Paste:** the channel from `down` on.
+- **Bears on:** SERVER.md §6.2 liveness (`isValid` before each render); tracker §7.2's automatic reconnect; NEW-2 (FIXED 00:22, extension; to be recorded as a decision in DECISIONS-S2).
+
+### F12 [new] — Tear-down, and put things back — **NEVER RUN**
+
+- **Setup:** anything above.
+- **Do:** **Ermine: Disconnect Database**. In user settings set `"ermine.preview.profile": ""`. *Optional:* `scripts/db.sh unload sales` and then `scripts/db.sh load sales --tier s`. Set `"ermine.preview.target"` back to `panel`.
+- **Expect:** with the profile empty, the database item disappears and renders use the in-memory SQLite again. `DbFetchTopN` then fails (there is no `sales` table in memory; the text is not captured), and `FetchTopN.e` renders. `unload` prints `` other-objects=${left[3]} stage-dir=removed `` (`data/src/load/mssql.ts:193`) with `tables=0 views=0 stamp=0`. `scripts/db.sh down --all` would remove the container and the volume, keeping the image, `/load`, `db.env` and `data/out/` (DOGFOOD.md §12).
+- **Failure:** the database item stays after the profile is emptied; a render still reaches SQL Server. **Leave ErmineSales at tier s** (or xs, if the `db` gate runs next) and say which one in the notes.
+- **Bears on:** D12 (kept until torn down).
 
 ---
 

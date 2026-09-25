@@ -1,6 +1,6 @@
 package com.clarifi.reporting.ermine.json
 
-import com.clarifi.reporting.{ Record, SortOrder }
+import com.clarifi.reporting.{ Record, RenderTrace, SortOrder }
 import com.clarifi.reporting.relational.{ Ext, Scanner }
 import com.clarifi.machines.{ Plan, Process }
 import scala.collection.mutable.ListBuffer
@@ -108,36 +108,38 @@ object Interp {
   def run[G[_]](steps: List[Step], out: Appendable, cfg: WriteConfig, cache: PlanCache)
                (implicit S: Scanner[G], X: Guard[G]): G[WriteStats] = {
     val M = S.M
+    val tr = cfg.trace
     def go(rest: List[Step], st: State): G[WriteStats] = rest match {
-      case Nil => delay(M)(WriteStats(st.done.toList, st.bytes))
+      case Nil => delay(M) { tr.driverEnd(); WriteStats(st.done.toList, st.bytes) }
       case Step.Emit(t) :: tl =>
         M.bind(delay(M) { out.append(t); st.bytes += Rows.utf8Length(t) })(_ => go(tl, st))
       case Step.Eval(next) :: tl =>
         M.bind(delay(M)(next()))(more => go(more ++ tl, st))
       case Step.Call(order, ext, path, k) :: tl =>
-        M.bind(call(order, ext, path, st, cfg.clock))(rows => go(k(rows) ++ tl, st))
+        M.bind(call(order, ext, path, st, cfg.clock, tr))(rows => go(k(rows) ++ tl, st))
       case Step.Splice(d, threshold) :: tl =>
-        M.bind(inlined(d, threshold, out, cache, cfg.clock, st.done.toList))(rs => { st.add(rs); go(tl, st) })
+        M.bind(inlined(d, threshold, out, cache, cfg.clock, st.done.toList, tr))(rs => { st.add(rs); go(tl, st) })
       case Step.Token(d) :: tl =>
         M.bind(delay(M) {
           val start = cfg.clock()
-          attempt(d.path, st.done.toList, start, cfg.clock)(deferred(d, out, cache, start, cfg.clock, 0L, false))
+          tr.enter(d.path, Delivery.Deferred.name)
+          traced(tr, attempt(d.path, st.done.toList, start, cfg.clock, tr)(deferred(d, out, cache, start, cfg.clock, 0L, false)))
         })(rs => { st.add(rs); go(tl, st) })
     }
-    M.bind(delay(M)(new State))(st => go(steps, st))
+    M.bind(delay(M) { tr.driverStart(); new State })(st => go(steps, st))
   }
 
   // ---------------------------------------------------------------------
   // the fetch arm: rows for the report
 
   private def call[G[_]](order: List[(String, SortOrder)], ext: Ext[Nothing, Nothing], path: String,
-                         st: State, clock: () => Long)
+                         st: State, clock: () => Long, tr: RenderTrace)
                         (implicit S: Scanner[G], X: Guard[G]): G[List[Record]] = {
     val M = S.M
-    M.bind(delay(M)((clock(), new ListBuffer[Record]))) { case (start, rows) =>
+    M.bind(delay(M) { tr.enter(path, Delivery.Fetched.name); (clock(), new ListBuffer[Record]) }) { case (start, rows) =>
       val collect: Process[Record, Unit] =
         (Plan.await[Record] flatMap { (r: Record) => rows += r; Plan.emit(()) }).repeatedly
-      def fail(e: Throwable): Throwable = failure(path, st.done.toList, start, clock, e)
+      def fail(e: Throwable): Throwable = failure(path, st.done.toList, start, clock, e, tr)
       val scan: G[Unit] =
         try X.guard(S.scanExt(ext, collect, order)(scalaz.std.anyVal.unitInstance))(fail)
         catch { case NonFatal(e) => throw fail(e) }
@@ -146,7 +148,7 @@ object Interp {
           val got = rows.toList
           val n = got.length.toLong
           // no columns and no bytes: nothing of this scan goes on the wire
-          st.add(logged(RelationStats(path, Delivery.Fetched, 0, n, n, 0L, clock() - start, false)))
+          st.add(traced(tr, logged(RelationStats(path, Delivery.Fetched, 0, n, n, 0L, clock() - start, false))))
           got
         }
       }
@@ -157,17 +159,20 @@ object Interp {
   // the wire arms (J3b, unchanged but for their home)
 
   private def inlined[G[_]](d: Doc.Data, threshold: Option[Long], out: Appendable, cache: PlanCache,
-                            clock: () => Long, completed: List[RelationStats])
+                            clock: () => Long, completed: List[RelationStats], tr: RenderTrace)
                            (implicit S: Scanner[G], X: Guard[G]): G[RelationStats] = {
     val M = S.M
-    M.bind(delay(M)((clock(), new Rows.Sink(d, threshold.getOrElse(Long.MaxValue))))) { case (start, sink) =>
-      def fail(e: Throwable): Throwable = failure(d.path, completed, start, clock, e)
+    M.bind(delay(M) {
+      tr.enter(d.path, Delivery.Inline.name)
+      (clock(), new Rows.Sink(d, threshold.getOrElse(Long.MaxValue)))
+    }) { case (start, sink) =>
+      def fail(e: Throwable): Throwable = failure(d.path, completed, start, clock, e, tr)
       val scan: G[Unit] =
         try X.guard(S.scanExt(d.ext, sink.process, d.order)(scalaz.std.anyVal.unitInstance))(fail)
         catch { case NonFatal(e) => throw fail(e) }
       M.bind(scan) { _ =>
         delay(M) {
-          attempt(d.path, completed, start, clock) {
+          traced(tr, attempt(d.path, completed, start, clock, tr) {
             // a row the encoder refused: the sink left the scan by `Stop` (so the
             // driver tore it down) and kept the error for here
             if (sink.error != null) throw sink.error
@@ -185,7 +190,7 @@ object Interp {
               logged(RelationStats(d.path, Delivery.Inline, d.columns.length, sink.rows, sink.rows,
                                    bytes, clock() - start, false))
             }
-          }
+          })
         }
       }
     }
@@ -229,7 +234,7 @@ object Interp {
   }
 
   private def failure(path: String, completed: List[RelationStats], start: Long, clock: () => Long,
-                      e: Throwable): WriteFailure = e match {
+                      e: Throwable, tr: RenderTrace): WriteFailure = e match {
     case f: WriteFailure => f
     case other =>
       val msg = other match {
@@ -237,11 +242,20 @@ object Interp {
         case _                => Option(other.getMessage).getOrElse(other.toString)
       }
       log.error("relation " + path + " failed ms=" + (clock() - start) + ": " + msg)
+      tr.failed(path, msg)
       WriteFailure(path, msg, completed, other)
   }
 
-  private def attempt[A](path: String, completed: List[RelationStats], start: Long, clock: () => Long)(body: => A): A =
-    try body catch { case NonFatal(e) => throw failure(path, completed, start, clock, e) }
+  private def attempt[A](path: String, completed: List[RelationStats], start: Long, clock: () => Long,
+                         tr: RenderTrace)(body: => A): A =
+    try body catch { case NonFatal(e) => throw failure(path, completed, start, clock, e, tr) }
+
+  /** S2b: the relation's figures to the render's trace (a no-op for
+    * `RenderTrace.Off`), in the one place every arm's stats pass. */
+  private def traced(tr: RenderTrace, rs: RelationStats): RelationStats = {
+    tr.exit(rs.path, rs.delivery.name, rs.columns, rs.rows, rs.scanned, rs.bytes, rs.overThreshold)
+    rs
+  }
 
   /** `a`, evaluated when the action runs (for a lazy `G` such as `DB`). */
   private def delay[G[_], A](M: scalaz.Monad[G])(a: => A): G[A] =

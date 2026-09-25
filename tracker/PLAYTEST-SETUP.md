@@ -238,6 +238,35 @@ short:
 | `ermine.maxHeap` | `""` | empty means the launcher's own `2g`. One step sets `256m` (to make `WpBlow` die of the heap) and one sets `16m` (to see the 64 MB floor refused). Changing it **restarts the server**, because `-Xmx` is fixed at process start |
 | `ermine.preview.target` | **`json`** | the shipped default is `panel` (since 0.1.12), but Groups A–C are written against the JSON tab, which `json` keeps byte-for-byte as 0.1.11 had it. **Group E sets it to `panel`**; E13 tries `both` and a bad value. Window scope |
 | `ermine.preview.writersPath` | not set (= `""`) | empty means the sibling writers checkout (§1), which exists here. Only E14 sets it, to an empty folder, and puts it back. Window scope |
+| `ermine.preview.profiles` + `ermine.preview.profile` | **not here**: USER settings | the DB programme's profile for the local SQL Server (extension 0.1.17, WP-13). The extension reads both from user settings ONLY and ignores a workspace value (tracker §8.1 A2); the example file carries them only as a comment saying so |
+
+**The database profile (DB programme, stage 2).** With the container up
+(`scripts/db.sh status` says `status OK`) and a server that has
+`ermine/preview/connect`, add these two keys to your **USER** settings
+(`Preferences: Open User Settings (JSON)`), **not** to `.vscode/settings.json`:
+
+```jsonc
+"ermine.preview.profiles": [
+  { "id": "sales-mssql", "dialect": "mssql",
+    "url": "jdbc:sqlserver://127.0.0.1:1433;databaseName=ErmineSales;encrypt=true;trustServerCertificate=true",
+    "user": "ermine" }
+],
+"ermine.preview.profile": "sales-mssql"
+```
+
+In workspace settings they are ignored, and the output channel and a status
+bar item say *"profiles set in workspace settings are ignored (user settings
+only)"*: a checked-in `.vscode/settings.json` could point a profile at another
+host and have the password sent there (tracker §8.1 A2). When the server is up
+the extension asks once for the password of `ermine @ 127.0.0.1` (it is
+`ERMINE_DB_PASSWORD` in `~/.config/ermine/db.env`; type it, do not paste it
+into any file). It is held in the window's memory only and forgotten on reload
+or **Ermine: Disconnect Database**. The second status bar item then reads
+`sales-mssql (mssql) @ 127.0.0.1`. Keep `ermine.trace.server` off or at
+`messages`: at `verbose` the extension refuses to connect. There is no
+password field in the profile and the URL may not carry one (it is refused).
+To go back to the in-memory SQLite, set `ermine.preview.profile` to `""` in
+user settings.
 
 `.vscode/` is **not** gitignored in this repository, so `.vscode/settings.json`
 shows up in `git status` as untracked. Delete it when you are done.
@@ -423,9 +452,10 @@ At the end of a session `liveness.sh` should read `sbt=0 … lsp=0 … ermine-jv
   server.** Edit the dates to `2026-01-05` / `2026-03-17` and the rows
   appear. A report of your own that builds an empty relation with plain
   `relation` still gets the 500 (WP-29).
-- **No database, no backends.** Profiles, the held connection, the driver and
-  everything in §7 of `tracker/JSON-WIDGET-PLAYGROUND.md` are not built. The
-  `mssql-jdbc` driver is not even in `build.sbt`.
+- ~~**No database, no backends.**~~ **SUPERSEDED 2026-09-25 by DB stages 0-2:**
+  the local SQL Server, the `mssql-jdbc` driver, profiles, the prompted password,
+  the held connection and the render trace are built (uncommitted at writing,
+  NEVER RUN in a VS Code). See §14.
 - **Remote and virtual workspaces will not work.** The params file is addressed
   with `vscode.Uri.file(fsPath)`, which discards the scheme and the authority,
   so on a `vscode-remote:` or virtual workspace the read and the watcher both
@@ -434,6 +464,23 @@ At the end of a session `liveness.sh` should read `sbt=0 … lsp=0 … ermine-jv
   `bin/ermine-lsp.cmd`.
 - **The `.vsix` ships no licence file** (see §3), and there is no publisher
   registration or marketplace entry — it installs from the file only.
+
+
+## 14. The database
+
+The DB programme (tracker/DB-PLAN.md) gave the preview a real SQL Server: SQL Server 2022 in the
+rootless podman container `ermine-mssql`, listening on `127.0.0.1:1433` only. It holds the databases
+`ErmineSales`, `ErmineHR` and `ErmineScience`, and the login `ermine`. **The walkthrough is
+[`tracker/db/DOGFOOD.md`](db/DOGFOOD.md)**, and checklist group F (F1-F12) is its tick list.
+
+| | |
+|---|---|
+| The one script | `scripts/db.sh` (`--help` lists the exit codes). `status` says whether it is up. `up` / `down` / `down --all` manage the container. `load sales --tier xs\|s\|m\|l`, `verify sales` and `unload sales` manage the data. `sql DB "QUERY"` runs SQL as `ermine`. Details: `tracker/db/README.md`, `CONTAINER.md` and `LOADER.md` |
+| The tier | the walkthrough uses tier **s** (seed 42, 388 rows in the `sales` view). The PR-tier `db` gate needs **xs**. `scripts/db.sh verify sales` prints which tier is loaded |
+| **The profile lives in USER settings (tracker §8.1 A2)** | `ermine.preview.profiles` and `ermine.preview.profile` are read from user settings only (§6 has the JSON). A copy in `.vscode/settings.json` is ignored and named once, because a checked-in settings file could point the profile at another host and collect your password there |
+| The password | `ERMINE_DB_PASSWORD` in `~/.config/ermine/db.env` (mode 600). VS Code asks for it once per window and holds it in memory only. It is not in any setting or file the extension writes, and never in the channel |
+| Versions | extension **0.1.17**, a server compiled from the stage-2 tree, and the client bundle rebuilt (`npm run bundle` in `client/`) for the Trace view |
+| Unverified | every VS Code behaviour in group F. The server half was measured over the wire (`tracker/db/SERVER.md` §6.3, `tracker/db/OBSERVABILITY.md` §4) |
 
 ---
 

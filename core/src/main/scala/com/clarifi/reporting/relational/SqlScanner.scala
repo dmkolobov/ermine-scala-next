@@ -198,7 +198,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     * created.
     */
   def sequenceSql(p : List[SqlStatement])(implicit memoLookup : HashSet[TableName]): DB[List[TableName]] = p.distinct.traverse {
-    case SqlLoad(tn, h, pc) => bulkLoad(h, tn, pc) as List()
+    case SqlLoad(tn, h, pc) => traced("load", Some(tn))(bulkLoad(h, tn, pc)) as List()
     case SqlCreateIfNotExists(tn,pre,create,stats) =>
       if(memoLookup.contains(tn))
           List().point[DB]
@@ -207,9 +207,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
             val tecol = "tableExists"
             val (sql, errorMeansExists) = emitter.checkExists(tn, tecol)
             logger ltrace ("Executing sql: " + sql.run)
-            transaction(withResultSet(sql, rs => {
+            transaction(traced("memo", Some(tn), (b: Boolean) => Some(!b))(withResultSet(sql, rs => {
               rs.next() && (rs.getObject(tecol) ne null)
-            }.point[DB]).flatMap(b =>
+            }.point[DB])).flatMap(b =>
               if (!b) ^(sequenceSql(pre),
                         catchException(sequenceSql(List(create))).flatMap{
                           case -\/(e: SQLException) if errorMeansExists(e) =>
@@ -228,13 +228,39 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       val sql = x.emitSql(emitter)
       val sStart = System.currentTimeMillis
       logger ltrace ("Executing sql: " + sql.run)
-      DB.executeUpdate(sql) as {
+      val kind = x match {
+        case SqlCreate(TableName(_, _, TableName.Temporary), _, _, _) => "temp"
+        case _: SqlCreate                                            => "create"
+        case _                                                       => "statement"
+      }
+      val table = x match { case sc: SqlCreate => Some(sc.table); case _ => None }
+      traced(kind, table)(DB.executeUpdate(sql)) as {
         val sDelta = System.currentTimeMillis - sStart
         logger ltrace (s"Finished executing statement -- took $sDelta ms")
         x match {case sc: SqlCreate => List(sc.table)
                  case _ => List()}
       }
   }.map{_.flatten}
+
+  /** S2b: `act` timed when it RUNS (not when the `traverse` builds it) and
+    * recorded on this thread's `RenderTrace` as one setup statement; a
+    * no-op test and the action itself when no trace is installed.  The
+    * statement is recorded (with `error`) when it throws, too. */
+  private[this]
+  def traced[A](kind: String, tn: Option[TableName], created: A => Option[Boolean] = (_: A) => None)
+               (act: DB[A]): DB[A] = c => {
+    val tr = RenderTrace.current
+    if (!tr.on) act(c)
+    else {
+      val t0 = System.nanoTime
+      val name = tn.map(t => (t.schema :+ t.name).mkString("."))
+      val a = try act(c) catch {
+        case e: Throwable => tr.statement(kind, name, None, System.nanoTime - t0, error = true); throw e
+      }
+      tr.statement(kind, name, created(a), System.nanoTime - t0)
+      a
+    }
+  }
 
   private[this]
   def cleanTempTables(ts: List[TableName]): DB[Unit] =
@@ -243,7 +269,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
              case tn@TableName(_, _, TableName.Temporary) =>
                val sql = dtt(tn)
                logger ltrace ("Executing sql: " + sql.run)
-               DB.executeUpdate(sql)
+               traced("drop", Some(tn))(DB.executeUpdate(sql))
              case _ => ().point[DB]
            }}
       .getOrElse(().point[DB])
@@ -254,8 +280,12 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     implicit val sup = Supply.create
     implicit val memoLookup = new HashSet[TableName]()
     implicit val scopeBuilder = List()
+    val tr = RenderTrace.current
+    val c0 = if (tr.on) System.nanoTime else 0L
     compileMem(Optimizer.optimize(m), (x:Nothing) => x, (x: Nothing) => x) match {
-      case MemPrg(h, p, q, rx) => for {
+      case MemPrg(h, p, q, rx) =>
+        if (tr.on) tr.sqlEmitted(System.nanoTime - c0)
+        for {
         ts <- sequenceSql(p)
         a <- q(order) map (_ andThen f execute)
         _ <- cleanTempTables(ts)
@@ -269,8 +299,12 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     implicit val sup = Supply.create
     implicit val memoLookup = new HashSet[TableName]()
     implicit val scopeBuilder = List()
+    val tr = RenderTrace.current
+    val c0 = if (tr.on) System.nanoTime else 0L
     compileRel(Optimizer.optimize(m), (x:Nothing) => x, (x: Nothing) => x) match {
-      case SqlPrg(p, ns, q, rx) => for {
+      case SqlPrg(p, ns, q, rx) =>
+        if (tr.on) tr.sqlEmitted(System.nanoTime - c0)
+        for {
         ts <- sequenceSql(p)
         a <- scanAndUniq(q, order, ns) map (_ andThen f execute)
         _ <- cleanTempTables(ts)

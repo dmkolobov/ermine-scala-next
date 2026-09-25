@@ -27,13 +27,17 @@ object Strategy {
   *    GREATER than this goes out deferred instead.  An explicit `Inline`
   *    wrapper ignores it.
   *  - `clock`: epoch milliseconds, for the per-relation `ms` figure.
+  *  - `trace` (S2b): the render's `RenderTrace`, which `Interp` tells about
+  *    each relation it enters and leaves; `RenderTrace.Off` (a no-op) for
+  *    every caller but the preview.
   *
   * The deferred tokens' time to live belongs to the `PlanCache`, which mints
   * them, not to this configuration. */
 final case class WriteConfig(default: Delivery = Delivery.Inline,
                              strategy: Strategy = Strategy.Buffered,
                              threshold: Option[Long] = None,
-                             clock: () => Long = WriteConfig.systemClock) {
+                             clock: () => Long = WriteConfig.systemClock,
+                             trace: com.clarifi.reporting.RenderTrace = com.clarifi.reporting.RenderTrace.Off) {
   require(default == Delivery.Inline || default == Delivery.Deferred, "the default delivery is inline or deferred")
   require(threshold.forall(_ >= 0L), "a threshold is a row count")
 }

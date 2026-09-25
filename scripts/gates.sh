@@ -123,7 +123,7 @@ gate_lsp() {
   return $rc
 }
 
-gate_def extension commit 300 "editor/vscode: node --test test/preview-core.test.js (the preview loop's pure decisions; no node_modules)"
+gate_def extension commit 300 "editor/vscode: node --test test/*.test.js (the preview loop's pure decisions and the connect state machine; no node_modules)"
 # WP-10 S1 (U7, the orchestrator's call on the design review's measurement: ~2 s, no precondition but
 # `node`).  Registered straight at COMMIT rather than entering at nightly: it guards the one file every
 # WP-7/8/10/22 decision lives in, and until now no gate ran node at all.  `npm run test:preview` is this
@@ -132,7 +132,7 @@ gate_def extension commit 300 "editor/vscode: node --test test/preview-core.test
 GATE_NOSCOPE[extension]="scripts/mutate.py's operators are Scala-shaped; the suite's own reverse-mutant batteries are run on copies per stage (scratch-widget-preview/)"
 gate_extension() {
   command -v node > /dev/null || { echo "SUMMARY no node on PATH"; return 3; }
-  ( cd editor/vscode && node --test test/preview-core.test.js ); local rc=$?
+  ( cd editor/vscode && node --test test/*.test.js ); local rc=$?
   local t p f
   t=$(grep -oE '^ℹ tests [0-9]+' "$GATE_LOG" | tail -1 | grep -oE '[0-9]+$')
   p=$(grep -oE '^ℹ pass [0-9]+' "$GATE_LOG" | tail -1 | grep -oE '[0-9]+$')
@@ -220,7 +220,7 @@ gate_lean() {
   [[ $audit =~ axiom:\ 0$ ]]
 }
 
-gate_def db pr 900 "the DB suites (TestMsSqlSmoke, TestDbReports) against the local SQL Server + the SQLite twin; keyed also by ErmineSales's load stamp"
+gate_def db pr 900 "the DB suites (TestMsSqlSmoke, TestDbReports, TestPreviewDbLive, TestRenderTraceLive) against the local SQL Server + the SQLite twin; keyed also by ErmineSales's load stamp"
 # DB-PLAN S1 (tracker/db/SERVER.md §5).  Without ERMINE_DB_* the two suites register NOTHING and print a
 # "DB suites: not requested" line, so `suites` (core/test) stays free of SKIPPED; this gate is where they
 # run.  UNAVAILABLE (3), the `lean` convention, when a precondition is missing: the container is not up
@@ -269,7 +269,7 @@ gate_db() {
   ERMINE_DB_URL="${ERMINE_DB_URL:-jdbc:sqlserver://127.0.0.1:1433;databaseName=ErmineSales;encrypt=true;trustServerCertificate=true}" \
   ERMINE_DB_USER="${ERMINE_DB_USER:-ermine}" \
   ERMINE_DB_SQLITE=$lite \
-    sbt -batch 'core/testOnly *TestMsSqlSmoke* *TestDbReports*'
+    sbt -batch 'core/testOnly *TestMsSqlSmoke* *TestDbReports* *TestPreviewDbLive* *TestRenderTraceLive*'
   rc=$?
   # the pattern goes in on a file descriptor, never on grep's command line (REVIEW-S1 R2-2)
   if grep -qFf <(printf '%s\n' "$pw") "$GATE_LOG"; then unset pw; echo "SUMMARY FAIL: the password reached the gate log"; return 1; fi

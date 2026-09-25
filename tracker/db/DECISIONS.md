@@ -77,3 +77,59 @@ Q-S1 (a) profiles list + active id; Q-S2 (a) 503 not-connected until the automat
 ## Observability answers taken BY THE ORCHESTRATOR overnight 2026-09-24 (the user asleep; "Let's see something impressive when I return"), on the design review's recommendations (`scratch-widget-preview/db/DESIGN-OBSERVABILITY.md`, folded at the stage-2 commit); the user has NOT been asked
 
 Q-O1 (a) the trace rides inside every render answer (ok, failed, stuck: a partial trace naming the running query) under a last key `trace`, carrying the generation for free; Q-O2 (a) SQL text shown as is (it is the user's own query in their own editor), through `scrubUrls` as a backstop, capped at 16 KiB with a truncation marker; Q-O3 (a) no setting, always on; an interleaved on/off comparison on landing decides whether the per-row fetch clock stays (drop `fetchMs` rather than add a switch if it costs more than ~3% at tier l); Q-O4 (a) the hand-built Trace view now (Document | JSON | Trace), the trace JSON shaped so Ermine can decode it, and the Ermine-driven follow-on S2f (`Layout.Trace` types, an example trace report, `Ermine: Save Render Trace`) built after S2e if the night allows; Q-O5 (a) one output-channel line per render; Q-O6 (a) the phase bar in the Trace view only. Facts the design rests on: the server already computes per-relation stats on every render (`Write.scala:44-60`, `Interp.scala:124/149/185`) and the preview discards them at `Preview.scala:1510`; the SQL text and execute time exist at `SqlExecution.scala:34-58` and reach only a log4j TRACE line.
+
+
+## Stage 2 (profile, trace, extension, panel, dogfood), folded 2026-09-25
+
+Source: `scratch-widget-preview/db/BOARD.md`, every stage-2 `[decision]` entry, one line each. The user's answers
+Q-S1..Q-S5 and the orchestrator's Q-O1..Q-O6 are in `tracker/db/DECISIONS.md`.
+
+## Decisions on the board
+
+| Time | Role | Decision |
+|---|---|---|
+| 09-24 16:30 | orchestrator | Stage 2 opens: S2a profile + S2b trace in parallel, then S2c extension, S2d panel, S2e dogfood guide (S2f Ermine-driven trace if the night allows); Q-S (a,a,a,a,b), Q-O all (a); morning target = DbFetchTopN from ErmineSales tier s after one password prompt, plus a Trace view |
+| 09-24 23:30 | panel | Owns fenced `// ---- S2d trace (panel) ----` regions: traceOf/traceSummary/traceStatusSuffix/traceOutputLine/traceMessage, panelView.trace, a tenth panel message kind `trace`; never touches connect/password code |
+| 09-24 23:30 | server-profile | Owns `// ===== WP-13 profile =====` regions of Preview.scala: connect/disconnect jobs, 503 not-connected + isValid before placement, Reason gains NotConnected + four connect-* values, scrub extended |
+| 09-24 23:31 | server-trace | New RenderTrace.scala + TraceJson.scala; explicit Preview -> Runner -> Interp (WriteConfig.trace), thread-local only for the last hop into SqlExecution/SqlScanner; `trace` LAST on answers of jobs that ran |
+| 09-24 23:38 | extension | Owns one WP-13 section in preview-core.js (profilesCheck, profileKey = sha256(id,url,user), passwordPrompt, connectRequest, connectReduce...) + glue blocks in extension.js; new unconfirmed trigger TRIGGER_RECONNECTED. (Its "resource scope" choice was SUPERSEDED at 23:48.) |
+| 09-24 23:38 | extension | The connection gets its OWN lazy status bar item; statusBarState stays the preview item's (panel adds the trace suffix to the idle arm) |
+| 09-24 23:45 | panel | Reconciled to server-trace's keys as built (path, running.path/phase, db = connect + db-execute + db-fetch); status bar idle arm gains " · N ms" + tooltip line |
+| 09-24 23:47 | server-trace | Container loaded at tier m for the S2b interleaved A/B, reloaded to s at 00:03 |
+| 09-24 23:48 | extension | Tracker §8.1 A2 RESTORED (orchestrator): both settings USER scope only (`application`, `inspect().globalValue`); a workspace/folder value ignored and named once |
+| 09-25 00:03 | server-profile | Container loaded at tier xs for ONE TestPreviewDbLive run, reloaded to s (seed 42, verify OK) |
+| 09-25 00:10 | dogfood | S2e: DOGFOOD.md steps, checklist group F (NEVER RUN, EXPECTED cited file:line, checked by dogfood-citecheck.py), MORNING-2026-09-25.md; docs only |
+
+Decisions recorded outside `[decision]` tags but binding (from findings/handoffs):
+- 23:48/23:49 server-profile + extension: connect class `connect` is spelled **`unreachable`** as built; tracker §4 updated; the extension also accepts `connect`.
+- 00:06 server-trace: the attributed per-relation phase is **`scan`** (was `encode`); phases are disjoint and sum to wallMs; `fetchMs` stays (A/B at tier m: +0.2% / +1.5% median).
+- 00:08 panel: the rowsRead > rows note reads "the database returned N rows; Ermine reduced them to M" (not "duplicates").
+- 00:10 extension: panelView takes a `connection` field {id, dialect, host, database} of the HELD connection only; never url or user.
+
+## Open questions for the user
+
+1. **Commit `.ermine/preview/Sales/report.params.json`?** It differs from HEAD (`toDay` 2026-12-31 -> 2026-01-30, mtime 2026-09-23 21:05, before stage 2): it is the user's own edit and should stay OUT of the stage-2 commit unless the user says otherwise.
+2. **Q-O3 was answered for tier l; the A/B ran at tier m** (15,402 and 7,716 rows read). Accept m as the landing measurement, or run the tier-l A/B (~15+ min live, needs the container at l)?
+3. **The host-bundle cap** (`client/test/bundle.test.ts:187`, 64 KiB): ermine-host.js is 61,724 B, 3,812 B (5.8%) headroom. The cap guards against zod being pulled in (zod is ~154 KiB) and a zod regex already does that. Raise to 96 KiB, or keep 64 KiB and trim?
+4. The orchestrator answered Q-O1..Q-O6 overnight; the user has not been asked (DECISIONS.md says so). Confirm on waking.
+
+## Findings worth a ticket
+
+| # | Finding | Evidence | Suggested owner |
+|---|---|---|---|
+| F-1 | **groupBy/sumBy is not pushed into SQL.** `DbFetchTopN`'s `$.fetch[1]` (`groupBy {region} (sumBy amount) sales`) is a `Mem`: the SQL is a plain `select amount, day, region, units from sales order by region`; SQL Server returns 388 rows at tier s (7,701 at m) and Ermine reduces them to 8 (12). 30.7 ms of a 51 ms render is `scan`. At tier l (2.05 M fact rows) it would dominate. | OBSERVABILITY.md §4 MEASURED trace (rowsRead 388, rows 8, SQL text quoted); re-rendered by the verifier from that trace: the Trace view shows "the database returned 388 rows; Ermine reduced them to 8" | engine ticket candidate (optimizer: push Mem group/aggregate to SqlPrg for SQL-capable scanners) |
+| F-2 | Evaluation, not the DB, dominates `DbFetchRunning` at tier m (eval 317 of 574 ms). | OBSERVABILITY.md §7 | perf roadmap |
+| F-3 | A profile switch costs a full session boot (~1.6-2.2 s) because the scanner is baked into the Runner. | SERVER.md §6.3, OBSERVABILITY.md §9.3 | WP-13 follow-on |
+| F-4 | `##` temp tables accumulate on the held connection until disconnect (WP-14's 1-hour count not run). | SERVER.md §6.4 P2 | WP-14 |
+| F-5 | A stuck `rs.next()` loop shows rowsRead 0 in the partial trace (counters fold at close). | OBSERVABILITY.md §10 T-2 | leave until seen |
+
+## Added after the dogfood handoff (verifier, 00:28)
+
+| Time | Role | Decision / change |
+|---|---|---|
+| 09-25 00:17 | dogfood | S2e DONE: DOGFOOD.md steps 0-12, checklist group F F1-F12 (NEVER RUN), PLAYTEST-RESULTS group F, PLAYTEST-SETUP §14, MORNING-2026-09-25.md with an ORCHESTRATOR FILLS block; citecheck 121/121 |
+| 09-25 00:22 | extension | **NEW-2 FIXED (posted as a finding; should be logged as a decision):** a failed `unreachable`/`connect`/`driver` connect with the password held is retried unattended after 5 s and 15 s (3 attempts in all), and a render answered 503 connects ONCE when it can without a prompt; auth / kept:false / profile are never retried; Disconnect cancels; status `<id>: reconnecting (n/3)`; 461 tests. Makes DOGFOOD F11 and MORNING's NEW-2 row stale (REVIEW-S2 MF-2) |
+
+Open for the user (additions): NEW-1 (dogfood) the auth notification says `<user> @ <host>` (server scrub) while the prompt names `ermine @ 127.0.0.1`: keep the scrub or re-label in the extension. NEW-2's retry policy (5 s, 15 s, 3 attempts, no setting): accept.
+
+Also decided overnight by the orchestrator, after a dogfood finding (NEW-2): a failed connect of class unreachable or driver with a held password is retried after 5 s and 15 s (three attempts in all; cancelled by Disconnect, a server stop, a profile change or teardown), and a render that gets the 503 with a held password tries one connect first; no setting. The user has NOT been asked.

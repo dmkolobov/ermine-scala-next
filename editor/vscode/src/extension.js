@@ -682,6 +682,29 @@ let paramsNotices = new Set();
  */
 const warnedCredentialFiles = new Set();
 
+// ------------------------------------------ WP-13: the database connection
+//
+// THE PROMPTED PASSWORD LIVES HERE AND NOWHERE ELSE ("prompted pass lives for
+// the window", the user, 2026-09-20): ONE Map in the extension host's memory,
+// keyed by `core.profileKey` (a digest of id, url and user), read in exactly
+// one place -- the argument of `core.connectRequest` in `sendConnect` -- and
+// written in exactly one place, `askPassword`. Never on disk, never in
+// `globalState`/`workspaceState`, never in a webview message, never in a log
+// (the glue pins in test/preview-core.test.js read this file and say so).
+// Gone when the window closes or reloads, on "Ermine: Disconnect Database",
+// on a failed login, and when no configured profile has its key any more.
+const heldPasswords = new Map();
+/** `core.connectReduce`'s state; every transition goes through `applyConnect`. */
+let connState = core.initialConnectState();
+/** The CURRENT client is Running: a connect is only ever sent to one that is. */
+let connRunning = false;
+/** The connection's status bar item, created lazily: nothing when no profile. */
+let dbStatus;
+/** Profile problems already written to the channel, so each is said once. */
+const warnedProfileProblems = new Set();
+/** NEW-2: THE backoff timer (one at a time); the reducer decides, this only waits. */
+let reconnectTimer;
+
 /**
  * LAZY on purpose: a second status bar item that says "no report picked"
  * before anyone has asked for a preview is noise.
@@ -727,6 +750,11 @@ function setPreviewStatus() {
     // server the user is looking at came back because WE restarted it.
     restartProblem: core.restartProblem(restartState),
     restartedByUs: core.restartedByUs(restartState),
+    // ---- S2d trace (panel) ----: §3.2, the idle text's " · 412 ms" and the
+    // tooltip's summary, from the SAME last current answer the panel shows.
+    traceSuffix: core.traceStatusSuffix(core.traceOf(panelAnswers.last)),
+    traceTooltip: core.traceTooltipLine(core.traceOf(panelAnswers.last)),
+    // ---- end S2d trace ----
   });
   if (view.hidden) {
     if (previewStatus) previewStatus.hide();
@@ -1541,6 +1569,10 @@ async function refreshSchemaFor(pick, trigger, why) {
  */
 function onClientStopped(why, from) {
   log(`preview: the language server stopped (${why})`);
+  // WP-13: the connection died with the process. The password stays held --
+  // that is what makes the reconnect on the next `Running` automatic.
+  connRunning = false;
+  applyConnect(core.connectReduce(connState, core.connectEvents.stopped()));
   // M5: bumped on EVERY stop, including one the library performs by itself
   // on the same client object, which `clientEpoch` cannot see.
   stopCount += 1;
@@ -1634,6 +1666,14 @@ function installPreviewHandlers(c, epoch) {
     applyStuck(core.stuckReduce(stuckState, event), core.TRIGGER_RECOVERED);
   });
 
+  // WP-13: the server closed the held connection (a recycle, a scan that
+  // closed it). The user decided the reconnect is AUTOMATIC, with the HELD
+  // password, and that a successful one re-sends the last render.
+  c.onNotification("ermine/preview/disconnected", (params) => {
+    if (stale()) return;
+    applyConnect(core.connectReduce(connState, core.connectEvents.disconnected(params && params.reason)));
+  });
+
   // Section 5's "Server stopped" row, and DD-2's `seq` reset. The library
   // passes through `Starting`, so "Stopped -> Running" is observed as any
   // transition INTO Running.
@@ -1658,6 +1698,17 @@ function installPreviewHandlers(c, epoch) {
         // are holding described a server that is gone.
         lastAnswer = undefined;
         lastServerAnswer = undefined;
+      }
+      // WP-13: EVERY entry into Running connects the active profile -- the
+      // first one is "on activation", a later one is the reconnect after a
+      // restart. IT RUNS BEFORE `applyStuck` ON PURPOSE: the connect is then
+      // already prompting or connecting when `applyStuck`'s `restart`
+      // re-render asks, so that render is DEFERRED to the connect's answer
+      // (one render, under its own trigger and WP-22's consultation) instead
+      // of going out now to a 503 and again after the connect.
+      if (to === "Running") {
+        connRunning = true;
+        connect("running");
       }
       // WP-22 (c): the client leaving Running for ANY reason disarms the
       // grace -- the server died by itself, or the user restarted it, or we
@@ -1735,7 +1786,14 @@ function applyStuck(result, trigger) {
       : "the preview recovered, and every invalidate during the wedge was dropped")
       .catch((err) => log(`preview: could not refresh the parameter schema: ${err && err.stack ? err.stack : err}`));
   }
-  if (fx.rerender) {
+  // WP-13: while a database connect is prompting or in flight, the re-render
+  // waits for its answer and goes out then, ONCE, under THIS trigger and the
+  // same consultation (`rerenderAfterConnect`). A connect is not a render:
+  // it neither consults nor clears the mark.
+  const deferred = fx.rerender &&
+    applyConnect(core.connectReduce(connState, core.connectEvents.deferRender(trigger))).deferred;
+  if (deferred) log("preview: the re-render waits for the database connect (" + trigger + ")");
+  if (fx.rerender && !deferred) {
     // THE SAME FUNCTION THE SEND POINT ASKS (D1/D2 of the delta re-review).
     // No `scheduledAt` here on purpose: the render is being scheduled at
     // this instant, so "was the mark minted after it was scheduled" is
@@ -2288,6 +2346,10 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
   );
 
   let answer;
+  // ---- S2d trace (panel) ----: the extension's own clock around the request,
+  // so the output line can say round trip vs the server's `wallMs`.
+  const sentAtMs = Date.now();
+  // ---- end S2d trace ----
   try {
     // THE REQUEST IS BUILT FROM THE SNAPSHOT, not from the globals (review
     // M2's R9/R10, which swapped each for a live value and survived every
@@ -2335,8 +2397,26 @@ async function renderNow(reason, reveal, trigger, scheduledAt) {
     return;
   }
 
+  // WP-13: the server's 503 "not connected" (Q-S2 (a)) names what to do --
+  // the command, which the connection's status bar item also runs. Any
+  // other answer comes back by identity.
+  // NEW-2: ... but FIRST, once, a connect when one can succeed unattended
+  // (a password is held, or none is needed): the banner is shown only if
+  // that connect fails, and its success re-sends this render.
+  if (core.isNotConnected(answer) && core.renderMayConnect(connState, canReconnectNow())) {
+    log(`preview: render ${mine} answered 503 not connected; connecting once before showing it`);
+    connect("render");
+    setPreviewStatus();
+    return;
+  }
+  answer = core.dressNotConnected(answer, connState);
   lastAnswer = answer;
   panelAnswers = core.panelAnswerStep(panelAnswers, { answer }, generation);
+  // ---- S2d trace (panel) ----: Q-O5 (a), ONE line per answered render, from
+  // the SAME answer the panel's view takes its trace from (never a displaced
+  // or stale one: both returned above). No SQL goes in the channel.
+  log(core.traceOutputLine(answer, Date.now() - sentAtMs));
+  // ---- end S2d trace ----
   // Review nit 5: the Q11 watcher asks whether the last SERVER answer was a
   // placement 404, and a params refusal is not an answer from any server.
   lastServerAnswer = answer;
@@ -2482,6 +2562,8 @@ function panelViewNow() {
     reloading: core.bundleReloading(bundleWatch),
     // WP-11: the writers check the page was built from -- its banner.
     writers: panelWriters,
+    // WP-13: the held connection for the Trace view's line, or null.
+    connection: core.panelConnection(connState),
   });
 }
 
@@ -2979,6 +3061,9 @@ function disposePreview() {
   if (stopped.effects.disarm) log("preview: the automatic restart is disarmed (" + stopped.effects.why + ")");
   clearRestartTimer();
   disposeWatchers();
+  // WP-13: the password dies with the window, whatever the host does next.
+  heldPasswords.clear();
+  clearReconnectTimer();
 }
 
 function restorePick(context) {
@@ -3361,6 +3446,241 @@ async function noticeOrphanParamsFiles(pick, listed) {
 
 // ----------------------------------------------------------------- activate
 
+// ------------------------------------------ WP-13: the database connection
+
+function profileCheckNow() {
+  // A2 (restored): USER SCOPE ONLY. `inspect(...).globalValue` is the only
+  // value read; a workspace or folder value is ignored and named.
+  let check;
+  try {
+    check = core.userScopeProfilesCheck(config().inspect("preview.profiles"), config().inspect("preview.profile"));
+  } catch (err) {
+    check = core.userScopeProfilesCheck(undefined, undefined);
+  }
+  const scope = check.scopeNotice;
+  for (const problem of check.problems.concat(check.activeProblem ? [check.activeProblem] : [], scope ? [scope] : [])) {
+    if (warnedProfileProblems.has(problem)) continue;
+    warnedProfileProblems.add(problem);
+    log("settings: " + problem);
+  }
+  return check;
+}
+
+function traceLevelNow() {
+  return config().get("trace.server", "off");
+}
+
+/**
+ * THE ONE `connect()`. Every path that connects comes here: the client
+ * entering Running (activation, and after a restart), a profile change, the
+ * Connect command, the Retry button, and the server's `disconnected`. The A7
+ * refusal (trace verbose) is the reducer's, so no path can bypass it.
+ */
+function connect(cause) {
+  const check = profileCheckNow();
+  if (!client || !connRunning) {
+    log(`db: not connecting yet (${cause}): the language server is not running; it connects when it is`);
+    return;
+  }
+  const key = core.profileKey(check.active);
+  applyConnect(
+    core.connectReduce(
+      connState,
+      core.connectEvents.request(cause, check, traceLevelNow(), key !== null && heldPasswords.has(key), generation > 0)
+    ),
+    check.active
+  );
+}
+
+/**
+ * The reducer decides; this does what the effects say, in this order, and
+ * returns them. `profile` is the one the event was about (the prompt and the
+ * send need its URL; nothing else does).
+ */
+function applyConnect(result, profile) {
+  const before = connState;
+  connState = result.state;
+  const fx = result.effects;
+  if (fx.line) log(fx.line);
+  if (fx.forget && before.key) heldPasswords.delete(before.key);
+  if (fx.sendDisconnect) sendDisconnect();
+  if (fx.prompt !== null && profile) askPassword(fx.prompt, profile);
+  if (fx.send !== null && profile) sendConnect(fx.send, profile);
+  if (fx.failed) showConnectFailure(fx.offerRetry, fx.notify);
+  if (fx.retryIn !== null) armReconnectTimer(fx.retryToken, fx.retryIn);
+  if (!connState.retry) clearReconnectTimer();
+  if (fx.reconnect) connect(fx.reconnect);
+  if (fx.rerender) rerenderAfterConnect(fx.rerender);
+  setConnectStatus();
+  // the panel's `connection` slot (the Trace view's line) follows the state
+  if (before.phase !== connState.phase || before.database !== connState.database || before.label !== connState.label) {
+    postSnapshot("connection");
+  }
+  return fx;
+}
+
+/**
+ * NEW-2: the one backoff timer. Its expiry goes back to the reducer as an
+ * event carrying the token it was armed with, so a timer that outlived its
+ * chain (Disconnect, a stop, a profile change) does nothing.
+ */
+function armReconnectTimer(token, ms) {
+  clearReconnectTimer();
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = undefined;
+    applyConnect(core.connectReduce(connState, core.connectEvents.retryDue(token)));
+  }, Math.max(0, ms));
+}
+
+function clearReconnectTimer() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
+  }
+}
+
+/**
+ * NEW-2: can the ACTIVE profile reconnect unattended -- it needs no password,
+ * or one is held for its key? Only a boolean ever leaves this function.
+ */
+function canReconnectNow(profile) {
+  const active = profile || profileCheckNow().active;
+  if (!active) return false;
+  return !active.user || heldPasswords.has(core.profileKey(active));
+}
+
+/**
+ * The password box. What comes back goes into the Map for THIS attempt's key
+ * and nowhere else; the reducer is told only whether one came back. A
+ * prompt that a newer attempt has overtaken stores nothing.
+ */
+async function askPassword(serial, profile) {
+  let secret;
+  try {
+    secret = await vscode.window.showInputBox(core.passwordPrompt(profile));
+  } catch (err) {
+    log(`db: the password box failed (${err && err.message ? err.message : err})`);
+    secret = undefined;
+  }
+  const entered = typeof secret === "string" && secret.length > 0;
+  if (entered && serial === connState.serial && connState.phase === "prompting") {
+    heldPasswords.set(core.profileKey(profile), secret);
+  }
+  secret = undefined;
+  applyConnect(core.connectReduce(connState, core.connectEvents.prompted(serial, entered)), profile);
+}
+
+/** `ermine/preview/connect`: the ONLY request that carries the password. */
+async function sendConnect(serial, profile) {
+  const c = client;
+  if (!c) {
+    applyConnect(core.connectReduce(connState, core.connectEvents.rejected(serial, new Error("no language client"), false)), profile);
+    return;
+  }
+  let answer;
+  try {
+    answer = await c.sendRequest("ermine/preview/connect", core.connectRequest(profile, heldPasswords.get(core.profileKey(profile))));
+  } catch (err) {
+    applyConnect(core.connectReduce(connState, core.connectEvents.rejected(serial, err, canReconnectNow(profile))), profile);
+    return;
+  }
+  applyConnect(core.connectReduce(connState, core.connectEvents.answer(serial, answer, canReconnectNow(profile))), profile);
+}
+
+function sendDisconnect() {
+  if (!client || !connRunning) return;
+  client.sendRequest("ermine/preview/disconnect", {}).then(
+    () => log("db: the server let the connection go"),
+    (err) => log(`db: the disconnect request failed (${err && err.message ? err.message : err})`)
+  );
+}
+
+/**
+ * A failed connect: the notification (with Retry / Disconnect after an
+ * authentication failure, A8), and the panel's banner -- built here, since a
+ * connect is not a render, at the current generation so any render replaces
+ * it. Like a params refusal it is never `lastServerAnswer`.
+ */
+function showConnectFailure(offerRetry, notify) {
+  const text = core.connectFailureText(connState);
+  if (picked && generation > 0) {
+    const failure = core.connectFailureAnswer(connState, generation);
+    lastAnswer = failure;
+    panelAnswers = core.panelAnswerStep(panelAnswers, { answer: failure }, generation);
+    present(failure, false).catch((err) => log(`db: could not show the failure: ${err && err.message ? err.message : err}`));
+  }
+  // NEW-2: an unattended retry chain notifies on its first and last failure
+  // only; the status bar counts the attempts in between.
+  if (!notify) return;
+  if (!offerRetry) {
+    vscode.window.showErrorMessage(text);
+    return;
+  }
+  vscode.window.showErrorMessage(text, core.CONNECT_RETRY, core.CONNECT_DISCONNECT).then((choice) => {
+    if (choice === core.CONNECT_RETRY) connect("retry");
+    else if (choice === core.CONNECT_DISCONNECT) disconnectCommand();
+  });
+}
+
+/**
+ * "Every successful connect re-sends the last render" (tracker §7.2), ONCE,
+ * through WP-22's consultation with the trigger the reducer carried: the
+ * `restart` edge's own when that render was deferred, else `reconnected`.
+ * Both are unconfirmed, so a report that wedged the server is held here
+ * exactly as it is after a restart.
+ */
+function rerenderAfterConnect(trigger) {
+  if (!picked) return;
+  const permitted = core.mayAutoRender(wedgeMark, picked, trigger);
+  if (permitted.render) {
+    scheduleRender("the database connection is back", trigger);
+  } else {
+    log("preview: not re-rendering after the connect — " + permitted.why);
+    holdRender(trigger);
+  }
+}
+
+function connectCommand() {
+  const check = profileCheckNow();
+  if (!check.active) {
+    vscode.window.showWarningMessage(
+      "Ermine: " + (check.activeProblem || "no database profile is active; set ermine.preview.profile to one of ermine.preview.profiles")
+    );
+    return;
+  }
+  connect("command");
+}
+
+function disconnectCommand() {
+  applyConnect(core.connectReduce(connState, core.connectEvents.disconnectCommand()));
+}
+
+function onProfileSettingsChanged() {
+  const check = profileCheckNow();
+  for (const key of core.heldKeysToForget(heldPasswords.keys(), check.profiles)) heldPasswords.delete(key);
+  if (core.connectSettingsMoved(connState, check, traceLevelNow())) connect("profile");
+  else setConnectStatus();
+}
+
+function setConnectStatus() {
+  if (previewDisposed) return;
+  const view = core.connectStatusBar(connState);
+  if (view.hidden) {
+    if (dbStatus) dbStatus.hide();
+    return;
+  }
+  if (!dbStatus) {
+    dbStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
+    dbStatus.command = core.CONNECT_COMMAND;
+    if (extContext && extContext.subscriptions) extContext.subscriptions.push(dbStatus);
+  }
+  dbStatus.text = view.text;
+  dbStatus.tooltip = view.tooltip;
+  dbStatus.backgroundColor =
+    view.severity === "warning" ? new vscode.ThemeColor("statusBarItem.warningBackground") : undefined;
+  dbStatus.show();
+}
+
 async function activate(context) {
   channel = vscode.window.createOutputChannel("Ermine");
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -3383,7 +3703,10 @@ async function activate(context) {
     // WP-8 S4 / U3: THE ONE COMMAND THAT MAY REPLACE A PARAMS FILE. This is
     // the ONLY caller of `writeParamsSkeletonCommand`; the orphan notice's
     // button goes through `executeCommand`, the same door the palette uses.
-    vscode.commands.registerCommand(core.SKELETON_COMMAND, () => writeParamsSkeletonCommand(context))
+    vscode.commands.registerCommand(core.SKELETON_COMMAND, () => writeParamsSkeletonCommand(context)),
+    // WP-13: the connection's two commands.
+    vscode.commands.registerCommand(core.CONNECT_COMMAND, () => connectCommand()),
+    vscode.commands.registerCommand(core.DISCONNECT_COMMAND, () => disconnectCommand())
     // NOT "ermine.reloadModules": the server advertises it in
     // executeCommandProvider, and vscode-languageclient registers every such
     // command as a VS Code command itself (ExecuteCommandFeature), forwarding
@@ -3427,6 +3750,18 @@ async function activate(context) {
         } catch (err) {
           log(`preview: could not re-resolve the roots: ${err && err.message ? err.message : err}`);
         }
+      }
+      // WP-13: the profiles, the active id or the trace level. Held
+      // passwords no configured profile has any more are forgotten; the
+      // connection is re-decided only if the ACTIVE profile's key, its
+      // refusal or the trace's verbosity moved (an inactive profile's edit
+      // does nothing, tracker §7.2).
+      if (
+        event.affectsConfiguration("ermine.preview.profiles") ||
+        event.affectsConfiguration("ermine.preview.profile") ||
+        event.affectsConfiguration("ermine.trace.server")
+      ) {
+        onProfileSettingsChanged();
       }
       // WP-22 (c): the grace is read here and nowhere else. A change to 0
       // disarms a grace that is already running; a change to another

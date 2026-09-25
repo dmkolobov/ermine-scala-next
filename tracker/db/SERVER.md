@@ -1,7 +1,7 @@
 # SERVER: the SQL Server driver (WP-12(a)) and the preview connection profile (WP-13 design)
 
 Role `server` of the DB programme (`tracker/DB-PLAN.md` §3). Stage 1 builds the driver and
-the smoke; stage 2 builds §2 below. **Nothing in §2 is wired.** Line numbers are at the
+the smoke; stage 2 builds §2 below. **§2's server half is WIRED as of 2026-09-24 (stage 2a): see §6 for what was built and measured.** Line numbers are at the
 worktree's `f899958b` plus this stage's uncommitted diff. MEASURED = run here; MINED = read
 from the source at the cited line; *external* = documented behaviour, not run.
 
@@ -233,3 +233,76 @@ UNAVAILABLE are workarounds for that, and they make the gate unrunnable whenever
 | nit | `docs/gate-policy.md` now says the key does NOT hash the SQLite twin (the gate builds it from tier xs, which content covers) | — |
 
 Body run once after the fixes, ErmineSales at tier xs (not changed): `SUMMARY db 18 properties, 18 passed, twins equal, totals pinned (ErmineSales tier xs)`, rc 0, SKIPPED 0.
+
+## 6. WP-13 server half, as built (stage 2a, 2026-09-24/25)
+
+Role `server-profile`. Uncommitted at writing. Everything in `lsp/Preview.scala` sits inside
+`// ===== WP-13 profile (server-profile) =====` fences; stage 2b (`// ===== S2b trace =====`)
+shares the file and reads `activeConnection` / `active.database` for the trace's connection line.
+
+### 6.1 The wire
+
+| Method | Shape as built |
+|---|---|
+| `ermine/preview/connect` | `{profile: {id, dialect, url, user?, driver?, scanner?}, password?}` -> `{ok: true, id, dialect, host, database, server, seq}` or `{ok: false, class, message, kept, reason}`; class `auth` \| `driver` \| `unreachable` \| `profile`, reason `connect-<class>`; a connect refused while STUCK adds `"stuck": true` (class `unreachable`, kept) |
+| `ermine/preview/disconnect` | `{}` -> `{ok: true}` (idempotent) |
+| `ermine/preview/disconnected` | notification `{reason: "connection-lost"}` |
+| render while disconnected | `{ok: false, status: 503, message: "not connected", reason: "not-connected", generation, trace}` (the `trace` key is stage 2b's) |
+
+### 6.2 How §2 landed
+
+| §2 item | As built |
+|---|---|
+| 2.1 setting shape (Q-S1 a) | the server takes ONE profile per connect; `ermine.preview.profiles` + `ermine.preview.profile` are read by the extension (stage 2c) |
+| 2.2 password | a `Properties` entry `password` next to `user`, only when the profile has a `user` (a password without one is a `profile` refusal); nothing in `Preview.scala` references it after `getConnection`; `ConnectRequest`/`Profile` `toString` print neither password nor url |
+| 2.3 profile or in-memory | fields `active` / `disconnected` / `connectSeq` (preview thread only). `ensureSession`: dialect+variant from `active` else `sqlite/default`; target `Runners.fromPersistentConnection(active.conn)`, else stage A's `Runners.SQLite(StageAUrl)` unchanged, else (disconnected) the delegate stays unset |
+| queue | `Connect` / `Disconnect` are `Answering` jobs (watchdog, cancel, shutdown drain, crash answer all apply); not "latest wins" |
+| close | owned by `active`, never by `discardSession` (which stays non-blocking on Q10's unwatched recovery path); `closeOffThread` = daemon thread + 2 s bounded join; also on thread exit |
+| login timeout | mssql-jdbc `loginTimeout` property = half `timeoutSeconds`, clamped 1..15 s (15 when the watchdog is off); never `DriverManager.setLoginTimeout` (process-wide); other dialects rely on the watchdog |
+| liveness | `isValid(2)` before each render on a held connection; dead -> discard, close, disconnected, `disconnected {connection-lost}`, the render answers 503 |
+| 2.4 failures (Q-S3 a, Q-S4 a) | validation on the DISPATCH thread before any socket or queue, class `profile`: missing/ill-typed keys, `Backends.scannerFor` refusal, url not `jdbc:`, A9 keys (any case) or `//user:pass@`, subprotocol vs dialect, relative `jdbc:sqlite:` (Q-S5 b), missing sqlite file. Classifier on SQLState / vendor code over the cause chain: `18456`/`28000` auth kept:false; `18486-18488` auth kept:true; `ClassNotFoundException`/`LinkageError`/"No suitable driver" driver; else `unreachable` (incl. TLS, `4060` unknown database) |
+| scrub (A10) | the profile's url (literal), host and user (as tokens: not inside `ermine.preview.*` or `ermine/render`; terms under 3 chars skipped) are scrubbed from every log line and from the top-level `message`/`error` of every answer; documents and traces are never scrubbed |
+| `host`/`database` | parsed from the URL (`databaseName`/`database`/`serverName` for SQL Server, `//host/db` otherwise, `local` + file name for SQLite); `getCatalog` only if the URL names no database. `server` = `getDatabaseProductVersion` |
+
+### 6.3 Tests, run once each
+
+`TestPreviewProfile` (core/test, no env), MEASURED 2026-09-24 23:4x: `Passed: Total 9, Failed 0` — validation
+refusals (17 cases + 100 generated A9 URLs, none echoing password/host/url), well-formed profiles, host/database
+parsing, the classifier on constructed exceptions (incl. a wrapped 18456 and a TLS cause), answer key order,
+the scrub, the login timeout, and a wire bench: refused connect, `driver` failure, disconnect -> 503
+`not-connected` with 0 boots, a held `:memory:` SQLite profile that renders.
+
+`TestPreviewDbLive` (env-gated, added to the `db` gate's testOnly list), MEASURED 2026-09-25 00:04 with
+ErmineSales loaded at xs for the run and reloaded at s (seed 42, verify OK) afterwards. Output (the password
+never appears; 0 hits of a `grep -f` over the full log):
+
+```
+[preview-db] ErmineSales holds tier xs
+[preview-db] in-memory FetchTopN: ok=Some(true) in 5061 ms
+[preview-db] connect answered in 24 ms (request to answer, over the wire): {"jsonrpc":"2.0","id":2,"result":{"ok":true,"id":"sales-mssql","dialect":"mssql","host":"127.0.0.1","database":"ErmineSales","server":"16.00.4295","seq":1}}
+[preview-db] DbFetchTopN on ErmineSales: ok=Some(true) in 2211 ms (includes the re-boot)
+[preview-db] DbFetchTopN again (session warm): ok=Some(true) in 22 ms
+[preview-db] document vs the in-memory twin: bytes differ, modulo row order EQUAL
+[preview-db] disconnect: {"ok":true}; render after it: {"ok":false,"status":503,"message":"not connected","reason":"not-connected","generation":4,"trace":{...}}
+[preview-db] wrong password answered in 36 ms: {"ok":false,"class":"auth","message":"login failed for <user> @ <host>: SQLServerException: Login failed for user '<user>'. ClientConnectionId:...","kept":false,"reason":"connect-auth"}
+[preview-db] log: preview: connected sales-mssql (mssql) @ <host> / ErmineSales in 13 ms, seq 1
+[preview-db] log: preview: connect sales-mssql (mssql) failed in 33 ms: auth (the password is not kept): SQLServerException: Login failed for user '<user>'. ...
+[info] + ... live: connect ErmineSales, render DbFetchTopN == FetchTopN (row order aside), disconnect -> 503, wrong password -> auth kept:false: OK, proved property.
+[info] Passed: Total 1, Failed 0, Errors 0, Passed 1
+```
+
+| Measure | Value (n=1) |
+|---|---|
+| connect, `getConnection` inside the job | 13 ms (the driver class was already loaded by the suite's own stamp query, so this is a warm-JVM login) |
+| connect, request to answer over the wire | 24 ms |
+| first render after connect (session re-boot, the scanner changed) | 2.2 s; the next render 22 ms |
+| wrong password to `auth` answer | 36 ms |
+
+### 6.4 Open
+
+| # | Item |
+|---|---|
+| P1 | A cold-JVM connect (driver class not yet loaded) is not measured. |
+| P2 | `##` temp tables accumulate on the held connection until disconnect (WP-14's 1-hour count is not run). |
+| P3 | the classifier is pinned on constructed exceptions, not on a registered fake `java.sql.Driver` (tracker §8.3's test shape); the live wrong-password case is the real driver. |
+| P4 | the `db` gate still needs ErmineSales at xs (§5's nit); the new suite inherits that. |

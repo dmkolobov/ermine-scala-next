@@ -25,8 +25,9 @@
 // the state it has: folding the nine incremental kinds onto a non-fresh state
 // is not idempotent (`reloadBundle` raises `reloading` and only an ANSWER
 // lowers it), and a fresh fold needs no new decision.  So `snapshot` is an
-// ENVELOPE handled here, not a tenth reducer kind -- `MESSAGE_KINDS` stays nine
-// and `applyMessage` returns by identity if it is ever handed one.
+// ENVELOPE handled here, not a reducer kind -- `MESSAGE_KINDS` holds the ten
+// message kinds (S2d added `trace`) and `applyMessage` returns by identity if
+// it is ever handed a snapshot.
 //
 // Nothing here decides anything either (D10): the snapshot REPLACES the state,
 // wholesale, with what the extension says is true.
@@ -38,7 +39,7 @@ import {
 
 export * from "./index";
 
-/** The resync envelope: the whole truth, as the nine kinds.  Since S2 it is
+/** The resync envelope: the whole truth, as the message kinds.  Since S2 it is
  *  the ONLY thing the extension posts, with a `seq` that rises by one per post
  *  (`editor/vscode/src/preview-core.js` `panelSnapshot`). */
 export interface SnapshotEnvelope { kind: "snapshot"; messages: readonly HostMessage[]; seq?: number }
@@ -153,12 +154,14 @@ export interface VsCodeApi {
  *  review §2(a): "Use setState only for viewer-local trivia the extension
  *  cannot know"): kept with `setState`/`getState`, never posted to the
  *  extension and never part of the reducer or `PageModel`. */
-export type PanelView = "document" | "json";
+export type PanelView = "document" | "json" | "trace";
 
-/** The view a `getState()` value restores: `json` only when it says so
- *  exactly; anything else (nothing stored, another shape) is the Document. */
+/** The view a `getState()` value restores: `json` or (S2d) `trace` only when
+ *  it says so exactly; anything else (nothing stored, another shape) is the
+ *  Document. */
 export function restoredView(state: unknown): PanelView {
-  return state !== null && typeof state === "object" && (state as { view?: unknown }).view === "json" ? "json" : "document";
+  const v = state !== null && typeof state === "object" ? (state as { view?: unknown }).view : undefined;
+  return v === "json" || v === "trace" ? v : "document";
 }
 
 /**
@@ -194,6 +197,158 @@ export function jsonViewText(host: HostState): string {
   }
 }
 
+// ---- S2d trace (panel) ----
+//
+// THE TRACE VIEW'S PURE HALF (DB programme stage 2, DESIGN-OBSERVABILITY §3.1).
+// The payload is what the extension's `traceOf` (`editor/vscode/src/
+// preview-core.js`) built from the last CURRENT answer: already normalised, so
+// nothing here decides which trace belongs to the view (D10).  Everything below
+// still reads it defensively -- a payload from a newer extension must draw
+// something, never throw.
+
+/** One query of a normalised trace, as far as the view reads it. */
+export interface TraceQueryView {
+  relation: string; delivery: string | null; dialect: string | null;
+  sql: string | null; sqlBytes: number | null; sqlTruncated: boolean;
+  rows: number | null; rowsRead: number | null; scanned: number | null; ms: number | null; dbMs: number | null;
+  setup: readonly { kind: string; table: string | null; rows: number | null; ms: number | null; created: boolean | null }[];
+  overThreshold: boolean; error: boolean; note: string | null;
+}
+/** A normalised trace, as far as the view reads it (see `traceOf`). */
+export interface TraceView {
+  generation: number | null; failed: boolean; status: number | null;
+  wallMs: number | null;
+  phases: readonly { name: string; ms: number; cached: boolean }[];
+  queries: readonly TraceQueryView[];
+  totals: { dbMs: number; otherMs: number; wallMs: number; queries: number; rows: number | null; rowsRead: number | null };
+  connection: { kind: string | null; dialect: string | null; profile: string | null; database: string | null; host: string | null } | null;
+  partial: boolean;
+  running: { relation: string | null; phase: string | null; sql: string | null; sinceMs: number | null } | null;
+  truncated: { queries: number } | null;
+}
+
+const num = (v: unknown): number | null => typeof v === "number" && Number.isFinite(v) ? v : null;
+const str = (v: unknown): string | null => typeof v === "string" && v.trim() !== "" ? v : null;
+const obj = (v: unknown): Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
+const arr = (v: unknown): unknown[] => Array.isArray(v) ? v : [];
+
+/** Read a trace payload into the view's shape.  Total: junk gives an empty trace. */
+export function readTrace(payload: unknown): TraceView {
+  const t = obj(payload);
+  const tot = obj(t["totals"]);
+  const conn = t["connection"] !== null && typeof t["connection"] === "object" ? obj(t["connection"]) : null;
+  const run = t["running"] !== null && typeof t["running"] === "object" ? obj(t["running"]) : null;
+  const trunc = t["truncated"] !== null && typeof t["truncated"] === "object" ? obj(t["truncated"]) : null;
+  const queries: TraceQueryView[] = arr(t["queries"]).map((q0) => {
+    const q = obj(q0);
+    return {
+      relation: str(q["relation"]) ?? "?", delivery: str(q["delivery"]), dialect: str(q["dialect"]),
+      sql: typeof q["sql"] === "string" ? q["sql"] as string : null, sqlBytes: num(q["sqlBytes"]), sqlTruncated: q["sqlTruncated"] === true,
+      rows: num(q["rows"]), rowsRead: num(q["rowsRead"]), scanned: num(q["scanned"]) ?? num(q["rowsRead"]), ms: num(q["ms"]), dbMs: num(q["dbMs"]),
+      setup: arr(q["setup"]).map((s0) => {
+        const x = obj(s0);
+        return { kind: str(x["kind"]) ?? "statement", table: str(x["table"]), rows: num(x["rows"]), ms: num(x["ms"]),
+          created: typeof x["created"] === "boolean" ? x["created"] as boolean : null };
+      }),
+      overThreshold: q["overThreshold"] === true, error: q["error"] === true, note: str(q["note"]),
+    };
+  });
+  const wall = num(t["wallMs"]) ?? num(tot["wallMs"]);
+  const db = num(tot["dbMs"]) ?? 0;
+  return {
+    generation: num(t["generation"]), failed: t["failed"] === true, status: num(t["status"]),
+    wallMs: wall,
+    phases: arr(t["phases"]).map((p0) => {
+      const p = obj(p0);
+      return { name: str(p["name"]) ?? "?", ms: Math.max(0, num(p["ms"]) ?? 0), cached: p["cached"] === true };
+    }),
+    queries,
+    totals: {
+      dbMs: db, otherMs: num(tot["otherMs"]) ?? Math.max(0, (wall ?? 0) - db), wallMs: num(tot["wallMs"]) ?? wall ?? 0,
+      queries: num(tot["queries"]) ?? queries.length, rows: num(tot["rows"]), rowsRead: num(tot["rowsRead"]),
+    },
+    connection: conn === null ? null : {
+      kind: str(conn["kind"]), dialect: str(conn["dialect"]), profile: str(conn["profile"]),
+      database: str(conn["database"]), host: str(conn["host"]),
+    },
+    partial: t["partial"] === true,
+    running: run === null ? null : { relation: str(run["relation"]) ?? str(run["path"]), phase: str(run["phase"]), sql: typeof run["sql"] === "string" ? run["sql"] as string : null, sinceMs: num(run["sinceMs"]) },
+    truncated: trunc === null || num(trunc["queries"]) === null ? null : { queries: num(trunc["queries"])! },
+  };
+}
+
+/** `1676` -> `1,676`; the same grouping `preview-core.js`'s output line uses. */
+export function formatCount(n: number): string {
+  const whole = Math.round(n);
+  const sign = whole < 0 ? "-" : "";
+  return sign + String(Math.abs(whole)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+/** Milliseconds: one decimal under 10 ms (an in-memory scan is 0.4 ms), whole and grouped above. */
+export function formatMs(ms: number): string {
+  return (Math.abs(ms) < 10 ? (Math.round(ms * 10) / 10).toFixed(1) : formatCount(ms)) + " ms";
+}
+
+/** The phases that ARE the database (§2.1: `dbMs` = sql + connect). */
+const DB_PHASES = ["sql", "connect", "db-execute", "db-fetch"];
+
+export interface TraceSegment { readonly key: string; readonly label: string; readonly ms: number; readonly pct: number }
+
+/**
+ * The phase bar, left to right: `db` first, then every other phase in the
+ * server's (pipeline) order, then `other`, the part of the wall time no phase
+ * explains (§2.1's rule: never computed by summing, so a gap shows).  Widths
+ * are percentages of the larger of the wall time and the segments' sum, and
+ * they SUM TO 100 exactly (the last segment absorbs the rounding).  A trace
+ * with no time at all has no bar.
+ */
+export function traceSegments(t: TraceView): TraceSegment[] {
+  const raw: { key: string; label: string; ms: number }[] = [];
+  if (t.totals.dbMs > 0) raw.push({ key: "db", label: "db", ms: t.totals.dbMs });
+  for (const p of t.phases) {
+    if (DB_PHASES.includes(p.name) || p.ms <= 0) continue;
+    raw.push({ key: p.name, label: p.name, ms: p.ms });
+  }
+  const explained = raw.reduce((a, s) => a + s.ms, 0);
+  const wall = t.totals.wallMs > 0 ? t.totals.wallMs : explained;
+  if (wall - explained > 0.05) raw.push({ key: "other", label: "other", ms: wall - explained });
+  const total = Math.max(wall, explained);
+  if (!(total > 0) || raw.length === 0) return [];
+  let used = 0;
+  return raw.map((s, i) => {
+    const pct = i === raw.length - 1 ? Math.round((100 - used) * 100) / 100 : Math.round(s.ms / total * 10000) / 100;
+    used += pct;
+    return { ...s, pct };
+  });
+}
+
+/** §3.1's headline: `render 412 ms: db 310 ms (75%), 3 queries, 1,676 rows · generation 12`. */
+export function traceHeadline(t: TraceView): string {
+  const wall = t.totals.wallMs;
+  const pct = wall > 0 ? ` (${Math.round(t.totals.dbMs / wall * 100)}%)` : "";
+  const q = t.totals.queries;
+  const rows = t.totals.rows ?? t.queries.reduce((a, x) => a + (x.rows ?? 0), 0);
+  const head = t.partial ? `stuck: partial trace, ${formatMs(wall)} so far` : `render ${formatMs(wall)}`;
+  return `${head}: db ${formatMs(t.totals.dbMs)}${pct}, ${formatCount(q)} ${q === 1 ? "query" : "queries"}, ` +
+    `${formatCount(rows)} ${rows === 1 ? "row" : "rows"}` +
+    (t.totals.rowsRead !== null && t.totals.rowsRead > rows ? ` (${formatCount(t.totals.rowsRead)} read)` : "") + (t.generation === null ? "" : ` · generation ${t.generation}`);
+}
+
+/** §5's connection line.  The in-memory database is said to be per render, so
+ *  a memo "created" on every render is not read as a bug. */
+export function traceConnectionText(t: TraceView): string {
+  const c = t.connection;
+  if (c === null) return "connection: not reported";
+  if (c.kind === "in-memory" || (c.profile === null && c.kind !== "profile")) {
+    return `in-memory ${c.dialect ?? "sqlite"} (per render: memo tables are rebuilt every time)`;
+  }
+  return `${c.profile ?? "profile"}${c.dialect ? ` (${c.dialect})` : ""}${c.host ? ` @ ${c.host}` : ""}${c.database ? ` / ${c.database}` : ""}`;
+}
+
+/** What the Trace view says when the last answer carried no trace. */
+export const NO_TRACE_FAILED = "no trace: the render did not reach the server (or the server sends none)";
+export const NO_TRACE_OK = "no trace: this answer carried none (a server from before DB stage 2 sends none)";
+// ---- end S2d trace ----
+
 /** `window.ErmineClient`, as far as this page uses it.  Typed HERE, not
  *  imported: importing `../index` would pull zod into this bundle
  *  (`(b-host-surface)` forbids it). */
@@ -207,6 +362,9 @@ interface ClientGlobal {
 
 export interface BootWindow {
   document: Document;
+  /** S2d: the Trace view's Copy button; absent or refusing, the SQL is selected instead. */
+  navigator?: { clipboard?: { writeText?(text: string): Promise<unknown> } };
+  getSelection?(): Selection | null;
   addEventListener(type: "message", listener: (ev: { data: unknown }) => void): void;
   ErmineClient?: ClientGlobal;
   ermine_htmlwriter?: unknown;
@@ -314,6 +472,10 @@ const JSON_PAPER = `#${PREVIEW_ROOT_ID} .ermine-json`;
  *  other is editor text on the editor background with a button-coloured
  *  border.  Not dimmed with the document (it is how you read the answer). */
 const VIEWBAR = `#${PREVIEW_ROOT_ID} .ermine-viewbar`;
+/** S2d: the Trace view, drawn on the same white paper as the JSON view, so
+ *  every colour in it is FIXED and its contrast is measured once, whatever the
+ *  theme (the page test pins each pair at >= 4.5:1). */
+const TRACE_PAPER = `#${PREVIEW_ROOT_ID} .ermine-trace`;
 const PAGE_CSS = `
 #${PREVIEW_ROOT_ID}{position:relative;font-family:var(--vscode-font-family);font-size:var(--vscode-font-size,13px);color:var(--vscode-editor-foreground)}
 ${PAPER}{background:#fff;color:#222;color-scheme:light;font-size:13px;padding:10px 14px;border-radius:3px}
@@ -337,6 +499,40 @@ ${VIEWBAR} button[aria-pressed=true]{background:var(--vscode-button-background,#
 ${VIEWBAR} button:focus-visible{outline:1px solid var(--vscode-focusBorder,#007fd4);outline-offset:2px}
 ${JSON_PAPER}{background:#fff;color:#222;color-scheme:light;margin:0;padding:10px 14px;border-radius:3px;font-family:var(--vscode-editor-font-family,monospace);font-size:12px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;tab-size:2}
 ${JSON_PAPER}[hidden]{display:none}
+${TRACE_PAPER}{background:#fff;color:#222;color-scheme:light;padding:10px 14px;border-radius:3px;font-size:13px;line-height:1.4}
+${TRACE_PAPER}[hidden]{display:none}
+${TRACE_PAPER} .ermine-trace-head{font-weight:600;font-size:14px}
+${TRACE_PAPER} .ermine-trace-sub{color:#555}
+${TRACE_PAPER} .ermine-trace-failed{color:#b00020}
+${TRACE_PAPER} .ermine-trace-bar{display:flex;height:22px;margin:10px 0 4px;border:1px solid #767676;border-radius:2px;overflow:hidden}
+${TRACE_PAPER} .ermine-trace-seg{flex:none;min-width:0;box-sizing:border-box;padding:0;overflow:hidden;white-space:nowrap;font-size:11px;line-height:22px;color:#fff;background:#4d5761}
+${TRACE_PAPER} .ermine-trace-seg:not(:empty){padding:0 4px}
+${TRACE_PAPER} .ermine-trace-seg[data-phase=db]{background:#0b5cad}
+${TRACE_PAPER} .ermine-trace-seg[data-tone=b]{background:#646e78}
+${TRACE_PAPER} .ermine-trace-seg[data-phase=other]{background:#e4e7ea;color:#222}
+${TRACE_PAPER} .ermine-trace-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;margin-bottom:10px}
+${TRACE_PAPER} .ermine-trace-swatch{display:inline-block;width:10px;height:10px;margin-right:4px;border:1px solid #767676;vertical-align:-1px;background:#4d5761}
+${TRACE_PAPER} .ermine-trace-swatch[data-phase=db]{background:#0b5cad}
+${TRACE_PAPER} .ermine-trace-swatch[data-tone=b]{background:#646e78}
+${TRACE_PAPER} .ermine-trace-swatch[data-phase=other]{background:#e4e7ea}
+${TRACE_PAPER} .ermine-trace-scroll{overflow-x:auto}
+${TRACE_PAPER} table.ermine-trace-queries{border-collapse:collapse;width:100%;font-size:12px}
+${TRACE_PAPER} .ermine-trace-queries th{text-align:left;font-weight:600;color:#222;border-bottom:1px solid #767676;padding:3px 8px;white-space:nowrap}
+${TRACE_PAPER} .ermine-trace-queries td{padding:3px 8px;border-top:1px solid #ddd;vertical-align:top}
+${TRACE_PAPER} .ermine-trace-queries .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+${TRACE_PAPER} .ermine-trace-queries tr.ermine-trace-sqlrow td{border-top:none;padding-top:0}
+${TRACE_PAPER} .ermine-trace-queries tr.ermine-trace-error td{color:#b00020}
+${TRACE_PAPER} .ermine-trace-rel{font-family:var(--vscode-editor-font-family,monospace)}
+${TRACE_PAPER} .ermine-trace-track{width:80px;height:8px;margin-top:4px;background:#dde6f0}
+${TRACE_PAPER} .ermine-trace-fill{height:8px;background:#0b5cad}
+${TRACE_PAPER} summary{cursor:pointer;color:#0b5cad}
+${TRACE_PAPER} pre.ermine-trace-sql{background:#f4f5f7;color:#222;margin:4px 0;padding:6px 8px;max-height:320px;overflow:auto;font-family:var(--vscode-editor-font-family,monospace);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+${TRACE_PAPER} button.ermine-trace-copy{font:inherit;font-size:12px;padding:1px 8px;margin-top:4px;cursor:pointer;background:#fff;color:#0b5cad;border:1px solid #0b5cad;border-radius:2px}
+${TRACE_PAPER} button.ermine-trace-copy:focus-visible{outline:2px solid #0b5cad;outline-offset:2px}
+${TRACE_PAPER} .ermine-trace-note{background:#fff4ce;color:#4a3700;border-left:3px solid #8a6d00;padding:4px 8px;margin:6px 0;font-size:12px}
+${TRACE_PAPER} .ermine-trace-empty{color:#555}
+${TRACE_PAPER} .ermine-trace-rel{overflow-wrap:anywhere}
+@media (max-width:560px){${TRACE_PAPER}{padding:8px 10px}${TRACE_PAPER} .ermine-trace-queries .opt{display:none}${TRACE_PAPER} .ermine-trace-queries th,${TRACE_PAPER} .ermine-trace-queries td{padding:3px 4px}}
 ${PAPER}.ermine-offstage[hidden]{display:block;visibility:hidden;position:absolute;top:0;left:0;right:0;height:0;overflow:hidden;pointer-events:none}
 .ermine-banner{display:flex;gap:1em;align-items:center;padding:.4em .8em;margin-bottom:.6em;border-left:4px solid var(--vscode-focusBorder,#888)}
 .ermine-banner[hidden]{display:none}
@@ -399,6 +595,10 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
   // WP-31: the toggle.  The view is read ONCE from the webview's own state
   // and written back on every click; it never reaches the extension.
   let viewbar: HTMLElement, showDoc: HTMLButtonElement, showJson: HTMLButtonElement, json: HTMLPreElement;
+  // S2d: the third view, and the key of what it last drew (so a stale toggle
+  // does not rebuild it and collapse an expanded SQL).
+  let showTrace: HTMLButtonElement, traceBox: HTMLElement;
+  let traceKey: string | null = null;
   let view: PanelView = "document";
   try { view = restoredView(api.getState?.()); } catch { /* no state: the Document view */ }
 
@@ -432,13 +632,18 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
     };
     showDoc = control("Document", "document");
     showJson = control("JSON", "json");
-    viewbar.append(showDoc, showJson);
+    showTrace = control("Trace", "trace");
+    viewbar.append(showDoc, showJson, showTrace);
     area = doc.createElement("div");
     area.className = "ermine-document";
     json = doc.createElement("pre");
     json.className = "ermine-json";
     json.setAttribute("aria-label", "The answer as JSON");
-    root.append(banner, hint, viewbar, area, json);
+    traceBox = doc.createElement("div");
+    traceBox.className = "ermine-trace";
+    traceBox.setAttribute("role", "region");
+    traceBox.setAttribute("aria-label", "What the render did");
+    root.append(banner, hint, viewbar, area, json, traceBox);
   };
 
   /** WP-31: the viewer's choice.  Stored with the webview's `setState`, merged
@@ -471,9 +676,12 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
     viewbar.hidden = !answered;
     showDoc.setAttribute("aria-pressed", String(view === "document"));
     showJson.setAttribute("aria-pressed", String(view === "json"));
-    area.hidden = !p.showDocument || view === "json";
-    // hidden by the JSON view, not for want of a document: keep it laid out
-    area.classList.toggle("ermine-offstage", p.showDocument && view === "json");
+    showTrace.setAttribute("aria-pressed", String(view === "trace"));
+    area.hidden = !p.showDocument || view !== "document";
+    // hidden by the JSON or Trace view, not for want of a document: keep it laid out
+    area.classList.toggle("ermine-offstage", p.showDocument && view !== "document");
+    traceBox.hidden = view !== "trace" || !answered;
+    if (view === "trace" && answered) drawTrace();
     area.classList.toggle("ermine-dimmed", p.dimmed);
     json.hidden = view !== "json" || !answered;
     if (view === "json") {
@@ -487,6 +695,182 @@ export function boot(win: BootWindow, api: VsCodeApi): PageHandle {
       if (json.textContent !== text) json.textContent = text;
     }
   };
+
+  // ---- S2d trace (panel) ----
+  /** Copy: the clipboard when the webview has one, else the SQL is SELECTED
+   *  (and the log says why), so Ctrl+C still works.  Never markup. */
+  const copySql = (text: string, pre: HTMLElement, button: HTMLButtonElement): void => {
+    const select = (why: string): void => {
+      try {
+        const sel = win.getSelection?.() ?? doc.getSelection?.() ?? null;
+        const range = doc.createRange();
+        range.selectNodeContents(pre);
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      } catch { /* nothing more to do: the <pre> is selectable by hand */ }
+      button.textContent = "Selected: press Ctrl+C";
+      log(`trace: ${why}; the SQL is selected instead`);
+    };
+    const clip = win.navigator?.clipboard;
+    if (clip && typeof clip.writeText === "function") {
+      try {
+        clip.writeText(text).then(() => { button.textContent = "Copied"; },
+          (e: unknown) => select(`the clipboard refused (${(e as Error)?.message ?? String(e)})`));
+      } catch (e) { select(`the clipboard refused (${(e as Error)?.message ?? String(e)})`); }
+    } else select("this webview has no clipboard");
+  };
+
+  const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
+    const e = doc.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
+
+  /** A SQL text in a <pre> (textContent ONLY -- the text is the user's query,
+   *  never markup) with its Copy button. */
+  const sqlBlock = (sql: string): HTMLElement => {
+    const wrap = el("div", "ermine-trace-sqlbox");
+    const pre = el("pre", "ermine-trace-sql");
+    pre.textContent = sql;
+    const copy = el("button", "ermine-trace-copy", "Copy");
+    copy.type = "button";
+    copy.addEventListener("click", () => copySql(sql, pre, copy));
+    wrap.append(copy, pre);
+    return wrap;
+  };
+
+  const drawTrace = (): void => {
+    const payload = page.host.trace?.payload ?? null;
+    const failedNoTrace = page.host.error !== null;
+    let key: string;
+    try { key = `${failedNoTrace}:${JSON.stringify(payload)}`; } catch { key = `${failedNoTrace}:<unserialisable>`; }
+    if (key === traceKey) return;
+    traceKey = key;
+    if (payload === null) {
+      traceBox.replaceChildren(el("div", "ermine-trace-empty", failedNoTrace ? NO_TRACE_FAILED : NO_TRACE_OK));
+      return;
+    }
+    const t = readTrace(payload);
+    const parts: HTMLElement[] = [el("div", "ermine-trace-head", traceHeadline(t))];
+    if (t.failed) {
+      parts.push(el("div", "ermine-trace-sub ermine-trace-failed",
+        `from the failed render${t.generation === null ? "" : ` (generation ${t.generation})`}` +
+        `${t.status === null ? "" : `, status ${t.status}`}`));
+    }
+    parts.push(el("div", "ermine-trace-sub ermine-trace-conn", traceConnectionText(t)));
+    if (t.partial) {
+      const r = t.running;
+      const note = el("div", "ermine-trace-note ermine-trace-partial",
+        "partial: the watchdog answered before the render finished; this is what had run" +
+        (r === null ? "." : `, and this query was still running: ${r.relation ?? "?"}` +
+          (r.phase === null ? "" : ` in ${r.phase}`) + (r.sinceMs === null ? "" : ` (for ${formatMs(r.sinceMs)})`)));
+      parts.push(note);
+      if (r !== null && r.sql !== null) parts.push(sqlBlock(r.sql));
+    }
+    // the phase bar: CSS widths only, no chart library (§3.1)
+    const segs = traceSegments(t);
+    if (segs.length > 0) {
+      const bar = el("div", "ermine-trace-bar");
+      bar.setAttribute("role", "img");
+      bar.setAttribute("aria-label", "time by phase: " + segs.map((x) => `${x.label} ${formatMs(x.ms)}`).join(", "));
+      const legend = el("div", "ermine-trace-legend");
+      let grey = 0;
+      for (const sg of segs) {
+        const tone = sg.key === "db" || sg.key === "other" ? null : (grey++ % 2 === 0 ? "a" : "b");
+        const seg = el("div", "ermine-trace-seg", sg.pct >= 12 ? `${sg.label} ${formatMs(sg.ms)}` : "");
+        seg.setAttribute("data-phase", sg.key);
+        if (tone) seg.setAttribute("data-tone", tone);
+        seg.style.width = `${sg.pct}%`;
+        seg.title = `${sg.label}: ${formatMs(sg.ms)} (${sg.pct}%)`;
+        bar.append(seg);
+        const item = el("span", "ermine-trace-key");
+        const sw = el("span", "ermine-trace-swatch");
+        sw.setAttribute("data-phase", sg.key);
+        if (tone) sw.setAttribute("data-tone", tone);
+        item.append(sw, doc.createTextNode(`${sg.label} ${formatMs(sg.ms)}`));
+        legend.append(item);
+      }
+      parts.push(bar, legend);
+    }
+    // the per-query table
+    if (t.queries.length > 0) {
+      const table = el("table", "ermine-trace-queries");
+      const head = el("tr");
+      for (const [h, cls] of [["#", "num"], ["relation", ""], ["delivery", "opt"], ["rows", "num"], ["scanned", "num"],
+        ["db", "num"], ["total", "num"], ["dialect", "opt"], ["share", "opt"]] as const) {
+        const th = el("th", cls || undefined, h);
+        th.scope = "col";
+        head.append(th);
+      }
+      table.append(el("thead"));
+      table.tHead!.append(head);
+      const body = el("tbody");
+      const slowest = Math.max(0, ...t.queries.map((q) => q.ms ?? 0));
+      t.queries.forEach((q, i) => {
+        const tr = el("tr", q.error ? "ermine-trace-query ermine-trace-error" : "ermine-trace-query");
+        const cell = (text: string, cls?: string): HTMLTableCellElement => { const td = el("td", cls, text); tr.append(td); return td; };
+        cell(String(i + 1), "num");
+        cell(q.relation, "ermine-trace-rel");
+        cell([q.delivery, q.error ? "(failed)" : null].filter((x) => x !== null).join(" "), "opt");
+        cell(q.rows === null ? "" : formatCount(q.rows), "num");
+        // "scanned" = rows the DATABASE returned (rowsRead); `rows` = what the report got
+        const read = q.rowsRead ?? q.scanned;
+        cell(read === null ? "" : formatCount(read), "num");
+        cell(q.dbMs === null ? "" : formatMs(q.dbMs), "num");
+        cell(q.ms === null ? "" : formatMs(q.ms), "num");
+        cell(q.dialect ?? "", "opt");
+        const share = cell("", "opt");
+        if (slowest > 0 && q.ms !== null) {
+          const track = el("div", "ermine-trace-track");
+          const fill = el("div", "ermine-trace-fill");
+          fill.style.width = `${Math.round(q.ms / slowest * 100)}%`;
+          track.append(fill);
+          share.append(track);
+        }
+        body.append(tr);
+        // the expandable row: SQL (copyable), setup statements, notes
+        const notes: string[] = [];
+        if (q.note !== null) notes.push(q.note);
+        else if (q.sql === null && q.delivery === "deferred") notes.push("no query ran: the rows are read when the token is fetched, and this panel does not fetch tokens (U6)");
+        if (q.overThreshold) notes.push("the scan was abandoned at threshold + 1 rows");
+        // server-trace 00:06: usually NOT duplicates -- a groupBy/sumBy Ermine ran in memory
+        if (q.rows !== null && q.rowsRead !== null && q.rowsRead > q.rows) notes.push(`the database returned ${formatCount(q.rowsRead)} rows; Ermine reduced them to ${formatCount(q.rows)}`);
+        if (q.sql === null && q.setup.length === 0 && notes.length === 0) return;
+        const sub = el("tr", "ermine-trace-sqlrow");
+        const td = el("td");
+        td.colSpan = 9;
+        for (const n of notes) td.append(el("div", "ermine-trace-note", n));
+        if (q.sql !== null || q.setup.length > 0) {
+          const det = el("details");
+          const bytes = q.sqlBytes ?? new TextEncoder().encode(q.sql ?? "").length;
+          det.append(el("summary", undefined, q.sql !== null
+            ? `SQL · ${formatCount(bytes)} bytes${q.sqlTruncated ? " (truncated)" : ""}${q.setup.length ? ` · ${q.setup.length} setup` : ""}`
+            : `${q.setup.length} setup statement${q.setup.length === 1 ? "" : "s"}`));
+          for (const st of q.setup) {
+            det.append(el("div", "ermine-trace-sub",
+              `${st.kind}${st.table ? " " + st.table : ""}${st.created === null ? "" : st.created ? " created" : " reused"}` +
+              `${st.rows === null ? "" : `, ${formatCount(st.rows)} rows`}${st.ms === null ? "" : `, ${formatMs(st.ms)}`}`));
+          }
+          if (q.sql !== null) det.append(sqlBlock(q.sql));
+          td.append(det);
+        }
+        sub.append(td);
+        body.append(sub);
+      });
+      table.append(body);
+      const scroll = el("div", "ermine-trace-scroll");
+      scroll.append(table);
+      parts.push(scroll);
+    } else {
+      parts.push(el("div", "ermine-trace-empty", "no relation was scanned"));
+    }
+    if (t.truncated !== null) {
+      parts.push(el("div", "ermine-trace-note", `${formatCount(t.truncated.queries)} more queries ran and are not listed (the trace keeps the first ${formatCount(t.queries.length)}); the totals count them all`));
+    }
+    traceBox.replaceChildren(...parts);
+  };
+  // ---- end S2d trace ----
 
   const renderDocument = async (): Promise<void> => {
     const mine = ++token;

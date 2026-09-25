@@ -5836,8 +5836,11 @@ test("S2 M6: the trigger vocabulary -- which triggers consult the mark and which
   // only ever SETS). So it cannot qualify to stay out -- and it must not,
   // because `Runner.paramSchema` compiles and EVALUATES the binding
   // (`json/Runner.scala:849-852`), which is the very thing that wedges.
+  // WP-13 ADDED `reconnected`, under the same rule: a connect feeds the guard
+  // nothing (a connect is not a render), so it can never have cleared the
+  // mark by the time the re-render it asks for is scheduled.
   assert.deepStrictEqual(core.UNCONFIRMED_TRIGGERS.slice().sort(),
-                         ["answer", "module-learned", "params-file", "restart", "roots", "schema"]);
+                         ["answer", "module-learned", "params-file", "reconnected", "restart", "roots", "schema"]);
   assert.strictEqual(core.shouldAutoRender(mark, SALES_PICK, core.TRIGGER_SCHEMA), false);
   // `answer` is in the refused set although `stuckReduce` can never emit a
   // rerender for one (final re-check, nit 5): the trigger carries no
@@ -10593,13 +10596,13 @@ test("panel (target): U1's contract -- panel | json | both, default panel, anyth
     'ermine.preview.target is one of "panel", "json" or "both", not an array; the preview uses "panel"');
 });
 
-test("panel (kinds): the kind list is the host reducer's nine, in its order", () => {
+test("panel (kinds): the kind list is the host reducer's ten, in its order", () => {
   const hostSrc = fs.readFileSync(path.join(__dirname, "..", "..", "..", "client", "src", "host", "index.ts"), "utf8");
   const block = hostSrc.slice(hostSrc.indexOf("export const MESSAGE_KINDS = ["), hostSrc.indexOf("] as const;"));
   assert.deepStrictEqual(core.PANEL_MESSAGE_KINDS, (block.match(/"([A-Za-z]+)"/g) || []).map((s) => s.slice(1, -1)));
 });
 
-test("panel (table): each of the nine kinds is produced by at least one view built by the shared builder", () => {
+test("panel (table): each of the ten kinds is produced by at least one view built by the shared builder", () => {
   const good = { current: 1, outcome: { answer: captured("ok-wpint").answer } };
   const stuck = core.stuckReduce(core.initialStuckState(),
     { type: "notification", stuck: true, message: "evaluation did not finish", seq: 3 }).state;
@@ -10615,6 +10618,8 @@ test("panel (table): each of the nine kinds is produced by at least one view bui
     ["switching", panelAfter([], { switching: "prod" })],
     ["unsaved", panelAfter([], { unsaved: core.unsavedNames([{ fileName: "/w/Chart.e", isDirty: true, languageId: "ermine" }]) })],
     ["reloadBundle", panelAfter([good], { reloading: true })],
+    // S2d: a trace rides inside the answer
+    ["trace", panelAfter([{ current: 1, outcome: { answer: Object.assign({}, captured("ok-wpint").answer, { trace: s2dTrace() }) } }])],
   ];
   assert.deepStrictEqual(table.map((r) => r[0]), core.PANEL_MESSAGE_KINDS.slice());
   const on = {
@@ -10627,6 +10632,7 @@ test("panel (table): each of the nine kinds is produced by at least one view bui
     switching: (m) => m.to === "prod",
     unsaved: (m) => m.names.length === 1 && m.names[0] === "Chart.e",
     reloadBundle: () => true,
+    trace: (m) => m.trace.totals.dbMs === 310.2 && m.generation === m.trace.generation,
   };
   for (const [kind, view] of table) {
     const msgs = core.panelMessagesFor(view);
@@ -11213,6 +11219,9 @@ function panelGlueModel(opts) {
     switching: null,
     reloading: core.bundleReloading(m.bundleWatch),
     writers: o.mutantViewNoWriters ? null : m.panelWriters,
+    // WP-13: the connect machine's state (test/connect-core.test.js models it;
+    // this model holds none, which is the glue with no profile)
+    connection: core.panelConnection(m.connState),
   });
   /** `postSnapshot(why)`. */
   m.postSnapshot = (why) => {
@@ -11964,6 +11973,8 @@ test("glue pins (WP-10 S2) the post -- one postMessage, guarded by the ready lat
     "reloading: core.bundleReloading(bundleWatch),",
     // WP-11 (S4): the writers check the page was built from.
     "writers: panelWriters,",
+    // WP-13: the held connection, for the Trace view's line.
+    "connection: core.panelConnection(connState),",
   ];
   const got = (viewNow.match(/^\s*[a-zA-Z]+[:,][^\n]*$/gm) || []).map((l) => l.trim());
   assert.deepStrictEqual(got, fields,
@@ -13036,4 +13047,305 @@ test("WP-34 ASYNC (review M1): Write Params Skeleton on a zero-parameter report 
   assert.notStrictEqual(mut.result.problem && mut.result.problem.reason, "no-parameters",
                         "the mutant must be visible to this test");
   assert.ok(!/takes no parameters/.test(mut.m.messages.join(" ")), mut.m.messages.join(" "));
+});
+
+// ===========================================================================
+// S2d (DB programme stage 2, the PANEL role): the render trace.  The server
+// appends `trace` LAST to every render answer (DESIGN-OBSERVABILITY §2, Q-O1
+// (a)); the extension normalises it (`traceOf`), keeps it in the SHARED
+// builder's view (`panelView.trace` = the last CURRENT answer's), sends it as
+// the tenth panel kind, prints ONE output line per answered render
+// (`traceOutputLine`) and offers the status-bar suffix (`traceStatusSuffix`).
+// The models below call exactly those builders, through `panelAnswerStep` as
+// `renderNow` does; the glue pins read `extension.js`.
+// ===========================================================================
+
+/** A trace in DESIGN-OBSERVABILITY §2.1's shape (hand-made until server-trace
+ *  posts a real one), with keys the panel must NEVER carry (url, user,
+ *  password) planted to prove `traceOf` copies only what it lists. */
+function s2dTrace(over) {
+  return Object.assign({
+    v: 1,
+    wallMs: 412.3,
+    phases: [
+      { name: "queue", ms: 0.4 }, { name: "compile", ms: 0.0, cached: true }, { name: "decode", ms: 0.2 },
+      { name: "eval", ms: 41.7 }, { name: "sql", ms: 310.2 }, { name: "encode", ms: 28.9 },
+      { name: "layout", ms: 6.1 }, { name: "check", ms: 3.0 },
+    ],
+    queries: [
+      { relation: "$.fetch[1]", delivery: "fetched", dialect: "mssql", sql: "SELECT \"region\", SUM(\"amount\") FROM sales GROUP BY \"region\"",
+        sqlBytes: 58, setup: [{ kind: "temp", table: "t1a2b", rows: 240, ms: 3.1 }, { kind: "memo", table: "MemoHash_9f", created: false, ms: 0.8 }],
+        compileSqlMs: 1.2, execMs: 250.3, fetchMs: 41.0, rowsRead: 400, rows: 388, columns: 4, bytes: 0, ms: 296.4, overThreshold: false,
+        url: "jdbc:sqlserver://127.0.0.1;password=hunter2" },
+      { relation: "$.children[1].props", delivery: "deferred", token: true, note: "no query ran" },
+    ],
+    totals: { dbMs: 310.2, otherMs: 102.1, wallMs: 412.3, queries: 3, rowsRead: 1676, rows: 1676, bytes: 81234, documentBytes: 8120 },
+    connection: { profile: "sales-mssql", dialect: "mssql", kind: "profile", url: "jdbc:sqlserver://x", user: "ermine", password: "hunter2" },
+    partial: false, running: null, truncated: null,
+    // REVIEW-S2 MF-1: keys the extractor must DROP, at the top level and nested
+    url: "jdbc:sqlserver://127.0.0.1;user=ermine;password=hunter2", user: "ermine", password: "hunter2",
+  }, over || {});
+}
+const s2dOk = (gen, over) => ({ ok: true, document: { version: 1, settings: {}, root: { tag: "Text", text: "g" + gen } }, generation: gen, trace: s2dTrace(over) });
+
+test("S2d traceOf: no trace is null -- an ok answer without one, an extension-dressed error, a params refusal, junk", () => {
+  assert.strictEqual(core.traceOf(captured("ok-wpint").answer), null, "a server from before stage 2");
+  assert.strictEqual(core.traceOf(core.errorAnswer(new Error("connection got disposed"), 3)), null);
+  assert.strictEqual(core.traceOf(core.paramsRefusalAnswer({ status: 400, message: "m", path: "$.params" }, "/w/x.params.json", 2)), null);
+  for (const a of [undefined, null, 3, "x", { ok: true, trace: null }, { ok: true, trace: [] }, { ok: true, trace: "t" }]) {
+    assert.strictEqual(core.traceOf(a), null, JSON.stringify(a));
+  }
+  // and a view built from such answers has no trace and sends no tenth kind
+  const v = panelAfter([answerOutcome("ok-wpint")]);
+  assert.strictEqual(v.trace, null);
+  assert.ok(!kinds(core.panelMessagesFor(v)).includes("trace"));
+});
+
+test("S2d traceOf: the design's shape, normalised; ONLY the listed keys are copied (no url, user, password)", () => {
+  const t = core.traceOf(s2dOk(12));
+  assert.strictEqual(t.generation, 12);
+  assert.strictEqual(t.failed, false);
+  assert.strictEqual(t.wallMs, 412.3);
+  assert.deepStrictEqual(t.totals, { dbMs: 310.2, otherMs: 102.1, wallMs: 412.3, queries: 3, rows: 1676, rowsRead: 1676 });
+  assert.deepStrictEqual(t.connection, { kind: "profile", dialect: "mssql", profile: "sales-mssql", database: null, host: null });
+  const q = t.queries[0];
+  assert.strictEqual(q.relation, "$.fetch[1]");
+  assert.strictEqual(q.rows, 388);
+  assert.strictEqual(q.rowsRead, 400);
+  assert.strictEqual(Math.round(q.dbMs * 10) / 10, 295.2, "setup + exec + fetch (§2.1)");
+  assert.strictEqual(q.sqlBytes, 58);
+  assert.strictEqual(q.sqlTruncated, false);
+  assert.strictEqual(t.queries[1].delivery, "deferred");
+  assert.strictEqual(t.queries[1].sql, null);
+  const text = JSON.stringify(t);
+  assert.doesNotMatch(text, /hunter2|jdbc:|"user"|"url"|"password"/, "nothing the server might add reaches the panel");
+  // REVIEW-S2 MF-1: and through the whole path the panel sees -- view, messages, snapshot
+  const phases0 = s2dTrace().phases.map((p) => Object.assign({}, p, { url: "jdbc:x", password: "hunter2" }));
+  const leaky = s2dOk(12, { phases: phases0, totals: Object.assign({}, s2dTrace().totals, { user: "ermine", password: "hunter2" }),
+    running: { path: "$.fetch[1]", sql: "SELECT 1", sinceMs: 1, password: "hunter2", url: "jdbc:x" } });
+  const view = core.panelView({ answers: core.panelAnswerStep(core.initialPanelAnswers(), { answer: leaky }, 12) });
+  for (const [what, v] of [["view.trace", view.trace], ["snapshot", core.panelSnapshot(view, 1)]]) {
+    assert.doesNotMatch(JSON.stringify(v), /hunter2|jdbc:|"user"|"url"|"password"/, what + " carries no url, user or password");
+  }
+  assert.deepStrictEqual(Object.keys(view.trace).sort(),
+    ["connection", "failed", "generation", "partial", "phases", "queries", "running", "status", "totals", "truncated", "v", "wallMs"]);
+  assert.deepStrictEqual(JSON.parse(text), t, "postMessage-clonable: no undefined, no functions");
+  // the extension joins what IT knows (§2.3: the server's trace holds no host)
+  const joined = core.traceOf(s2dOk(12), { host: "127.0.0.1", database: "ErmineSales", password: "x" });
+  assert.deepStrictEqual(joined.connection, { kind: "profile", dialect: "mssql", profile: "sales-mssql", database: "ErmineSales", host: "127.0.0.1" });
+});
+
+test("S2d traceOf: the brief's short shape reads too -- path, scanned, per-query ms, a string `running`", () => {
+  const a = { ok: false, status: 503, message: "stuck", stuck: true, generation: 7, trace: {
+    phases: [{ name: "eval", ms: 2 }],
+    queries: [{ path: "$.fetch[1]", sql: "SELECT 1", dialect: "sqlite", rows: 8, scanned: 8, bytes: 0, ms: 4.2 },
+              { path: "$.fetch[2]", deferred: true }],
+    totals: { dbMs: 4.2, otherMs: 1.8, wallMs: 6 },
+    connection: { dialect: "sqlite", database: null },
+    partial: true, running: "$.fetch[3]" } };
+  const t = core.traceOf(a);
+  assert.strictEqual(t.queries[0].relation, "$.fetch[1]");
+  assert.strictEqual(t.queries[0].rowsRead, 8);
+  assert.strictEqual(t.queries[0].dbMs, 4.2, "a query's own ms is its database time in the short shape");
+  assert.strictEqual(t.queries[1].delivery, "deferred");
+  assert.strictEqual(t.totals.queries, 1, "a deferred relation ran no query");
+  assert.strictEqual(t.partial, true);
+  assert.deepStrictEqual(t.running, { relation: "$.fetch[3]", phase: null, sql: null, sinceMs: null });
+  assert.strictEqual(t.failed, true);
+  assert.strictEqual(t.status, 503);
+});
+
+test("S2d traceOf: a stuck render's PARTIAL trace names the running query and its SQL", () => {
+  const a = { ok: false, status: 503, stuck: true, message: "the evaluation did not finish", generation: 9,
+    trace: s2dTrace({ partial: true, running: { relation: "$.fetch[2]", sql: "SELECT * FROM fact_order_line", sinceMs: 59800 }, wallMs: 60001,
+      totals: { dbMs: 59800, otherMs: 201, wallMs: 60001, queries: 2, rows: 388 } }) };
+  const t = core.traceOf(a);
+  assert.strictEqual(t.partial, true);
+  assert.deepStrictEqual(t.running, { relation: "$.fetch[2]", phase: null, sql: "SELECT * FROM fact_order_line", sinceMs: 59800 });
+  const v = panelAfter([{ current: 9, outcome: { answer: a } }]);
+  const msgs = core.panelMessagesFor(v);
+  assert.deepStrictEqual(kinds(msgs).slice(0, 2), ["error", "trace"]);
+  assert.strictEqual(msgs[1].trace.running.relation, "$.fetch[2]");
+});
+
+test("S2d traceOf: SQL over 16 KiB is cut at a CHARACTER boundary with the marker; a server-cut text is kept", () => {
+  assert.strictEqual(core.TRACE_SQL_CAP, 16384);
+  // 3-byte characters, so a byte cut could land inside one
+  const long = "SELECT '" + "é中".repeat(4000) + "'";
+  const bytes = Buffer.byteLength(long, "utf8");
+  const t = core.traceOf({ ok: true, generation: 1, trace: { queries: [{ relation: "$.fetch[1]", sql: long }] } });
+  const q = t.queries[0];
+  assert.strictEqual(q.sqlTruncated, true);
+  assert.strictEqual(q.sqlBytes, bytes, "the untruncated length");
+  const m = /\n-- \[ermine: truncated, (\d+) more bytes\]$/.exec(q.sql);
+  assert.ok(m, "the marker ends the text");
+  const kept = q.sql.slice(0, m.index);
+  assert.ok(Buffer.byteLength(kept, "utf8") <= 16384);
+  assert.strictEqual(Buffer.byteLength(kept, "utf8") + Number(m[1]), bytes, "kept + the marker's count = the whole");
+  assert.ok(long.startsWith(kept), "a prefix of the original");
+  assert.doesNotMatch(kept, /�/, "no broken character");
+  // exactly at the cap: untouched
+  const exact = "x".repeat(16384);
+  assert.strictEqual(core.traceOf({ ok: true, trace: { queries: [{ sql: exact }] } }).queries[0].sql, exact);
+  // the server already cut it: kept as sent, reported truncated, its sqlBytes kept
+  const cut = "SELECT 1\n-- [ermine: truncated, 99 more bytes]";
+  const sq = core.traceOf({ ok: true, trace: { queries: [{ sql: cut, sqlBytes: 16483 }] } }).queries[0];
+  assert.deepStrictEqual([sq.sql, sq.sqlBytes, sq.sqlTruncated], [cut, 16483, true]);
+});
+
+test("S2d generation tie: a trace for generation 3 never shows after render 4", () => {
+  // renderNow's order: the extension is at 4 when generation 3's answer lands
+  let answers = core.panelAnswerStep(core.initialPanelAnswers(), { answer: s2dOk(4, { wallMs: 44, totals: { dbMs: 4, otherMs: 40, wallMs: 44, queries: 1, rows: 4 } }) }, 4);
+  const at4 = answers;
+  answers = core.panelAnswerStep(answers, { answer: s2dOk(3) }, 4);
+  assert.strictEqual(answers, at4, "discarded by identity");
+  const msgs = core.panelMessagesFor(core.panelView({ answers }));
+  const tr = msgs.filter((m) => m.kind === "trace");
+  assert.strictEqual(tr.length, 1);
+  assert.strictEqual(tr[0].generation, 4);
+  assert.strictEqual(tr[0].trace.totals.wallMs, 44);
+  // a render 4 WITHOUT a trace leaves no trace at all -- never generation 3's
+  const plain = core.panelAnswerStep(core.panelAnswerStep(core.initialPanelAnswers(), { answer: s2dOk(3) }, 3),
+    { answer: { ok: true, document: {}, generation: 4 } }, 4);
+  assert.strictEqual(core.panelView({ answers: plain }).trace, null);
+  assert.ok(!kinds(core.panelMessagesFor(core.panelView({ answers: plain }))).includes("trace"));
+});
+
+test("S2d displaced: a displaced render changes nothing -- the view keeps the current answer's trace", () => {
+  const before = core.panelAnswerStep(core.initialPanelAnswers(), { answer: s2dOk(8) }, 8);
+  const rej = { code: -32800, message: "displaced", data: { code: -32800, trace: s2dTrace({ wallMs: 1 }) } };
+  const after = core.panelAnswerStep(before, { rejection: rej, generation: 9 }, 9);
+  assert.strictEqual(after, before);
+  assert.strictEqual(core.panelView({ answers: after }).trace.generation, 8);
+});
+
+test("S2d failed: the FAILED answer's trace is the view's, not the good document's; order render, error, trace", () => {
+  const good = core.panelAnswerStep(core.initialPanelAnswers(), { answer: s2dOk(4) }, 4);
+  const fail = { ok: false, status: 500, message: "Invalid object name 'salez'", path: "$.fetch[2]", generation: 5,
+    trace: s2dTrace({ queries: [{ relation: "$.fetch[2]", sql: "SELECT * FROM salez", error: true, ms: 12, execMs: 12 }],
+      totals: { dbMs: 12, otherMs: 30, wallMs: 42, queries: 1, rows: 0 }, wallMs: 42 }) };
+  const v = core.panelView({ answers: core.panelAnswerStep(good, { answer: fail }, 5) });
+  const msgs = core.panelMessagesFor(v);
+  assert.deepStrictEqual(kinds(msgs).slice(0, 3), ["render", "error", "trace"]);
+  assert.strictEqual(msgs[0].generation, 4);
+  assert.strictEqual(msgs[2].generation, 5);
+  assert.strictEqual(msgs[2].trace.failed, true);
+  assert.strictEqual(msgs[2].trace.queries[0].error, true);
+  assert.strictEqual(msgs[2].trace.queries[0].sql, "SELECT * FROM salez", "the failing SQL is on the panel");
+  // a params refusal after it: "no trace" (the render did not reach the server)
+  const refused = core.panelAnswerStep(good, { answer: core.paramsRefusalAnswer({ status: 400, message: "m", path: "$.params" }, "/w/p.json", 6) }, 6);
+  assert.strictEqual(core.panelView({ answers: refused }).trace, null);
+});
+
+test("S2d resync: every snapshot carries the last trace -- a ready, a stale toggle, a bundle reload", () => {
+  const answers = core.panelAnswerStep(core.initialPanelAnswers(), { answer: s2dOk(12) }, 12);
+  for (const extra of [{}, { pending: true }, { reloading: true }, { unsaved: ["A.e"] }]) {
+    const env = core.panelSnapshot(core.panelView(Object.assign({ answers }, extra)), 7);
+    const tr = env.messages.filter((m) => m.kind === "trace");
+    assert.strictEqual(tr.length, 1, JSON.stringify(extra));
+    assert.strictEqual(tr[0].generation, 12);
+    assert.strictEqual(env.messages.indexOf(tr[0]), 1, "right after the answer pair");
+  }
+});
+
+test("S2d status bar: the suffix and the tooltip line, pinned", () => {
+  const t = core.traceOf(s2dOk(12));
+  assert.strictEqual(core.traceStatusSuffix(t), " · 412 ms");
+  assert.strictEqual(core.traceStatusSuffix(null), "");
+  assert.strictEqual(core.traceStatusSuffix(core.traceOf({ ok: true, trace: { totals: { dbMs: 0.3, wallMs: 4.26 } } })), " · 4.3 ms");
+  assert.strictEqual(core.traceTooltipLine(t), "render 412 ms: db 310 ms, 3 queries, 1,676 rows (sales-mssql)");
+  assert.strictEqual(core.traceTooltipLine(core.traceOf(s2dOk(12), { host: "127.0.0.1", database: "ErmineSales" })),
+    "render 412 ms: db 310 ms, 3 queries, 1,676 rows (sales-mssql @ 127.0.0.1 / ErmineSales)");
+  assert.strictEqual(core.traceTooltipLine(core.traceOf({ ok: true, trace: { totals: { dbMs: 0.4, wallMs: 12, queries: 1, rows: 1 },
+    connection: { kind: "in-memory", dialect: "sqlite" } } })), "render 12 ms: db 0.4 ms, 1 query, 1 row (in-memory sqlite)");
+  assert.strictEqual(core.traceTooltipLine(null), "");
+});
+
+test("S2d output line: one line per answered render, pinned; never any SQL", () => {
+  assert.strictEqual(core.traceOutputLine(s2dOk(12), 418),
+    "preview: render 12 ok 418 ms (server 412 ms: db 310 ms, 3 queries, 1,676 rows; eval 42 ms, encode 29 ms, other 32 ms) sales-mssql");
+  assert.strictEqual(core.traceOutputLine(s2dOk(12), null),
+    "preview: render 12 ok 412 ms (db 310 ms, 3 queries, 1,676 rows; eval 42 ms, encode 29 ms, other 32 ms) sales-mssql");
+  const fail = { ok: false, status: 500, message: "Invalid object name 'salez'.\nat line 3", path: "$.fetch[2]", generation: 13,
+    trace: { queries: [{ relation: "$.fetch[2]", sql: "SELECT * FROM salez", error: true, execMs: 12 }], totals: { dbMs: 12, wallMs: 40 } } };
+  assert.strictEqual(core.traceOutputLine(fail, 45), "preview: render 13 FAILED 500 at $.fetch[2] after 1 query (db 12 ms): Invalid object name 'salez'.");
+  const stuck = { ok: false, status: 503, stuck: true, message: "m", generation: 14,
+    trace: s2dTrace({ partial: true, running: { relation: "$.fetch[1]", sql: "SELECT 1", sinceMs: 59800 }, wallMs: 60001,
+      totals: { dbMs: 59800, wallMs: 60001, queries: 1, rows: 0 } }) };
+  assert.strictEqual(core.traceOutputLine(stuck, 60012),
+    "preview: render 14 STUCK after 60,012 ms (server 60,001 ms so far: db 59,800 ms, 1 query; still running $.fetch[1] for 59,800 ms) sales-mssql");
+  assert.strictEqual(core.traceOutputLine(captured("ok-wpint").answer, 37), "preview: render 1 ok 37 ms (no trace)");
+  assert.strictEqual(core.traceOutputLine(core.errorAnswer(new Error("connection got disposed"), 5), 3),
+    "preview: render 5 FAILED ?: connection got disposed (no trace)");
+  for (const a of [s2dOk(12), fail, stuck]) {
+    assert.doesNotMatch(core.traceOutputLine(a, 1), /SELECT|FROM|\n/, "no SQL, one line");
+  }
+});
+
+test("glue pins (S2d): the round-trip clock, and ONE output line from the SAME answer the panel view takes, after the generation check", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  const body = src.slice(src.indexOf("async function renderNow("), src.indexOf("\nasync function showAnswer("));
+  assert.ok(body.length > 1000, "renderNow found");
+  const calls = body.match(/core\.traceOutputLine\(/g) || [];
+  assert.strictEqual(calls.length, 1, "exactly one output line per answer");
+  assert.strictEqual((src.match(/core\.traceOutputLine\(/g) || []).length, 1, "and nowhere else in the extension");
+  const line = body.indexOf("log(core.traceOutputLine(answer, Date.now() - sentAtMs));");
+  assert.ok(line > 0, "the line is built from `answer` and the round trip");
+  const clock = body.indexOf("const sentAtMs = Date.now();");
+  const send = body.indexOf('sentClient.sendRequest("ermine/render"');
+  assert.ok(clock > 0 && clock < send, "the clock starts before the request");
+  const displaced = body.indexOf("if (core.isDisplaced(err)) {");
+  const genCheck = body.indexOf("if (!core.isCurrentGeneration(generation, answer)) {");
+  const step = body.indexOf("panelAnswers = core.panelAnswerStep(panelAnswers, { answer }, generation);");
+  assert.ok(displaced > 0 && genCheck > displaced && step > genCheck, "the displaced and stale returns come first");
+  assert.ok(line > step, "after the generation check, beside the panel's own step");
+  // the view's trace comes from the same `panelAnswers` (the shared builder)
+  const viewNow = src.slice(src.indexOf("function panelViewNow("), src.indexOf("function postSnapshot("));
+  assert.match(viewNow, /answers: panelAnswers,/);
+});
+
+test("S2d status bar: the suffix is on the IDLE arm only; busy, stuck, held and offline texts are unchanged", () => {
+  const t = core.traceOf(s2dOk(12));
+  const traceSuffix = core.traceStatusSuffix(t);
+  const traceTooltip = core.traceTooltipLine(t);
+  const idle = core.statusBarState({ running: true, pick: PICK, traceSuffix, traceTooltip });
+  assert.strictEqual(idle.text, "$(json) Ermine: " + core.pickLabel(PICK) + " · 412 ms");
+  assert.ok(idle.tooltip.endsWith("\nrender 412 ms: db 310 ms, 3 queries, 1,676 rows (sales-mssql)"), idle.tooltip);
+  const plain = core.statusBarState({ running: true, pick: PICK });
+  assert.strictEqual(plain.text, "$(json) Ermine: " + core.pickLabel(PICK), "no trace: the 0.1.16 text exactly");
+  for (const extra of [{ rendering: true }, { stuck: true, message: "m" }, { running: false }]) {
+    const withT = core.statusBarState(Object.assign({ running: true, pick: PICK, traceSuffix, traceTooltip }, extra));
+    const without = core.statusBarState(Object.assign({ running: true, pick: PICK }, extra));
+    assert.deepStrictEqual(withT, without, JSON.stringify(extra));
+  }
+  // the glue hands both from the SAME last current answer the panel shows
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "extension.js"), "utf8");
+  const set = src.slice(src.indexOf("function setPreviewStatus("), src.indexOf("function setPreviewStatus(") + 3000);
+  assert.match(set, /traceSuffix: core\.traceStatusSuffix\(core\.traceOf\(panelAnswers\.last\)\),/);
+  assert.match(set, /traceTooltip: core\.traceTooltipLine\(core\.traceOf\(panelAnswers\.last\)\),/);
+});
+
+test("S2d traceOf: the server's keys AS BUILT (server-trace 23:38) -- path, running.path + phase, db-execute/db-fetch phases, a failed query's message", () => {
+  const a = { ok: false, status: 503, stuck: true, message: "m", generation: 21, trace: { v: 1, generation: 21, partial: true, wallMs: 60000,
+    phases: [{ name: "boot", ms: 1900 }, { name: "compile", ms: 0, cached: true }, { name: "eval", ms: 30 }, { name: "connect", ms: 2 },
+      { name: "db-execute", ms: 58000, attributed: true }, { name: "db-fetch", ms: 60 }, { name: "other", ms: 8, attributed: true }],
+    queries: [{ path: "$.fetch[1]", delivery: "fetched", dialect: "mssql", sql: "SELECT 1", sqlBytes: 8, sqlEmitMs: 0.4, execMs: 3, fetchMs: 1,
+      dbMs: 4, ms: 6, rowsRead: 9, rows: 8, scanned: 9, columns: 2, bytes: 0, deferred: false },
+      { path: "$.fetch[2]", delivery: "fetched", sql: "SELECT * FROM salez", dbMs: 2, ms: 2, rowsRead: 0, rows: 0, scanned: 0, deferred: false, error: true, message: "Invalid object name 'salez'." }],
+    totals: { dbMs: 58062, otherMs: 1938, wallMs: 60000, queueMs: 0.2, relations: 2, queries: 2, rowsRead: 9, rows: 8, bytes: 0 },
+    connection: { kind: "profile", dialect: "mssql", profile: "sales-mssql" },
+    running: { path: "$.fetch[3]", phase: "db-execute", sql: "SELECT * FROM fact_order_line", sinceMs: 58000 },
+    truncated: { queries: 0, sqlShortened: 0 } } };
+  const t = core.traceOf(a);
+  assert.deepStrictEqual(t.running, { relation: "$.fetch[3]", phase: "db-execute", sql: "SELECT * FROM fact_order_line", sinceMs: 58000 });
+  assert.deepStrictEqual(t.queries.map((q) => [q.relation, q.dbMs, q.rowsRead, q.scanned, q.rows]), [["$.fetch[1]", 4, 9, 9, 8], ["$.fetch[2]", 2, 0, 0, 0]]);
+  assert.strictEqual(t.queries[1].note, "failed: Invalid object name 'salez'.");
+  assert.strictEqual(t.partial, true);
+  assert.strictEqual(core.traceOutputLine(a, 60010),
+    "preview: render 21 STUCK after 60,010 ms (server 60,000 ms so far: db 58,062 ms, 2 queries; still running $.fetch[3] for 58,000 ms) sales-mssql");
+  const ok = { ok: true, document: {}, generation: 22, trace: Object.assign({}, a.trace, { partial: false, running: undefined, queries: a.trace.queries.slice(0, 1),
+    totals: { dbMs: 58062, otherMs: 1938, wallMs: 60000, queries: 1, rows: 8 } }) };
+  assert.strictEqual(core.traceOutputLine(ok, null),
+    "preview: render 22 ok 60,000 ms (db 58,062 ms, 1 query, 8 rows; boot 1,900 ms, eval 30 ms, other 8.0 ms) sales-mssql",
+    "the database phases and the server's own `other` are never listed as named phases");
 });

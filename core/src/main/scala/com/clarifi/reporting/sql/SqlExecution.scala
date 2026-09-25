@@ -31,7 +31,17 @@ class SqlExecution(implicit emitter: SqlEmitter) {
 
       def setup: (Driver[Id, K], () => Unit) = {
         // generate the SQL from the SqlQuery
+        // S2b (RenderTrace): the preview's render installs a trace on this
+        // thread for its one `Run[DB].run`; everyone else gets `Off`, whose
+        // methods return at once, and the row driver below takes no clock.
+        val tr = RenderTrace.current
+        val eStart = if (tr.on) System.nanoTime else 0L
         val query = sql.emitSql
+        if (tr.on) {
+          tr.sqlEmitted(System.nanoTime - eStart)
+          tr.queryStart(query.run, SqlExecution.dialectOf(emitter))
+        }
+        val qStartNs = if (tr.on) System.nanoTime else 0L
         val qStart = System.currentTimeMillis
         logger ltrace ("Executing query " |+| query.run)
         notes foreach { n => logger ltrace ("Note: " |+| n) }
@@ -55,6 +65,7 @@ class SqlExecution(implicit emitter: SqlEmitter) {
         val gmtCalendar = Calendar.getInstance
         gmtCalendar.setTimeZone(util.YMDTriple.ymdPivotTimeZone)
 
+        if (tr.on) tr.queryExecuted(System.nanoTime - qStartNs)
         val qEnd = System.currentTimeMillis
         val qDelta = qEnd - qStart
         logger trace ("Finished executing query -- took " + qDelta + "ms")
@@ -87,8 +98,24 @@ class SqlExecution(implicit emitter: SqlEmitter) {
             } else simpleExpr
           }
 
-        ( Driver.Id((x: Record => Any) => if (rs.next) Some(x(nextRecord)) else None)
-        , () => { rs.close ; stmt.close }
+        // S2b: the per-row clock (`fetchMs`) is taken around `rs.next()` ONLY,
+        // so decoding and encoding the row are not in it; `timeRows` off
+        // counts rows without a clock; `Off` is the original line.
+        val next: (Record => Any) => Option[Any] =
+          if (!tr.on) (x: Record => Any) => if (rs.next) Some(x(nextRecord)) else None
+          else if (tr.timeRows) (x: Record => Any) => {
+            val t0 = System.nanoTime
+            val more = rs.next
+            tr.rowFetched(System.nanoTime - t0, more)
+            if (more) Some(x(nextRecord)) else None
+          }
+          else (x: Record => Any) => {
+            val more = rs.next
+            tr.rowRead(more)
+            if (more) Some(x(nextRecord)) else None
+          }
+        ( Driver.Id(next)
+        , () => { try { rs.close ; stmt.close } finally tr.queryClosed() }
         )
       }
     }
@@ -147,5 +174,18 @@ class SqlExecution(implicit emitter: SqlEmitter) {
     val s = SqlDrop(tableName).emitSql
     //println(s)
     executeUpdate(s)
+  }
+}
+
+object SqlExecution {
+  /** The dialect name a trace shows for an emitter (S2b): the names
+    * `RunnerConfig.dialects` and the profiles use. */
+  def dialectOf(e: SqlEmitter): String = e match {
+    case _: MsSqlEmitter      => "mssql"
+    case _: SqliteEmitter     => "sqlite"
+    case _: MySqlEmitter      => "mysql"
+    case _: PostgreSqlEmitter => "postgres"
+    case _: VerticaSqlEmitter => "vertica"
+    case other                => other.getClass.getSimpleName.stripSuffix("Emitter").toLowerCase
   }
 }

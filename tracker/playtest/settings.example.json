@@ -70,6 +70,15 @@
   // fixed when the process starts.
   "ermine.maxHeap": ""
 
+  // THE DATABASE PROFILE (DB programme stage 2, extension 0.1.17, WP-13):
+  // NOT HERE.  ermine.preview.profiles and ermine.preview.profile are read
+  // from USER settings only; a value in this file is IGNORED and named in the
+  // output channel ("profiles set in workspace settings are ignored (user
+  // settings only)"), because a checked-in workspace file could point a
+  // profile at another host and have the password sent there (tracker §8.1
+  // A2).  Put them in Preferences: Open User Settings (JSON) instead; the
+  // exact keys are in tracker/PLAYTEST-SETUP.md §6.
+
   // NOT SET, and why:
   //   ermine.warmClasspathOnStart -- defaults to true and does nothing here,
   //     because target/ermine-classpath already exists in this worktree.

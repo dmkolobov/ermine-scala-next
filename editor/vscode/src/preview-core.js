@@ -889,17 +889,35 @@ const TRIGGER_ANSWER = "answer";
  */
 const TRIGGER_SCHEMA = "schema";
 
+/**
+ * WP-13 (the extension half): THE RE-RENDER A SUCCESSFUL DATABASE CONNECT
+ * SENDS ("every successful connect re-sends the last render", tracker §7.2),
+ * when nothing more specific was waiting for it.
+ *
+ * **IT IS UNCONFIRMED, AND THE MEMBERSHIP RULE FORCES THAT.**  A connect is
+ * not a render and feeds the guard NOTHING (brief rule 5: "a connect ... must
+ * not consult or clear the mark"), so it can never have cleared the mark by
+ * the time it schedules.  A report that wedged the server is therefore held
+ * after a reconnect exactly as it is after a restart.  When the connect was
+ * itself caused by a restart, the glue does not use this trigger at all: the
+ * `Running` edge's own `restart` re-render is DEFERRED until the connect
+ * settles (`connectReduce`'s `deferRender`) and then goes out under its own
+ * trigger, so WP-22's rule for that edge is unchanged and it is one render,
+ * not two.
+ */
+const TRIGGER_RECONNECTED = "reconnected";
+
 /** Every trigger the glue may pass. Anything else is a BUG, not a default. */
 const RENDER_TRIGGERS = [
   TRIGGER_RESTART, TRIGGER_EXPLICIT, TRIGGER_PARAMS_FILE, TRIGGER_MODULE_LEARNED,
   TRIGGER_INVALIDATED, TRIGGER_FILE_EVENT, TRIGGER_ROOTS, TRIGGER_RECOVERED,
-  TRIGGER_ANSWER, TRIGGER_SCHEMA,
+  TRIGGER_ANSWER, TRIGGER_SCHEMA, TRIGGER_RECONNECTED,
 ];
 
 /** The ones that bring no evidence of change, and therefore consult the mark. */
 const UNCONFIRMED_TRIGGERS = [
   TRIGGER_RESTART, TRIGGER_PARAMS_FILE, TRIGGER_MODULE_LEARNED, TRIGGER_ROOTS, TRIGGER_ANSWER,
-  TRIGGER_SCHEMA,
+  TRIGGER_SCHEMA, TRIGGER_RECONNECTED,
 ];
 
 function isRenderTrigger(trigger) {
@@ -2137,7 +2155,12 @@ function statusBarState(view) {
     ? v.pick.fsPath + "\nbinding: " + v.pick.binding + "\nroots: " + roots +
       (v.pick.module ? "" : "\nthe module name is unknown, so `invalidated` cannot match it")
     : "no report picked";
-  return { hidden: false, text: "$(json) Ermine: " + label, tooltip, severity: "none" };
+  // ---- S2d trace (panel) ----: §3.2, the idle arm ONLY -- the busy, stuck,
+  // held and offline texts do not change (a summary replaces nothing that warns).
+  const suffix = typeof v.traceSuffix === "string" ? v.traceSuffix : "";
+  const traceLine = typeof v.traceTooltip === "string" && v.traceTooltip ? "\n" + v.traceTooltip : "";
+  // ---- end S2d trace ----
+  return { hidden: false, text: "$(json) Ermine: " + label + suffix, tooltip: tooltip + traceLine, severity: "none" };
 }
 
 // ------------------------------------------------- params files (WP-8, S1)
@@ -5198,9 +5221,10 @@ function paramsToSend(text, maxBytes) {
 // equals the list folded from a fresh one (`client/test/page.test.ts`'s
 // `(pg-h7-*)` properties drive the REAL reducer over the REAL builders).
 
-/** The nine kinds of `client/src/host/index.ts`'s `MESSAGE_KINDS`, in its order. */
+/** The ten kinds of `client/src/host/index.ts`'s `MESSAGE_KINDS`, in its order
+ *  (S2d added `trace`). */
 const PANEL_MESSAGE_KINDS = Object.freeze([
-  "render", "error", "stale", "stuck", "held", "offline", "switching", "unsaved", "reloadBundle",
+  "render", "error", "stale", "stuck", "held", "offline", "switching", "unsaved", "reloadBundle", "trace",
 ]);
 
 /**
@@ -5332,6 +5356,13 @@ function panelView(parts) {
     switching: typeof p.switching === "string" && p.switching.trim() ? p.switching : null,
     reloading: p.reloading === true,
     writers: panelWritersNotice(p.writers),
+    // S2d (panel): the LAST CURRENT answer's trace, ok or failed (§4), with
+    // what the extension knows of the connection joined in; null otherwise.
+    trace: traceOf(answers.last, p.connection || p.traceConnection),
+    // WP-13 (extension): the last SUCCESSFUL connect's {id, dialect, host,
+    // database}, built by `panelConnection` from the connect machine's
+    // state; null while nothing is connected.  Never the url or the user.
+    connection: panelConnection(p.connection),
   });
 }
 
@@ -5367,6 +5398,8 @@ function panelErrorMessage(answer, fastMode, writersNote) {
  *   1. `render` of the last GOOD document, if there is one;
  *   2. `error`, if the last current answer was not ok (it keeps the document
  *      from 1 below it, dimmed -- §5's Errors row);
+ *   2b. `trace` (S2d), when the last current answer carried one -- after the
+ *      pair, because a `render` of another generation clears it;
  *   3. `stale` -- AFTER the answer pair, because both answers clear it: true
  *      when a render is pending or the last answer carried the server's own
  *      `stale: true` (§2.5's hint, read off the answer);
@@ -5396,6 +5429,10 @@ function panelMessagesFor(view) {
   const writersNote = v.writers && typeof v.writers.message === "string" && v.writers.message ? v.writers.message : null;
   if (last && typeof last === "object" && !isOk(last)) out.push(panelErrorMessage(last, v.fastMode, writersNote));
   else if (writersNote) out.push({ kind: "error", status: 0, message: writersNote, path: null, reason: null });
+  // S2d (panel): the trace AFTER the answer pair -- a `render` of another
+  // generation clears the reducer's trace, so it must come first.
+  const traceMsg = traceMessage(v);
+  if (traceMsg) out.push(traceMsg);
   out.push({ kind: "stale", stale: v.pending === true || !!(last && typeof last === "object" && last.stale === true) });
   if (v.stuck) {
     const m = { kind: "stuck", stuck: true };
@@ -5414,6 +5451,255 @@ function panelMessagesFor(view) {
   if (v.reloading === true) out.push({ kind: "reloadBundle" });
   return out;
 }
+
+// ---- S2d trace (panel) ----
+//
+// DB programme stage 2 (scratch-widget-preview/db/DESIGN-OBSERVABILITY.md §2-§4,
+// answers Q-O1..Q-O6 all (a) in tracker/db/DECISIONS.md: NO setting).  The
+// server appends `trace` LAST to every `ermine/render` answer (ok, failed and
+// the watchdog's stuck refusal), so a trace inherits its answer's generation
+// and every ordering hazard reduces to the ones `panelAnswerStep` already
+// solves: a displaced render has no answer, a stale one is discarded, and the
+// view's trace is `traceOf(answers.last)` -- the last CURRENT answer's, ok or
+// failed, never the good document's when the last answer failed (§4).
+//
+// `traceOf` NORMALISES: the design's §2.1 keys (`relation`, `rowsRead`, the
+// exec/fetch/setup split) and the brief's short ones (`path`, `scanned`, a
+// string `running`) both read; only the listed keys are copied, so nothing the
+// server might add (a url, a user) can reach the panel; SQL is capped at 16 KiB
+// with the marker if the server did not cap it.  The panel only draws the
+// result (`client/src/host/page.ts` `readTrace`).
+
+/** §2.2: the per-query SQL cap, UTF-8 bytes, and the marker's prefix. */
+const TRACE_SQL_CAP = 16 * 1024;
+const TRACE_SQL_MARKER = "-- [ermine: truncated, ";
+/** The phases that ARE the database: §2.1's `sql` + `connect`, and the server
+ *  as built (server-trace 23:38): `connect`, `db-execute`, `db-fetch`. */
+const TRACE_DB_PHASES = ["sql", "connect", "db-execute", "db-fetch"];
+
+function traceNum(v) {
+  return typeof v === "number" && isFinite(v) ? v : null;
+}
+function traceStr(v) {
+  return typeof v === "string" && v.trim() !== "" ? v : null;
+}
+function traceObj(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v) ? v : null;
+}
+
+/** A SQL text cut to `TRACE_SQL_CAP` UTF-8 bytes at a CHARACTER boundary, with
+ *  `\n-- [ermine: truncated, N more bytes]`.  A text the server already cut
+ *  (it carries the marker) is kept as it is and reported truncated. */
+function traceCapSql(sql, serverBytes) {
+  if (typeof sql !== "string") return { sql: null, sqlBytes: traceNum(serverBytes), sqlTruncated: false };
+  const bytes = Buffer.byteLength(sql, "utf8");
+  if (sql.indexOf(TRACE_SQL_MARKER) >= 0) {
+    return { sql, sqlBytes: traceNum(serverBytes) !== null ? serverBytes : bytes, sqlTruncated: true };
+  }
+  if (bytes <= TRACE_SQL_CAP) return { sql, sqlBytes: traceNum(serverBytes) !== null ? serverBytes : bytes, sqlTruncated: false };
+  let used = 0;
+  let cut = 0;
+  for (const ch of sql) {
+    const b = Buffer.byteLength(ch, "utf8");
+    if (used + b > TRACE_SQL_CAP) break;
+    used += b;
+    cut += ch.length;
+  }
+  return {
+    sql: sql.slice(0, cut) + "\n" + TRACE_SQL_MARKER + (bytes - used) + " more bytes]",
+    sqlBytes: traceNum(serverBytes) !== null ? serverBytes : bytes,
+    sqlTruncated: true,
+  };
+}
+
+function traceQuery(q0, dialect) {
+  const q = traceObj(q0) || {};
+  const setup = (Array.isArray(q.setup) ? q.setup : []).map((s0) => {
+    const s = traceObj(s0) || {};
+    return {
+      kind: traceStr(s.kind) || "statement",
+      table: traceStr(s.table),
+      rows: traceNum(s.rows),
+      ms: traceNum(s.ms),
+      created: typeof s.created === "boolean" ? s.created : null,
+    };
+  });
+  const split = [traceNum(q.execMs), traceNum(q.fetchMs)].concat(setup.map((s) => s.ms));
+  const splitSum = split.some((x) => x !== null) ? split.reduce((a, x) => a + (x || 0), 0) : null;
+  const sql = traceCapSql(q.sql, q.sqlBytes);
+  return {
+    relation: traceStr(q.relation) || traceStr(q.path) || "?",
+    delivery: traceStr(q.delivery) || (q.deferred === true ? "deferred" : null),
+    // a deferred relation ran nothing, so it has no dialect of its own
+    dialect: traceStr(q.dialect) || (traceStr(q.delivery) === "deferred" || q.deferred === true ? null : dialect),
+    sql: sql.sql,
+    sqlBytes: sql.sqlBytes,
+    sqlTruncated: sql.sqlTruncated,
+    rows: traceNum(q.rows),
+    rowsRead: traceNum(q.rowsRead) !== null ? traceNum(q.rowsRead) : traceNum(q.scanned),
+    scanned: traceNum(q.scanned) !== null ? traceNum(q.scanned) : traceNum(q.rowsRead),
+    bytes: traceNum(q.bytes),
+    ms: traceNum(q.ms),
+    // §2.1: the database's share is setup + exec + fetch; a server that sends
+    // only `ms` per query (the brief's short shape) sends database time there
+    dbMs: traceNum(q.dbMs) !== null ? traceNum(q.dbMs) : splitSum !== null ? splitSum : traceNum(q.ms),
+    setup,
+    overThreshold: q.overThreshold === true,
+    error: q.error === true,
+    note: traceStr(q.note) || (q.error === true && traceStr(q.message) ? "failed: " + q.message : null),
+  };
+}
+
+/**
+ * The trace an answer carries, normalised for the panel, or null when there is
+ * none (an extension-dressed answer -- a params refusal, `errorAnswer` -- never
+ * has one: the render did not reach the server).  `joined` is what the
+ * EXTENSION knows about the connection and the server does not send (§2.3: the
+ * server's trace holds no host): `{host, database}`, joined in for display.
+ */
+function traceOf(answer, joined) {
+  if (!answer || typeof answer !== "object") return null;
+  const t = traceObj(answer.trace);
+  if (!t) return null;
+  const c = traceObj(t.connection);
+  const j = traceObj(joined) || {};
+  const connection = c
+    ? {
+        kind: traceStr(c.kind),
+        dialect: traceStr(c.dialect),
+        profile: traceStr(c.profile),
+        database: traceStr(c.database) || traceStr(j.database),
+        host: traceStr(c.host) || traceStr(j.host),
+      }
+    : null;
+  const queries = (Array.isArray(t.queries) ? t.queries : []).map((q) => traceQuery(q, connection ? connection.dialect : null));
+  const tot = traceObj(t.totals) || {};
+  const wallMs = traceNum(t.wallMs) !== null ? traceNum(t.wallMs) : traceNum(tot.wallMs);
+  const dbMs = traceNum(tot.dbMs) !== null ? traceNum(tot.dbMs) : queries.reduce((a, q) => a + (q.dbMs || 0), 0);
+  const rowsSum = queries.reduce((a, q) => a + (q.rows || 0), 0);
+  let running = null;
+  if (typeof t.running === "string" && t.running.trim()) running = { relation: t.running, phase: null, sql: null, sinceMs: null };
+  else if (traceObj(t.running)) {
+    const r = t.running;
+    running = { relation: traceStr(r.relation) || traceStr(r.path), phase: traceStr(r.phase), sql: traceCapSql(r.sql, null).sql, sinceMs: traceNum(r.sinceMs) };
+  }
+  const truncated = traceObj(t.truncated) && traceNum(t.truncated.queries) !== null ? { queries: t.truncated.queries } : null;
+  return {
+    v: traceNum(t.v),
+    generation: traceNum(answer.generation),
+    failed: !isOk(answer),
+    status: isOk(answer) ? null : traceNum(answer.status),
+    wallMs,
+    phases: (Array.isArray(t.phases) ? t.phases : [])
+      .filter((p) => traceObj(p) && traceStr(p.name) && traceNum(p.ms) !== null)
+      .map((p) => ({ name: p.name, ms: p.ms, cached: p.cached === true })),
+    queries,
+    totals: {
+      dbMs,
+      otherMs: traceNum(tot.otherMs) !== null ? traceNum(tot.otherMs) : Math.max(0, (wallMs || 0) - dbMs),
+      wallMs: traceNum(tot.wallMs) !== null ? traceNum(tot.wallMs) : wallMs,
+      queries: traceNum(tot.queries) !== null ? traceNum(tot.queries) : queries.filter((q) => q.delivery !== "deferred").length,
+      rows: traceNum(tot.rows) !== null ? traceNum(tot.rows) : rowsSum,
+      rowsRead: traceNum(tot.rowsRead),
+    },
+    connection,
+    partial: t.partial === true || (answer.stuck === true && running !== null),
+    running,
+    truncated,
+  };
+}
+
+/** The tenth panel message: the view's trace, or none. */
+function traceMessage(view) {
+  const t = view && view.trace && typeof view.trace === "object" ? view.trace : null;
+  return t ? { kind: "trace", trace: t, generation: t.generation } : null;
+}
+
+/** `1676` -> `1,676` (no locale: the output line is a record a bug report pastes). */
+function traceCount(n) {
+  const whole = Math.round(n);
+  return (whole < 0 ? "-" : "") + String(Math.abs(whole)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+/** One decimal under 10 ms, whole and grouped above; the page's `formatMs`. */
+function traceMs(ms) {
+  return (Math.abs(ms) < 10 ? (Math.round(ms * 10) / 10).toFixed(1) : traceCount(ms)) + " ms";
+}
+function tracePlural(n, one, many) {
+  return traceCount(n) + " " + (Math.round(n) === 1 ? one : many);
+}
+
+/** The connection as the line and the tooltip name it. */
+function traceConnectionLabel(t) {
+  const c = t && t.connection;
+  if (!c) return null;
+  if (c.kind === "in-memory" || (!c.profile && c.kind !== "profile")) return "in-memory " + (c.dialect || "sqlite");
+  return (c.profile || "profile") + (c.host ? " @ " + c.host : "") + (c.database ? " / " + c.database : "");
+}
+
+/** §3.2: the status bar's idle suffix, `" · 412 ms"`, or "" with no trace. */
+function traceStatusSuffix(trace) {
+  if (!trace || typeof trace !== "object") return "";
+  const wall = traceNum(trace.totals && trace.totals.wallMs);
+  return wall === null ? "" : " · " + traceMs(wall);
+}
+
+/** §3.2: the tooltip's line, `render 412 ms: db 310 ms, 3 queries, 1,676 rows (sales-mssql @ 127.0.0.1)`. */
+function traceTooltipLine(trace) {
+  if (!trace || typeof trace !== "object" || !trace.totals) return "";
+  const tt = trace.totals;
+  const conn = traceConnectionLabel(trace);
+  return "render " + traceMs(tt.wallMs || 0) + ": db " + traceMs(tt.dbMs || 0) + ", " +
+    tracePlural(tt.queries || 0, "query", "queries") + ", " + tracePlural(tt.rows || 0, "row", "rows") +
+    (conn ? " (" + conn + ")" : "");
+}
+
+/**
+ * §3.3 / Q-O5 (a): THE ONE OUTPUT-CHANNEL LINE PER ANSWERED RENDER, logged by
+ * `renderNow` after the generation check.  `roundTripMs` is the extension's
+ * own clock around `sendRequest` (null when unknown); the difference from the
+ * server's `wallMs` is queue + wire + JSON.  No SQL ever goes in the channel.
+ *
+ *   preview: render 12 ok 412 ms (server 405 ms: db 310 ms, 3 queries, 1,676 rows; eval 42 ms, encode 29 ms, other 24 ms) sales-mssql
+ *   preview: render 13 FAILED 500 at $.fetch[2] after 1 query (db 12 ms): <message>
+ *   preview: render 14 STUCK after 60,012 ms (server 60,001 ms so far: db 59,800 ms, 1 query; still running $.fetch[1] for 59,800 ms) sales-mssql
+ */
+function traceOutputLine(answer, roundTripMs) {
+  const a = answer && typeof answer === "object" ? answer : {};
+  const gen = traceNum(a.generation);
+  const head = "preview: render " + (gen === null ? "?" : gen) + " ";
+  const rt = traceNum(roundTripMs);
+  const t = traceOf(a);
+  const message = (typeof a.message === "string" && a.message.trim() ? a.message.split("\n")[0] : "the render failed").slice(0, 300);
+  if (!t) {
+    return isOk(a)
+      ? head + "ok" + (rt === null ? "" : " " + traceMs(rt)) + " (no trace)"
+      : head + "FAILED " + (traceNum(a.status) === null ? "?" : a.status) + ": " + message + " (no trace)";
+  }
+  const tt = t.totals;
+  const wall = tt.wallMs || 0;
+  const conn = traceConnectionLabel(t);
+  const tail = conn ? " " + conn : "";
+  const db = "db " + traceMs(tt.dbMs) + ", " + tracePlural(tt.queries, "query", "queries");
+  if (t.partial) {
+    const r = t.running;
+    return head + "STUCK" + (rt === null ? "" : " after " + traceMs(rt)) + " (server " + traceMs(wall) + " so far: " + db +
+      (r && r.relation ? "; still running " + r.relation + (r.sinceMs === null ? "" : " for " + traceMs(r.sinceMs)) : "") + ")" + tail;
+  }
+  if (t.failed) {
+    const failing = t.queries.filter((q) => q.error).pop();
+    const at = traceStr(a.path) || (failing ? failing.relation : null);
+    return head + "FAILED " + (t.status === null ? "?" : t.status) + (at ? " at " + at : "") +
+      " after " + tracePlural(tt.queries, "query", "queries") + " (db " + traceMs(tt.dbMs) + "): " + message;
+  }
+  // the two largest non-database phases, then what is left of "other"
+  const named = t.phases.filter((p) => TRACE_DB_PHASES.indexOf(p.name) < 0 && p.name !== "other" && p.ms >= 1)
+    .sort((x, y) => y.ms - x.ms).slice(0, 2);
+  const rest = Math.max(0, tt.otherMs - named.reduce((s, p) => s + p.ms, 0));
+  const others = named.map((p) => p.name + " " + traceMs(p.ms)).concat(rest >= 1 || named.length === 0 ? ["other " + traceMs(rest)] : []);
+  return head + "ok " + traceMs(rt === null ? wall : rt) + " (" + (rt === null ? "" : "server " + traceMs(wall) + ": ") +
+    db + ", " + tracePlural(tt.rows, "row", "rows") + "; " + others.join(", ") + ")" + tail;
+}
+// ---- end S2d trace ----
 
 // ------------------------------------------------- the host page (WP-10, S1)
 
@@ -6036,7 +6322,801 @@ function bundleReloadLine(before, after, events) {
   return "preview: " + why + " and the bundle is not whole (" + (a.state || "problem") + "); showing the notice page";
 }
 
+// ------------------------------------ WP-13: profiles and the prompted password
+//
+// THE EXTENSION'S HALF OF THE PREVIEW'S DATABASE CONNECTION (tracker §7, §8;
+// tracker/db/SERVER.md §2; the user's answers Q-S1..Q-S5 = a, a, a, a, b).
+//
+//   settings   `ermine.preview.profiles` = [{id, dialect, url, user?, driver?,
+//              scanner?}] and `ermine.preview.profile` = the active id.  Empty,
+//              or `local` when no profile is called that, is the built-in
+//              in-memory SQLite: nothing is connected and nothing is shown.
+//   password   PROMPTED ("prompted pass lives for the window", the user,
+//              2026-09-20).  Held in ONE `Map` in the extension host's memory,
+//              keyed by `profileKey` = (id, url, user), so a changed URL or user
+//              is a new key and prompts again.  Never on disk, never in
+//              `globalState`, never in a webview message, never in a log.
+//   wire       `ermine/preview/connect {profile, password?}` ->
+//              `{ok: true, host, database?, server?}` or
+//              `{ok: false, class, kept, message, reason?}`;
+//              `ermine/preview/disconnect {}`; the notification
+//              `ermine/preview/disconnected {reason}`.
+//
+// EVERY DECISION IS HERE AND PURE; `extension.js` is glue.  THE PASSWORD
+// ITSELF NEVER ENTERS THIS SECTION except as the second argument of
+// `connectRequest`, the one builder of the one request that carries it: the
+// reducer and every text builder see only `held: true | false`.  And the
+// reducer's STATE NEVER HOLDS THE URL: it holds the profile's key (for the
+// glue's Map, a digest) and a LABEL `{id, dialect, host}`, so no status bar,
+// output line or panel text built from it can print the URL even by mistake.
+
+/** `Backends.scannerFor`'s dialect names, every spelling (Backends.scala:40-46). */
+const PROFILE_DIALECTS = Object.freeze(["sqlite", "mssql", "sqlserver", "mysql", "postgres", "postgresql", "vertica"]);
+/** `Backends.scannerFor`'s variants; `noTransactions` is SQL Server's alone (the server decides that). */
+const PROFILE_SCANNERS = Object.freeze(["default", "noTransactions"]);
+/** The built-in profile's id (tracker §7.1): the in-memory SQLite, which needs no connect. */
+const LOCAL_PROFILE = "local";
+/**
+ * The failure classes of the connect answer: tracker §8.3's `auth`, `driver`
+ * and `connect`, Q-S3 (a)'s `profile`, and `unreachable`, which is what the
+ * server as BUILT sends for §8.3's `connect` (Preview.scala `ClassUnreachable`;
+ * board, extension 2c). Both spellings are accepted; anything else is read as
+ * `unreachable`.
+ */
+const CONNECT_CLASSES = Object.freeze(["auth", "driver", "connect", "unreachable", "profile"]);
+/** Q-S4 (a): the panel's closed `reason` for each class. */
+const CONNECT_REASONS = Object.freeze({
+  auth: "connect-auth", driver: "connect-driver", connect: "connect-unreachable", unreachable: "connect-unreachable",
+  profile: "connect-profile",
+});
+/** The 503 a render answers while no connection is held (Q-S2 (a)). */
+const NOT_CONNECTED_REASON = "not-connected";
+/** The two commands, named once so the status bar and the texts cannot drift. */
+const CONNECT_COMMAND = "ermine.connectDatabase";
+const DISCONNECT_COMMAND = "ermine.disconnectDatabase";
+const CONNECT_COMMAND_TITLE = "Ermine: Connect Database";
+const DISCONNECT_COMMAND_TITLE = "Ermine: Disconnect Database";
+/** The two buttons an authentication failure offers (A8: never an unattended retry). */
+const CONNECT_RETRY = "Retry";
+const CONNECT_DISCONNECT = "Disconnect";
+
+/**
+ * A9, the credential regex of tracker §8.1, plus the `user:pass@host` user-info
+ * form some drivers accept.  A URL that matches is REFUSED before anything is
+ * sent, and the refusal text never echoes the URL (it may hold the very
+ * password the rule exists for).
+ */
+const URL_CREDENTIALS = /(^|[;?&])\s*(password|pwd|user|userName|integratedSecurity|authentication)\s*=/i;
+const URL_USERINFO = /^jdbc:[^/]*\/\/[^/;?@]*@/i;
+/** A1: a profile object with a password-like key is refused, whatever its value. */
+const PROFILE_SECRET_KEY = /^(password|pwd|pass|passwd|secret)$/i;
+
+/** Q-S5 (b): a `jdbc:sqlite:` URL must be the in-memory database or an ABSOLUTE path. */
+function sqliteUrlProblem(url) {
+  const rest = url.slice("jdbc:sqlite:".length);
+  if (rest === ":memory:" || /^file::memory:/i.test(rest)) return null;
+  const p = rest.replace(/^file:(\/\/)?/i, "");
+  if (p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith("\\\\")) return null;
+  return "its jdbc:sqlite: path is not absolute (relative paths are refused; write the whole path)";
+}
+
+/**
+ * THE VALIDATION TABLE, one profile.  Answers `{profile}` (normalised: the
+ * dialect lower-cased, absent optionals left out) or `{problem}` naming the id
+ * and the field -- NEVER the URL's text.
+ */
+function checkProfile(raw, index) {
+  const where = "ermine.preview.profiles[" + index + "]";
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { problem: where + " is " + typeName(raw) + ", not an object" };
+  }
+  const id = typeof raw.id === "string" ? raw.id.trim() : "";
+  if (!id) return { problem: where + " has no id" };
+  const named = "profile " + printable(id);
+  for (const key of Object.keys(raw)) {
+    if (PROFILE_SECRET_KEY.test(key)) {
+      return { id, problem: named + " has a " + printable(key) + " key: a password never goes in settings; " +
+                            "remove it, the extension asks for the password when it connects" };
+    }
+  }
+  const dialect = typeof raw.dialect === "string" ? raw.dialect.trim().toLowerCase() : "";
+  if (PROFILE_DIALECTS.indexOf(dialect) < 0) {
+    return { id, problem: named + " has dialect " + printable(typeof raw.dialect === "string" ? raw.dialect : typeName(raw.dialect)) +
+                          "; one of " + PROFILE_DIALECTS.join(", ") };
+  }
+  const url = typeof raw.url === "string" ? raw.url.trim() : "";
+  if (!/^jdbc:/i.test(url)) return { id, problem: named + " has no jdbc: url" };
+  if (URL_CREDENTIALS.test(url) || URL_USERINFO.test(url)) {
+    return { id, problem: named + "'s url carries credentials; they belong in \"user\" and the password prompt" };
+  }
+  if (/^jdbc:sqlite:/i.test(url)) {
+    const bad = sqliteUrlProblem(url);
+    if (bad) return { id, problem: named + ": " + bad };
+  }
+  const profile = { id, dialect, url };
+  if (raw.user !== undefined && raw.user !== null && raw.user !== "") {
+    if (typeof raw.user !== "string" || !raw.user.trim()) return { id, problem: named + " has a user that is not a name" };
+    profile.user = raw.user.trim();
+  }
+  if (raw.driver !== undefined && raw.driver !== null && raw.driver !== "") {
+    if (typeof raw.driver !== "string" || !/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)+$/.test(raw.driver.trim())) {
+      return { id, problem: named + " has a driver that is not a Java class name" };
+    }
+    profile.driver = raw.driver.trim();
+  }
+  if (raw.scanner !== undefined && raw.scanner !== null && raw.scanner !== "") {
+    if (PROFILE_SCANNERS.indexOf(raw.scanner) < 0) {
+      return { id, problem: named + " has scanner " + printable(String(raw.scanner)) + "; one of " + PROFILE_SCANNERS.join(", ") };
+    }
+    profile.scanner = raw.scanner;
+  }
+  return { profile };
+}
+
+/**
+ * THE WHOLE SETTING, and which profile is active.
+ *
+ *   profiles     the valid ones, in order
+ *   problems     one sentence per refused entry (the glue logs each once)
+ *   active       the active profile, or null (no id, `local`, or refused)
+ *   activeId     the id asked for, trimmed, or null
+ *   activeProblem  why the asked-for id is not usable, or null
+ *
+ * DUPLICATE IDS REFUSE EVERY ENTRY WITH THAT ID: which one the user meant is
+ * not ours to guess, and guessing would connect somewhere they did not pick.
+ */
+function profilesCheck(rawProfiles, rawActive) {
+  const problems = [];
+  const checked = [];
+  if (rawProfiles !== undefined && rawProfiles !== null && !Array.isArray(rawProfiles)) {
+    problems.push("ermine.preview.profiles is " + typeName(rawProfiles) + ", not a list; no profile is used");
+  }
+  const list = Array.isArray(rawProfiles) ? rawProfiles : [];
+  const counts = new Map();
+  list.forEach((raw, i) => {
+    const c = checkProfile(raw, i);
+    checked.push(c);
+    const id = c.profile ? c.profile.id : c.id;
+    if (id) counts.set(id, (counts.get(id) || 0) + 1);
+  });
+  const byId = new Map();
+  const profiles = [];
+  checked.forEach((c) => {
+    const id = c.profile ? c.profile.id : c.id;
+    if (id && counts.get(id) > 1) {
+      if (!byId.has(id)) {
+        const p = "profile " + printable(id) + " is defined " + counts.get(id) + " times; ids must be unique, so none of them is used";
+        problems.push(p);
+        byId.set(id, { problem: p });
+      }
+      return;
+    }
+    if (c.problem) {
+      problems.push(c.problem);
+      if (id) byId.set(id, { problem: c.problem });
+      return;
+    }
+    profiles.push(c.profile);
+    byId.set(c.profile.id, { profile: c.profile });
+  });
+  const activeId = typeof rawActive === "string" && rawActive.trim() ? rawActive.trim() : null;
+  let active = null;
+  let activeProblem = null;
+  if (rawActive !== undefined && rawActive !== null && typeof rawActive !== "string") {
+    activeProblem = "ermine.preview.profile is " + typeName(rawActive) + ", not a profile id";
+  } else if (activeId) {
+    const hit = byId.get(activeId);
+    if (hit && hit.profile) active = hit.profile;
+    else if (hit) activeProblem = hit.problem;
+    else if (activeId !== LOCAL_PROFILE) {
+      activeProblem = "ermine.preview.profile names " + printable(activeId) + ", and no profile has that id" +
+                      (profiles.length ? " (there are: " + profiles.map((p) => p.id).join(", ") + ")" : "");
+    }
+  }
+  return { profiles, problems, active, activeId, activeProblem };
+}
+
+/**
+ * TRACKER §8.1 A2, RESTORED BY THE ORCHESTRATOR (stage 2c, 2026-09-24): BOTH
+ * SETTINGS ARE READ FROM USER SCOPE ONLY.  A checked-in `.vscode/settings.json`
+ * could otherwise point a profile at a hostile host, and the extension would
+ * prompt for the password and send it there (T3).  A workspace- or
+ * folder-scope value is IGNORED and NAMED: `scopeNotice` is the sentence the
+ * glue logs once and the status bar shows while nothing else is active.
+ * `inspProfiles` / `inspProfile` are `getConfiguration("ermine").inspect(...)`
+ * of `preview.profiles` and `preview.profile`; only `globalValue` is read.
+ */
+const SCOPE_NOTICE = "profiles set in workspace settings are ignored (user settings only)";
+
+function fromWorkspace(inspected) {
+  const i = inspected && typeof inspected === "object" ? inspected : {};
+  return i.workspaceValue !== undefined || i.workspaceFolderValue !== undefined;
+}
+
+function userScopeProfilesCheck(inspProfiles, inspProfile) {
+  const g = (i) => (i && typeof i === "object" ? i.globalValue : undefined);
+  const check = profilesCheck(g(inspProfiles), g(inspProfile));
+  check.scopeNotice = fromWorkspace(inspProfiles) || fromWorkspace(inspProfile) ? SCOPE_NOTICE : null;
+  return check;
+}
+
+/**
+ * THE PANEL'S CONNECTION SLOT (the Trace view's connection line joins its
+ * `host` and `database`): `{id, dialect, host, database}` of the connection
+ * the connect machine holds, or null.  Built from `connectReduce`'s state --
+ * whose label never holds the url or the user -- and, fed back an object it
+ * built, it re-validates it, so `panelView` can call it on its own input.
+ * Only `connected` counts: a failed, refused, disconnected or pending
+ * connect has no connection to show.
+ */
+function panelConnection(state) {
+  const s = state && typeof state === "object" ? state : null;
+  if (!s) return null;
+  const str = (v) => (typeof v === "string" && v ? v : null);
+  if (s.phase !== undefined) {
+    if (s.phase !== "connected" || !s.label) return null;
+    return Object.freeze({ id: str(s.label.id), dialect: str(s.label.dialect), host: str(s.label.host),
+                           database: str(s.database) });
+  }
+  if (!str(s.id)) return null;
+  return Object.freeze({ id: str(s.id), dialect: str(s.dialect), host: str(s.host), database: str(s.database) });
+}
+
+/**
+ * The Map key: a digest of (id, url, user).  A changed URL or user is a new
+ * key and prompts again (A3's replay protection, without a store).  A DIGEST,
+ * so that the reducer's state -- which holds the key -- never holds the URL
+ * in clear either.
+ */
+function profileKey(profile) {
+  if (!profile || typeof profile !== "object") return null;
+  return "profile:" + digest(String(profile.id) + "\u0000" + String(profile.url) + "\u0000" +
+                             (profile.user ? String(profile.user) : ""));
+}
+
+/** The held entries no configured profile has any more: forgotten on every settings change. */
+function heldKeysToForget(heldKeys, profiles) {
+  const live = new Set((Array.isArray(profiles) ? profiles : []).map(profileKey));
+  return Array.from(heldKeys || []).filter((k) => !live.has(k));
+}
+
+/**
+ * The host a URL names, for the prompt and the status bar before the server
+ * has answered one: `//host[:port]` (IPv6 in brackets kept whole), a sqlite
+ * file's base name, or null.  Never the path of anything else, never a query.
+ */
+function profileHost(url) {
+  if (typeof url !== "string") return null;
+  if (/^jdbc:sqlite:/i.test(url)) {
+    const rest = url.slice("jdbc:sqlite:".length);
+    if (rest === ":memory:" || /^file::memory:/i.test(rest)) return "memory";
+    return path.basename(rest.replace(/[?].*$/, "")) || null;
+  }
+  const m = /^jdbc:[^/]*\/\/(\[[^\]]+\]|[^/;:?@\\]+)/i.exec(url);
+  return m ? m[1] : null;
+}
+
+/** What the status bar and every line say for a profile: never the URL. */
+function profileLabel(profile, host) {
+  if (!profile) return null;
+  return { id: String(profile.id), dialect: String(profile.dialect),
+           host: typeof host === "string" && host ? host : profileHost(profile.url) };
+}
+
+/** A7: the one level at which the client would log the connect body. */
+function traceRefusesConnect(level) {
+  return level === "verbose";
+}
+
+/**
+ * The input box's texts: `user @ host` and the profile id, nothing else.
+ * `password: true` and `ignoreFocusOut: true` are the brief's, fixed here so
+ * the glue cannot lose them.
+ */
+function passwordPrompt(profile) {
+  const host = profileHost(profile && profile.url) || "the database";
+  const who = (profile && profile.user ? profile.user : "?") + " @ " + host;
+  return {
+    title: "Ermine: database password",
+    prompt: "Password for " + who + " (profile " + (profile ? profile.id : "?") +
+            "). It is held in this window's memory only, until the window closes or you disconnect.",
+    password: true,
+    ignoreFocusOut: true,
+  };
+}
+
+/**
+ * THE ONE BUILDER OF THE ONE REQUEST THAT CARRIES THE PASSWORD.  `password`
+ * is sent only for a profile with a user and only when it is a string; a
+ * profile without a user connects with `getConnection(url)` (tracker §4).
+ */
+function connectRequest(profile, password) {
+  const p = { id: profile.id, dialect: profile.dialect, url: profile.url };
+  if (profile.user) p.user = profile.user;
+  if (profile.driver) p.driver = profile.driver;
+  if (profile.scanner) p.scanner = profile.scanner;
+  const body = { profile: p };
+  if (profile.user && typeof password === "string") body.password = password;
+  return body;
+}
+
+// The connect state machine.
+//
+// CAUSES: what asked for a connect.
+//   running       the language client entered Running (the first time is
+//                 "on activation"; later times are after a restart)
+//   profile       the active profile, or the trace level, changed
+//   command       Ermine: Connect Database
+//   retry         the "Retry" button of an authentication failure
+//   disconnected  the server's `ermine/preview/disconnected` (the automatic
+//                 reconnect the user decided on)
+// Only `disconnected` never prompts: it reconnects with the HELD password or
+// not at all.  `running` does not prompt after the user refused (cancelled
+// the prompt, disconnected, or had a login rejected) -- A8's "no unattended
+// retry" -- until an explicit command or a settings change.
+//   backoff       NEW-2 (dogfood): the backoff timer of an unattended retry
+//   render        NEW-2: a render answered 503 not-connected while a password
+//                 is held (or none is needed); ONE connect before the banner
+// Neither of the two new causes prompts, ever.
+const CONNECT_CAUSES = Object.freeze(["running", "profile", "command", "retry", "disconnected", "backoff", "render"]);
+const EXPLICIT_CAUSES = Object.freeze(["profile", "command", "retry"]);
+/** Causes that reconnect with the HELD password or not at all. */
+const UNATTENDED_CAUSES = Object.freeze(["disconnected", "backoff", "render"]);
+
+/**
+ * NEW-2 (dogfood, 2026-09-25): `db.sh down` then `db.sh up` left the preview
+ * disconnected, because the one automatic attempt ran while the database was
+ * still down.  So a failure of class `unreachable`/`connect`/`driver` with a
+ * password held (or none needed) is RETRIED, unattended, after these delays:
+ * attempt 1 is the failed one, attempt 2 follows 5 s later, attempt 3 15 s
+ * after that, and then it STOPS -- three attempts in all, per chain.  A chain
+ * is cancelled by Disconnect, a server stop, a profile or trace change, any
+ * explicit connect (which starts over at 1) and the teardown.  No setting.
+ */
+const RECONNECT_DELAYS_MS = Object.freeze([5000, 15000]);
+const RECONNECT_ATTEMPTS = RECONNECT_DELAYS_MS.length + 1;
+const RETRIABLE_CLASSES = Object.freeze(["unreachable", "connect", "driver"]);
+
+function initialConnectState() {
+  return {
+    phase: "none",          // none | refused | prompting | connecting | connected | failed | declined | disconnected | idle
+    key: null,              // profileKey of the profile the phase is about (for the glue's Map)
+    label: null,            // {id, dialect, host}: what may be shown
+    serial: 0,              // the current attempt; an event carrying another is stale
+    cls: null,              // the failure class, or "trace"/"profile" for a refusal
+    reason: null,           // the panel reason (Q-S4)
+    message: null,          // the failure's text (already scrubbed by the server, A10)
+    database: null,
+    server: null,
+    pendingRerender: null,  // a render trigger deferred until this attempt settles
+    rerenderOnOk: false,    // re-send the last render when this attempt succeeds
+    quiet: false,           // the user said no (cancel, disconnect, auth failure): no unattended prompt
+    sig: null,              // `connectSignature` of the settings the last request saw
+    attempt: 1,             // NEW-2: this attempt's number in its unattended chain (1..RECONNECT_ATTEMPTS)
+    retry: null,            // NEW-2: {attempt, token} while a backoff is armed, else null
+  };
+}
+
+/**
+ * What a settings change must MOVE for the connection to be re-decided: the
+ * active profile's key, the reason it is refused, and whether the trace is
+ * verbose.  An edit to an INACTIVE profile moves none of them and does
+ * nothing (tracker §7.2).
+ */
+function connectSignature(check, traceLevel) {
+  const c = check || {};
+  return String(profileKey(c.active)) + "\u0001" + String(c.activeProblem || "") + "\u0001" +
+         String(c.scopeNotice || "") + "\u0001" +
+         (traceRefusesConnect(traceLevel) ? "verbose" : "");
+}
+
+/** Did this settings change move anything the connection depends on? */
+function connectSettingsMoved(state, check, traceLevel) {
+  const s = state || initialConnectState();
+  return connectSignature(check, traceLevel) !== s.sig;
+}
+
+const NO_CONNECT_EFFECTS = Object.freeze({
+  prompt: null, send: null, sendDisconnect: false, forget: false, offerRetry: false,
+  rerender: null, reconnect: null, deferred: false, failed: false, notify: false, line: null,
+  retryIn: null, retryToken: null,
+});
+
+function connectEffects(over) {
+  return Object.assign({}, NO_CONNECT_EFFECTS, over);
+}
+
+/** The event builders: the glue and the models build every event through these. */
+const connectEvents = {
+  /** `check` is `profilesCheck`'s answer; `held` whether the Map has the active key. */
+  request(cause, check, traceLevel, held, hadRender) {
+    return { type: "request", cause, check, traceLevel, held: held === true, hadRender: hadRender === true };
+  },
+  /** The input box settled: `entered` is whether a password came back (never the password). */
+  prompted(serial, entered) { return { type: "prompted", serial, entered: entered === true }; },
+  /** `canReconnect`: the profile needs no password or one is held (NEW-2's retry condition). */
+  answer(serial, answer, canReconnect) { return { type: "answer", serial, answer, canReconnect: canReconnect === true }; },
+  rejected(serial, err, canReconnect) {
+    return { type: "rejected", serial, canReconnect: canReconnect === true,
+             code: err && typeof err.code === "number" ? err.code : null,
+             message: err && err.message ? String(err.message) : String(err) };
+  },
+  disconnected(reason) { return { type: "disconnected", reason: typeof reason === "string" ? reason : null }; },
+  disconnectCommand() { return { type: "disconnect" }; },
+  stopped() { return { type: "stopped" }; },
+  deferRender(trigger) { return { type: "deferRender", trigger }; },
+  /** NEW-2: the backoff timer armed with `token` expired. */
+  retryDue(token) { return { type: "retryDue", token }; },
+};
+
+function labelText(label) {
+  if (!label) return "?";
+  return label.id + " (" + label.dialect + ")" + (label.host ? " @ " + label.host : "");
+}
+
+/** JSON-RPC "method not found": an older server that has no connect. */
+const METHOD_NOT_FOUND = -32601;
+
+/**
+ * THE REDUCER.  `(state, event) -> {state, effects}`; the glue does exactly
+ * what the effects say and nothing else:
+ *
+ *   prompt          serial: open the password box for this attempt
+ *   send            serial: send `connect` (held password, or none) for this attempt
+ *   sendDisconnect  send `ermine/preview/disconnect`
+ *   forget          delete the Map entry for `state.key` (the key BEFORE this event)
+ *   offerRetry      show Retry / Disconnect (an authentication failure)
+ *   rerender        a render trigger: re-send the last render, ONCE, through
+ *                   WP-22's consultation (`mayAutoRender`)
+ *   reconnect       a cause: call `connect(<cause>)` ("disconnected", or NEW-2's "backoff")
+ *   retryIn         NEW-2: ms; arm THE backoff timer, which hands back `retryDue(retryToken)`
+ *   notify          the failure is worth an error notification (the chain's first and last)
+ *   deferred        the render the caller was about to schedule is now owned
+ *                   by this attempt: do NOT schedule it
+ *   failed          a failure worth a panel banner and a `db:` line
+ *   line            one output-channel line (never the password or the URL)
+ */
+function connectReduce(state, event) {
+  const s = state || initialConnectState();
+  const out = (next, fx) => ({ state: next, effects: connectEffects(fx) });
+  if (!event || typeof event !== "object") return out(s, {});
+
+  if (event.type === "request") {
+    const check = event.check || profilesCheck([], null);
+    const cause = CONNECT_CAUSES.indexOf(event.cause) >= 0 ? event.cause : "command";
+    const explicit = EXPLICIT_CAUSES.indexOf(cause) >= 0;
+    // NEW-2: a backoff that is no longer armed (cancelled, or overtaken) does nothing
+    if (cause === "backoff" && !(s.phase === "retrying" && s.retry)) return out(s, {});
+    // the attempt number: a backoff (or a render during one) takes the armed
+    // attempt; anything else starts a chain at 1
+    const attempt = s.phase === "retrying" && s.retry && (cause === "backoff" || cause === "render") ? s.retry.attempt : 1;
+    const profile = check.active;
+    const key = profileKey(profile);
+    const serial = s.serial + 1;
+    const keyMoved = key !== s.key;
+    const sig = connectSignature(check, event.traceLevel);
+    // Nothing active: in-memory SQLite.  If something WAS connected (or on
+    // its way), the server is told to let it go; the password stays held
+    // under its own key, which is only reachable by switching back.
+    if (!profile) {
+      const wasLive = s.phase === "connected" || s.phase === "connecting";
+      const scope = !check.activeProblem && check.scopeNotice ? check.scopeNotice : null;
+      const problem = check.activeProblem || scope;
+      const next = Object.assign(initialConnectState(), { serial, sig,
+        phase: problem ? "refused" : "none",
+        cls: check.activeProblem ? "profile" : scope ? "scope" : null,
+        reason: problem ? CONNECT_REASONS.profile : null,
+        message: problem,
+        label: check.activeProblem && check.activeId ? { id: check.activeId, dialect: "?", host: null }
+             : scope ? { id: "workspace profiles", dialect: "?", host: null } : null,
+      });
+      return out(next, {
+        sendDisconnect: wasLive,
+        line: problem ? "db: not connecting: " + problem
+            : wasLive ? "db: no profile is active; disconnecting (the preview uses the in-memory sqlite)" : null,
+      });
+    }
+    const label = profileLabel(profile);
+    const base = { key, label, serial, sig, database: null, server: null, attempt, retry: null,
+                   // a new profile is a new decision: its quiet flag is not inherited
+                   quiet: explicit || keyMoved ? false : s.quiet,
+                   pendingRerender: keyMoved ? null : s.pendingRerender,
+                   rerenderOnOk: event.hadRender === true };
+    if (traceRefusesConnect(event.traceLevel)) {
+      return out(Object.assign({}, s, base, { phase: "refused", cls: "trace", reason: CONNECT_REASONS.profile,
+                                               message: "ermine.trace.server is \"verbose\", which would log the password",
+                                               pendingRerender: null }), {
+        line: "db: NOT connecting " + labelText(label) + ": ermine.trace.server is \"verbose\" and would log the " +
+              "connect request with its password (A7); set it to \"messages\" or \"off\"",
+      });
+    }
+    const needsPassword = !!profile.user;
+    if (!needsPassword || event.held) {
+      return out(Object.assign({}, s, base, { phase: "connecting", cls: null, reason: null, message: null }), {
+        send: serial,
+        line: "db: connecting " + labelText(label) + " (" + cause + (needsPassword ? ", password held" : ", no user") + ")",
+      });
+    }
+    // A password is needed and none is held.
+    const unattended = UNATTENDED_CAUSES.indexOf(cause) >= 0;
+    const suppressed = unattended || (cause === "running" && base.quiet);
+    if (suppressed) {
+      const why = unattended
+        ? "no password is held for it (reconnecting never asks)"
+        : "you declined, disconnected or had a login rejected; nothing asks again until you run " + CONNECT_COMMAND_TITLE;
+      return out(Object.assign({}, s, base, { phase: unattended ? "disconnected" : "idle",
+                                               cls: null, reason: null, message: null, pendingRerender: null }), {
+        line: "db: not connecting " + labelText(label) + ": " + why,
+      });
+    }
+    return out(Object.assign({}, s, base, { phase: "prompting", cls: null, reason: null, message: null }), {
+      prompt: serial,
+      line: "db: asking for the password of " + labelText(label) + " (" + cause + ")",
+    });
+  }
+
+  if (event.type === "prompted") {
+    if (event.serial !== s.serial || s.phase !== "prompting") return out(s, {});
+    if (!event.entered) {
+      return out(Object.assign({}, s, { phase: "declined", quiet: true, pendingRerender: null }), {
+        line: "db: no password given for " + labelText(s.label) + "; not connected",
+      });
+    }
+    return out(Object.assign({}, s, { phase: "connecting" }), {
+      send: s.serial,
+      line: "db: connecting " + labelText(s.label) + " (password entered)",
+    });
+  }
+
+  if (event.type === "answer" || event.type === "rejected") {
+    if (event.serial !== s.serial || s.phase !== "connecting") return out(s, {});
+    const a = event.type === "answer" && event.answer && typeof event.answer === "object" ? event.answer : null;
+    if (a && a.ok === true) {
+      const host = typeof a.host === "string" && a.host ? a.host : s.label && s.label.host;
+      const label = Object.assign({}, s.label, { host });
+      const trigger = s.pendingRerender || (s.rerenderOnOk ? TRIGGER_RECONNECTED : null);
+      const database = typeof a.database === "string" && a.database ? a.database : null;
+      const server = typeof a.server === "string" && a.server ? a.server : null;
+      return out(Object.assign({}, s, { phase: "connected", label, cls: null, reason: null, message: null,
+                                         database, server, pendingRerender: null, rerenderOnOk: false, quiet: false }), {
+        rerender: trigger,
+        line: "db: connected " + labelText(label) + (database ? " / " + database : "") +
+              (trigger ? "; re-sending the last render (" + trigger + ")" : ""),
+      });
+    }
+    let cls;
+    let kept;
+    let message;
+    if (a) {
+      cls = CONNECT_CLASSES.indexOf(a.class) >= 0 ? a.class : "unreachable";
+      kept = a.kept !== false;
+      message = typeof a.message === "string" && a.message.trim() ? a.message.trim() : "the connect failed";
+    } else if (event.type === "rejected" && event.code === METHOD_NOT_FOUND) {
+      cls = "profile";
+      kept = true;
+      message = "this language server has no ermine/preview/connect (it is older than the extension)";
+    } else {
+      cls = "unreachable";
+      kept = true;
+      message = "the connect request failed: " + (event.message || (a ? "an answer that is not {ok}" : "no answer"));
+    }
+    const forget = cls === "auth" || !kept;
+    const reason = a && typeof a.reason === "string" && /^connect-[a-z]+$/.test(a.reason) ? a.reason : CONNECT_REASONS[cls];
+    // NEW-2: retry, unattended, only what a retry can fix, only with a
+    // password held (or none needed), and never past the last attempt.
+    const attempt = typeof s.attempt === "number" ? s.attempt : 1;
+    const retries = !forget && event.canReconnect === true && RETRIABLE_CLASSES.indexOf(cls) >= 0 &&
+                    attempt < RECONNECT_ATTEMPTS;
+    const retry = retries ? { attempt: attempt + 1, token: s.serial } : null;
+    const delay = retries ? RECONNECT_DELAYS_MS[attempt - 1] : null;
+    return out(Object.assign({}, s, { phase: retries ? "retrying" : "failed", cls, reason, message, database: null, server: null,
+                                       quiet: s.quiet || cls === "auth", retry,
+                                       // the re-render a successful retry owes is kept across the chain
+                                       rerenderOnOk: retries ? s.rerenderOnOk : false }), {
+      forget,
+      offerRetry: cls === "auth",
+      failed: true,
+      notify: !retries || attempt === 1,
+      retryIn: delay,
+      retryToken: retry ? retry.token : null,
+      line: "db: connect " + labelText(s.label) + " FAILED " + cls + " (" + reason + (forget ? ", password forgotten" : ", password kept") +
+            "; attempt " + attempt + "/" + RECONNECT_ATTEMPTS +
+            (retries ? ", retrying in " + Math.round(delay / 1000) + " s" : "") + "): " + message,
+    });
+  }
+
+  if (event.type === "disconnected") {
+    if (s.phase !== "connected") {
+      return out(s, { line: "db: the server says the connection is gone (" + (event.reason || "no reason") + "); nothing was connected" });
+    }
+    return out(Object.assign({}, s, { phase: "disconnected", database: null, server: null }), {
+      reconnect: "disconnected",
+      line: "db: the server closed the connection of " + labelText(s.label) + " (" + (event.reason || "no reason") + "); reconnecting",
+    });
+  }
+
+  if (event.type === "disconnect") {
+    if (!s.key && s.phase === "none") return out(s, { line: "db: no profile is active; nothing to disconnect" });
+    return out(Object.assign({}, s, { phase: "idle", serial: s.serial + 1, quiet: true, cls: null, reason: null, retry: null, attempt: 1,
+                                       message: null, database: null, server: null, pendingRerender: null, rerenderOnOk: false }), {
+      forget: !!s.key,
+      sendDisconnect: true,
+      line: "db: disconnected " + labelText(s.label) + " by the user; the password is forgotten",
+    });
+  }
+
+  if (event.type === "stopped") {
+    // The server and its connection are gone.  Anything in flight is stale;
+    // the password stays held (that is what makes the restart reconnect
+    // automatic), and the `Running` edge asks again.
+    if (s.phase === "none") return out(s, {});
+    const phase = s.phase === "refused" || s.phase === "idle" || s.phase === "declined" ? s.phase : "disconnected";
+    return out(Object.assign({}, s, { phase, serial: s.serial + 1, pendingRerender: null, database: null, server: null,
+                                       retry: null, attempt: 1 }), {});
+  }
+
+  if (event.type === "retryDue") {
+    if (s.phase !== "retrying" || !s.retry || s.retry.token !== event.token) return out(s, {});
+    return out(s, { reconnect: "backoff" });
+  }
+
+  if (event.type === "deferRender") {
+    if (s.phase !== "prompting" && s.phase !== "connecting") return out(s, { deferred: false });
+    // ONE deferred render: the first trigger is kept (a later one in the same
+    // attempt is the same "re-send the last render").
+    return out(Object.assign({}, s, { pendingRerender: s.pendingRerender || event.trigger }), { deferred: true });
+  }
+
+  return out(s, {});
+}
+
+/** The status bar item for the connection: hidden when no profile is in play. */
+function connectStatusBar(state) {
+  const s = state || initialConnectState();
+  if (s.phase === "none" || !s.label) return { hidden: true };
+  const id = s.label.id;
+  const tipTail = "\nClick: " + CONNECT_COMMAND_TITLE + ". " + DISCONNECT_COMMAND_TITLE + " forgets the password.";
+  switch (s.phase) {
+    case "connected":
+      return { hidden: false, text: "$(database) " + labelText(s.label), severity: "none",
+               tooltip: "connected: " + labelText(s.label) + (s.database ? "\ndatabase: " + s.database : "") +
+                        (s.server ? "\nserver: " + s.server : "") + tipTail };
+    case "prompting":
+      return { hidden: false, text: "$(key) " + id + ": password?", severity: "none",
+               tooltip: "waiting for the password of " + labelText(s.label) + tipTail };
+    case "connecting":
+      return { hidden: false, text: "$(sync~spin) " + id + ": connecting", severity: "none",
+               tooltip: "connecting " + labelText(s.label) + tipTail };
+    case "failed":
+    case "refused":
+      if (s.cls === "scope") {
+        return { hidden: false, text: "$(database) workspace profiles ignored", severity: "warning",
+                 tooltip: (s.message || SCOPE_NOTICE) + "\nPut ermine.preview.profiles and ermine.preview.profile in your USER settings." };
+      }
+      return { hidden: false, text: "$(database) " + id + ": " + (s.cls === "trace" ? "trace is verbose" : s.cls),
+               severity: "warning", tooltip: (s.message || "not connected") + tipTail };
+    case "retrying":
+      return { hidden: false, text: "$(sync) " + id + ": reconnecting (" + s.retry.attempt + "/" + RECONNECT_ATTEMPTS + ")",
+               severity: "warning",
+               tooltip: (s.cls || "unreachable") + ": " + (s.message || "the connect failed") +
+                        "\nretrying automatically, " + RECONNECT_ATTEMPTS + " attempts in all" + tipTail };
+    case "disconnected":
+      return { hidden: false, text: "$(database) " + id + ": disconnected", severity: "warning",
+               tooltip: "the connection of " + labelText(s.label) + " is gone" + tipTail };
+    default:
+      return { hidden: false, text: "$(database) " + id + ": not connected", severity: "none",
+               tooltip: labelText(s.label) + " is not connected; renders answer 503 not connected" + tipTail };
+  }
+}
+
+/** The error notification's text for a failed connect (tracker §2.4's message shape). */
+function connectFailureText(state) {
+  const s = state || initialConnectState();
+  return "Ermine: " + labelText(s.label) + ": " + (s.cls || "connect") + ": " + (s.message || "the connect failed");
+}
+
+/**
+ * THE PANEL'S BANNER FOR A FAILED CONNECT: the extension builds it, since a
+ * connect is not a render (SERVER.md §2.4) -- `status: 503`, the class's
+ * Q-S4 reason, no path, at the CURRENT generation so any later render
+ * replaces it.  Like a params refusal it is never `lastServerAnswer`.
+ */
+function connectFailureAnswer(state, generation) {
+  const s = state || initialConnectState();
+  return {
+    ok: false,
+    status: 503,
+    message: connectFailureText(s).replace(/^Ermine: /, "") + ' -- run "' + CONNECT_COMMAND_TITLE + '" to try again',
+    path: null,
+    reason: s.reason || CONNECT_REASONS.connect,
+    generation,
+  };
+}
+
+/**
+ * NEW-2: MAY A RENDER'S 503 "not connected" FIRST TRY A CONNECT (once), and
+ * show the banner only if that fails?  Only when the connect machine is
+ * disconnected, retrying, or failed for a class a retry can fix, AND the
+ * profile needs no password or one is HELD (`canReconnect`): a render never
+ * prompts, and never tries without the password.  The user's own "no"
+ * (declined, Disconnect, a rejected login) is never overridden by a render.
+ */
+function renderMayConnect(state, canReconnect) {
+  const s = state && typeof state === "object" ? state : null;
+  if (!s || canReconnect !== true || !s.key) return false;
+  if (s.phase === "retrying" || s.phase === "disconnected") return true;
+  return s.phase === "failed" && RETRIABLE_CLASSES.indexOf(s.cls) >= 0;
+}
+
+/** Is this render answer the server's 503 "not connected" (Q-S2 (a))? */
+function isNotConnected(answer) {
+  if (!answer || typeof answer !== "object" || answer.ok === true || answer.status !== 503) return false;
+  if (answer.reason === NOT_CONNECTED_REASON) return true;
+  return typeof answer.message === "string" && /not connected/i.test(answer.message);
+}
+
+/**
+ * THE 503 AS THE PANEL SHOWS IT: the same answer, with `reason:
+ * "not-connected"` (whether or not the server sent one) and a sentence
+ * naming what to do -- the status bar item runs the same command.  No new
+ * panel button (U4: Restart only).  Any other answer is returned BY IDENTITY.
+ */
+function dressNotConnected(answer, state) {
+  if (!isNotConnected(answer)) return answer;
+  const s = state || initialConnectState();
+  const why = s.phase === "failed" || s.phase === "refused"
+    ? labelText(s.label) + ": " + (s.cls === "trace" ? "trace is verbose" : s.cls) + ": " + (s.message || "not connected")
+    : s.label && s.phase === "retrying" ? labelText(s.label) + " is reconnecting (attempt " + s.retry.attempt + "/" + RECONNECT_ATTEMPTS + " is armed)"
+    : s.label ? labelText(s.label) + " is " + (s.phase === "connecting" || s.phase === "prompting" ? "still connecting" : "not connected")
+    : "no database profile is connected";
+  return Object.assign({}, answer, {
+    reason: NOT_CONNECTED_REASON,
+    message: (typeof answer.message === "string" && answer.message ? answer.message : "not connected") +
+             " (" + why + ') -- run "' + CONNECT_COMMAND_TITLE + '", or click the database item in the status bar',
+  });
+}
+
 module.exports = {
+  // WP-13 (extension half): profiles, the prompted password, the connect machine.
+  TRIGGER_RECONNECTED,
+  PROFILE_DIALECTS,
+  PROFILE_SCANNERS,
+  LOCAL_PROFILE,
+  CONNECT_CLASSES,
+  CONNECT_REASONS,
+  NOT_CONNECTED_REASON,
+  CONNECT_COMMAND,
+  DISCONNECT_COMMAND,
+  CONNECT_COMMAND_TITLE,
+  DISCONNECT_COMMAND_TITLE,
+  CONNECT_RETRY,
+  CONNECT_DISCONNECT,
+  CONNECT_CAUSES,
+  checkProfile,
+  profilesCheck,
+  SCOPE_NOTICE,
+  userScopeProfilesCheck,
+  profileKey,
+  heldKeysToForget,
+  profileHost,
+  profileLabel,
+  traceRefusesConnect,
+  passwordPrompt,
+  connectRequest,
+  initialConnectState,
+  connectSignature,
+  connectSettingsMoved,
+  connectEvents,
+  connectReduce,
+  connectStatusBar,
+  panelConnection,
+  renderMayConnect,
+  RECONNECT_DELAYS_MS,
+  RECONNECT_ATTEMPTS,
+  connectFailureText,
+  connectFailureAnswer,
+  isNotConnected,
+  dressNotConnected,
   absoluteRoots,
   makePick,
   pickLabel,
@@ -6224,6 +7304,13 @@ module.exports = {
   unsavedNames,
   panelView,
   panelMessagesFor,
+  // S2d (panel)
+  TRACE_SQL_CAP,
+  traceOf,
+  traceMessage,
+  traceStatusSuffix,
+  traceTooltipLine,
+  traceOutputLine,
   PREVIEW_ROOT_ID,
   previewCsp,
   buildPreviewHtml,

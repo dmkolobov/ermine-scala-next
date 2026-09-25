@@ -184,7 +184,10 @@ test("(b-host-surface) window.ErmineHost exposes exactly what src/host/page.ts e
   const hostSrc = fs.readFileSync(HOST_JS, "utf8");
   assert.equal((hostSrc.match(/ZodError|ZodType|z\.object\(/g) ?? []).length, 0,
     "zod reached ermine-host.js -- src/host/ must import nothing");
-  assert.ok(hostSrc.length < 64 * 1024,
+  // This cap guards against ZOD ONLY (a stray import doubling the bundle): the
+  // reducer + page + S2d's Trace view are ~62 KB unminified, so it is 96 KiB
+  // (REVIEW-S2's suggestion), not a size budget for the panel's own code.
+  assert.ok(hostSrc.length < 96 * 1024,
     `ermine-host.js is ${hostSrc.length} B; the reducer alone is ~10 KB, so something was pulled in`);
 
   // the bundled reducer and the CommonJS one fold the same sequence the same way

@@ -221,6 +221,8 @@ function consistent(s: HostState): void {
   assert.equal(typeof s.reloading, "boolean");
   assert.ok(s.switching === null || typeof s.switching === "string");
   assert.ok(Array.isArray(s.unsaved) && s.unsaved.every((n) => typeof n === "string"));
+  assert.ok(s.trace === null || (typeof s.trace.payload === "object" && s.trace.payload !== null &&
+    (s.trace.generation === null || typeof s.trace.generation === "number")));
 
   // (2) presentation is total
   const p = presentation(s);
@@ -264,6 +266,7 @@ const messageArb: fc.Arbitrary<HostMessage> = fc.oneof(
   fc.record({ kind: fc.constant("switching" as const), to: fc.option(fc.string({ maxLength: 8 }), { nil: null }) }),
   fc.record({ kind: fc.constant("unsaved" as const), names: fc.array(fc.string({ maxLength: 8 }), { maxLength: 3 }) }),
   fc.record({ kind: fc.constant("reloadBundle" as const) }),
+  fc.record({ kind: fc.constant("trace" as const), trace: fc.option(fc.constant({ totals: { wallMs: 1 } }), { nil: null }), generation: fc.integer({ min: 0, max: 50 }) }),
   // the messages an OLDER panel would be handed by a NEWER extension
   fc.record({ kind: fc.string({ maxLength: 8 }) }) as fc.Arbitrary<HostMessage>,
 );
@@ -301,6 +304,7 @@ test("(h-prop-kinds) every declared kind has a case: each one moves the state or
     switching: { kind: "switching", to: "p" },
     unsaved: { kind: "unsaved", names: ["A.e"] },
     reloadBundle: { kind: "reloadBundle" },
+    trace: { kind: "trace", trace: { totals: {} }, generation: 1 },
   };
   assert.deepStrictEqual(Object.keys(movers).sort(), [...MESSAGE_KINDS].sort());
   for (const k of MESSAGE_KINDS) {
@@ -308,5 +312,30 @@ test("(h-prop-kinds) every declared kind has a case: each one moves the state or
     const s1 = applyMessage(s0, movers[k]!);
     assert.notEqual(s1, s0, `${k} fell through to the default arm`);
     consistent(s1);
+  }
+});
+
+// ------------------------------------------------ S2d: the tenth kind, `trace`
+
+test("(h-trace-kind) `trace` keeps an opaque payload and its generation; a null or junk payload clears it", () => {
+  const t = { totals: { wallMs: 412 } };
+  const s = fold([{ kind: "render", document: doc, generation: 3 }, { kind: "trace", trace: t, generation: 3 }]);
+  assert.deepStrictEqual(s.trace, { payload: t, generation: 3 });
+  for (const junk of [null, undefined, 3, "x"]) {
+    assert.equal(applyMessage(s, { kind: "trace", trace: junk, generation: 3 }).trace, null, String(junk));
+  }
+  // presentation only: it moves no banner and dims nothing
+  assert.deepStrictEqual(presentation(s), presentation({ ...s, trace: null }));
+});
+
+test("(h-trace-clears) a `render` of ANOTHER generation clears the trace; the same generation keeps it", () => {
+  const t = { totals: { wallMs: 1 } };
+  const s3 = fold([{ kind: "render", document: doc, generation: 3 }, { kind: "trace", trace: t, generation: 3 }]);
+  assert.equal(applyMessage(s3, { kind: "render", document: doc, generation: 4 }).trace, null, "a trace for generation 3 never shows after render 4");
+  assert.equal(applyMessage(s3, { kind: "render", document: doc }).trace, null, "a render with no generation is not generation 3's");
+  assert.deepStrictEqual(applyMessage(s3, { kind: "render", document: doc, generation: 3 }).trace, { payload: t, generation: 3 });
+  // an error, a stale toggle, a stuck edge do not touch it (the failed answer's trace comes WITH it)
+  for (const m of [{ kind: "error", status: 500, message: "e" }, { kind: "stale", stale: true }, { kind: "stuck", stuck: true }] as HostMessage[]) {
+    assert.equal(applyMessage(s3, m).trace, s3.trace, m.kind);
   }
 });

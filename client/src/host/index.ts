@@ -27,7 +27,10 @@
 // THE MESSAGE KINDS are §5's eight -- `render`, `error`, `stale`, `stuck`,
 // `reloadBundle`, `unsaved`, `switching`, `offline` -- plus WP-22's ninth,
 // `held` (a report that wedged and was killed is not re-rendered without a
-// confirmation).  §4's rule (5) is WITHDRAWN (WP-24): a client gets one rising
+// confirmation), and S2d's tenth, `trace` (DB programme stage 2: what the
+// last current answer's render did -- phases, queries, SQL -- carried as an
+// OPAQUE payload like the document; the extension decides which trace belongs
+// to the view, this reducer only keeps it).  §4's rule (5) is WITHDRAWN (WP-24): a client gets one rising
 // edge per watchdog incident again, so nothing here treats a missing falling
 // edge as special, and nothing here expects a cancel that sends no pair at all.
 //
@@ -38,6 +41,13 @@
 
 // ------------------------------------------------------------------ messages
 
+// ---- S2d trace (panel) ----
+/** S2d: the render trace of the last CURRENT answer (DESIGN-OBSERVABILITY §2),
+ *  already normalised by the extension's `traceOf`.  `trace: null` (or no
+ *  usable payload) clears it.  `generation` is the answer's, carried so that a
+ *  newer `render` can drop a trace that is not its own. */
+export interface TraceMessage { kind: "trace"; trace: unknown; generation?: number | null }
+// ---- end S2d trace ----
 /** A document to show.  `generation` is carried, never compared (D10). */
 export interface RenderMessage { kind: "render"; document: unknown; generation?: number | null }
 /** An `{ok: false}` answer: §4's `status` / `message` / `path` / `reason`. */
@@ -63,12 +73,12 @@ export interface ReloadBundleMessage { kind: "reloadBundle" }
 
 export type HostMessage =
   | RenderMessage | ErrorMessage | StaleMessage | StuckMessage | HeldMessage
-  | OfflineMessage | SwitchingMessage | UnsavedMessage | ReloadBundleMessage;
+  | OfflineMessage | SwitchingMessage | UnsavedMessage | ReloadBundleMessage | TraceMessage;
 
-/** The nine kinds, in one place, so a test can enumerate them. */
+/** The ten kinds, in one place, so a test can enumerate them. */
 export const MESSAGE_KINDS = [
   "render", "error", "stale", "stuck", "held", "offline", "switching",
-  "unsaved", "reloadBundle",
+  "unsaved", "reloadBundle", "trace",
 ] as const;
 
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
@@ -82,6 +92,8 @@ export interface HostError {
 }
 export interface HostStuck { readonly message: string; readonly seq: number | null }
 export interface HostHeld { readonly message: string }
+/** S2d: an opaque trace payload and the generation of the answer it came with. */
+export interface HostTrace { readonly payload: unknown; readonly generation: number | null }
 
 /** Everything the panel needs to draw itself, and nothing else. */
 export interface HostState {
@@ -98,12 +110,15 @@ export interface HostState {
   /** A bundle reload was announced; the host page is about to be replaced.
    *  Cleared by the next ANSWER -- see `applyMessage`. */
   readonly reloading: boolean;
+  /** S2d: the last current answer's render trace, or null.  Presentation only:
+   *  it moves no banner, dims nothing and never hides the document. */
+  readonly trace: HostTrace | null;
 }
 
 export function initialHostState(): HostState {
   return {
     document: null, error: null, stale: false, stuck: null, held: null,
-    offline: false, switching: null, unsaved: [], reloading: false,
+    offline: false, switching: null, unsaved: [], reloading: false, trace: null,
   };
 }
 
@@ -139,14 +154,20 @@ export function initialHostState(): HostState {
 export function applyMessage(state: HostState, msg: HostMessage): HostState {
   if (msg === null || typeof msg !== "object") return state;
   switch (msg.kind) {
-    case "render":
+    case "render": {
+      const generation = numberOrNull(msg.generation);
       return {
         ...state,
-        document: { payload: msg.document, generation: numberOrNull(msg.generation) },
+        document: { payload: msg.document, generation },
         error: null,
         stale: false,
         reloading: false,
+        // S2d: a trace belongs to ONE answer.  A document of a different
+        // generation is a newer answer, so the old trace is dropped here --
+        // never compared as "older/newer" (D10), only as "not the same".
+        trace: state.trace !== null && state.trace.generation !== generation ? null : state.trace,
       };
+    }
     case "error":
       return {
         ...state,
@@ -181,6 +202,15 @@ export function applyMessage(state: HostState, msg: HostMessage): HostState {
       return { ...state, unsaved: Array.isArray(msg.names) ? msg.names.filter(isString) : [] };
     case "reloadBundle":
       return { ...state, reloading: true };
+    // ---- S2d trace (panel) ----
+    case "trace":
+      return {
+        ...state,
+        trace: msg.trace !== null && typeof msg.trace === "object"
+          ? { payload: msg.trace, generation: numberOrNull(msg.generation) }
+          : null,
+      };
+    // ---- end S2d trace ----
     default:
       return state;
   }

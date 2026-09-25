@@ -22,6 +22,7 @@ import {
   foldSnapshot, receive, applyMessage, initialHostState, presentation, MESSAGE_KINDS,
   pageStep, initialPage, documentKey, boot, refuseDeferred, PREVIEW_ROOT_ID, NO_RENDER_FUNCTION,
   restoredView, jsonViewText,
+  readTrace, traceSegments, traceHeadline, traceConnectionText, formatMs, formatCount, NO_TRACE_FAILED, NO_TRACE_OK,
   type HostMessage, type HostState, type PanelEnvelope, type PageModel, type BootWindow,
 } from "../src/host/page";
 import { JSDOM } from "jsdom";
@@ -62,9 +63,10 @@ const messageArb: fc.Arbitrary<HostMessage> = fc.oneof(
   fc.record({ kind: fc.constant("switching" as const), to: fc.option(fc.string({ maxLength: 8 }), { nil: null }) }),
   fc.record({ kind: fc.constant("unsaved" as const), names: fc.array(fc.string({ maxLength: 8 }), { maxLength: 3 }) }),
   fc.record({ kind: fc.constant("reloadBundle" as const) }),
+  fc.record({ kind: fc.constant("trace" as const), trace: fc.option(fc.constant({ totals: { wallMs: 5 } }), { nil: null }), generation: fc.integer({ min: 0, max: 50 }) }),
 );
 
-test("(pg-arb-covers) the generator draws all nine kinds", () => {
+test("(pg-arb-covers) the generator draws all ten kinds", () => {
   const seen = new Set(fc.sample(messageArb, { numRuns: 2000, seed: 7 }).map((m) => m.kind));
   assert.deepStrictEqual([...seen].sort(), [...MESSAGE_KINDS].sort());
 });
@@ -106,7 +108,7 @@ test("(pg-malformed) a snapshot with no message list leaves the panel as it was,
   assert.equal(receive(s, { kind: "somethingNewer" } as unknown as PanelEnvelope), s);
   // `snapshot` is an ENVELOPE: the reducer itself does not know it
   assert.equal(applyMessage(s, { kind: "snapshot", messages: [] } as unknown as HostMessage), s);
-  assert.ok(!(MESSAGE_KINDS as readonly string[]).includes("snapshot"), "MESSAGE_KINDS stays nine");
+  assert.ok(!(MESSAGE_KINDS as readonly string[]).includes("snapshot"), "snapshot is an envelope, never a message kind");
 });
 
 test("(pg-surface) page re-exports the reducer's whole surface, so S2 can point the host entry at it", () => {
@@ -115,7 +117,8 @@ test("(pg-surface) page re-exports the reducer's whole surface, so S2 can point 
   for (const k of want) assert.ok(have.includes(k), `page.ts is missing ${k}`);
   // S1's fold, and S2's step + DOM bootstrap (+ WP-31's two pure view helpers): nothing else may grow here
   assert.deepStrictEqual(have.filter((k) => !want.includes(k)).sort(),
-    ["NO_RENDER_FUNCTION", "PREVIEW_ROOT_ID", "boot", "documentKey", "foldSnapshot", "initialPage", "jsonViewText", "pageStep", "receive", "refuseDeferred", "restoredView"]);
+    ["NO_RENDER_FUNCTION", "NO_TRACE_FAILED", "NO_TRACE_OK", "PREVIEW_ROOT_ID", "boot", "documentKey", "foldSnapshot", "formatCount", "formatMs",
+      "initialPage", "jsonViewText", "pageStep", "readTrace", "receive", "refuseDeferred", "restoredView", "traceConnectionText", "traceHeadline", "traceSegments"]);
 });
 
 // ------------------------------------------------ H7, against the extension
@@ -767,14 +770,17 @@ async function pageRules(): Promise<{ sel: string; body: string }[]> {
   const h = await harness();
   const css = [...h.dom.window.document.querySelectorAll("style")].map((s) => s.textContent ?? "").join("\n");
   h.dom.window.close();
-  return css.split("}").map((r) => r.trim()).filter((r) => r.includes("{"))
+  // S2d: an @media block's rules are read as plain rules (its own brace dropped)
+  return css.replace(/@media[^{]*\{/g, "").split("}").map((r) => r.trim()).filter((r) => r.includes("{"))
     .map((r) => { const i = r.indexOf("{"); return { sel: r.slice(0, i).trim(), body: r.slice(i + 1).trim() }; });
 }
 const PAPER_SEL = `#${PREVIEW_ROOT_ID} .ermine-document`;
 /** WP-31: the JSON view's <pre> is paper too; the toolbar is theme-coloured. */
 const JSON_SEL = `#${PREVIEW_ROOT_ID} .ermine-json`;
 const VIEWBAR_SEL = `#${PREVIEW_ROOT_ID} .ermine-viewbar`;
-const onPaper = (sel: string): boolean => sel.trim().startsWith(PAPER_SEL) || sel.trim().startsWith(JSON_SEL);
+/** S2d: the Trace view is paper too. */
+const TRACE_SEL = `#${PREVIEW_ROOT_ID} .ermine-trace`;
+const onPaper = (sel: string): boolean => sel.trim().startsWith(PAPER_SEL) || sel.trim().startsWith(JSON_SEL) || sel.trim().startsWith(TRACE_SEL);
 
 test("(pg-f3-paper) F3: the document draws on white paper with #222 text and 12px table text, SCOPED to the document; the banner keeps the theme's editor foreground", async () => {
   const rules = await pageRules();
@@ -890,7 +896,7 @@ test("(pg-json-toolbar) WP-31: a toolbar with Document and JSON, below the banne
   assert.ok(bar, "the toolbar exists");
   assert.equal(bar.getAttribute("role"), "toolbar");
   const buttons = [...bar.querySelectorAll("button")];
-  assert.deepStrictEqual(buttons.map((b) => b.textContent), ["Document", "JSON"]);
+  assert.deepStrictEqual(buttons.map((b) => b.textContent), ["Document", "JSON", "Trace"]);
   for (const b of buttons) assert.equal(b.type, "button", "a real button: keyboard reachable, Enter and Space click it");
   assert.equal(bar.hidden, true, "nothing to look at yet");
   assert.equal(h.pre().hidden, true);
@@ -901,7 +907,7 @@ test("(pg-json-toolbar) WP-31: a toolbar with Document and JSON, below the banne
   assert.equal(h.area().hidden, false);
   assert.equal(h.pre().hidden, true);
   const kids = [...h.dom.window.document.getElementById(PREVIEW_ROOT_ID)!.children].map((e) => String(e.className).split(" ")[0]);
-  assert.deepStrictEqual(kids, ["ermine-banner", "ermine-hint", "ermine-viewbar", "ermine-document", "ermine-json"],
+  assert.deepStrictEqual(kids, ["ermine-banner", "ermine-hint", "ermine-viewbar", "ermine-document", "ermine-json", "ermine-trace"],
     "the banner keeps precedence: the toolbar is below it, inside the document area");
   h.dom.window.close();
 });
@@ -1057,5 +1063,285 @@ test("(pg-json-state-throws) WP-31 review M1: a getState that throws at boot and
   h.docBtn().click();
   assert.equal(h.area().hidden, false);
   assert.deepStrictEqual(h.renders, ["a"]);
+  h.dom.window.close();
+});
+
+// ------------------------------------------- S2d: the Trace view (DB stage 2)
+//
+// DESIGN-OBSERVABILITY §3.1: a third, viewer-local view, Document | JSON |
+// Trace.  The payload is what the REAL `core.traceOf` makes of an answer, so
+// every test below goes through the extension's own builders.
+
+function traceFixture(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    v: 1, wallMs: 412.3,
+    phases: [{ name: "queue", ms: 0.4 }, { name: "compile", ms: 0, cached: true }, { name: "decode", ms: 0.2 },
+      { name: "eval", ms: 41.7 }, { name: "sql", ms: 310.2 }, { name: "encode", ms: 28.9 }, { name: "layout", ms: 6.1 }, { name: "check", ms: 3.0 }],
+    queries: [
+      { relation: "$.fetch[1]", delivery: "fetched", dialect: "mssql", sql: 'SELECT "region", SUM("amount") AS "amount" FROM "sales" GROUP BY "region"',
+        setup: [{ kind: "memo", table: "MemoHash_9f2c", created: false, ms: 0.8 }], execMs: 250.3, fetchMs: 41.0, rowsRead: 400, rows: 388, ms: 296.4 },
+      { relation: "$.fetch[2]", delivery: "fetched", dialect: "mssql", sql: 'SELECT * FROM "targets"', execMs: 12.1, fetchMs: 0.9, rows: 8, rowsRead: 8, ms: 14.0 },
+      { relation: "$.children[1].props", delivery: "deferred", token: true },
+    ],
+    totals: { dbMs: 310.2, otherMs: 102.1, wallMs: 412.3, queries: 2, rows: 396 },
+    connection: { profile: "sales-mssql", dialect: "mssql", kind: "profile" },
+    partial: false, running: null, truncated: null,
+    ...over,
+  };
+}
+const traced = (gen: number, trace: unknown, note = "t"): unknown =>
+  core.panelAnswerStep(core.initialPanelAnswers(), { answer: { ok: true, document: { ...doc, note }, generation: gen, trace } }, gen);
+
+interface TraceRun extends ToggleRun { traceBtn(): HTMLButtonElement; box(): HTMLElement }
+async function traceHarness(stored?: unknown, clipboard?: { writeText(t: string): Promise<unknown> } | "none"): Promise<TraceRun> {
+  const h = await toggleHarness(stored) as TraceRun;
+  const w = h.dom.window as unknown as BootWindow;
+  if (clipboard !== undefined) {
+    Object.defineProperty(h.dom.window, "navigator", { value: clipboard === "none" ? {} : { clipboard }, configurable: true });
+  }
+  void w;
+  const d = h.dom.window.document;
+  h.traceBtn = () => [...d.querySelectorAll(".ermine-viewbar button")].find((b) => b.textContent === "Trace") as HTMLButtonElement;
+  h.box = () => d.querySelector(".ermine-trace") as HTMLElement;
+  return h;
+}
+
+test("(pg-trace-toolbar) S2d: Trace is the toolbar's third control; it hides the document OFF-STAGE and the <pre>, and is remembered like JSON", async () => {
+  const h = await traceHarness();
+  await h.send(envelopeOf({ answers: traced(12, traceFixture()) }, 1));
+  assert.equal(h.traceBtn().getAttribute("aria-pressed"), "false");
+  assert.equal(h.box().hidden, true, "Document is the default");
+  h.traceBtn().click();
+  assert.equal(h.traceBtn().getAttribute("aria-pressed"), "true");
+  assert.equal(h.docBtn().getAttribute("aria-pressed"), "false");
+  assert.equal(h.box().hidden, false);
+  assert.equal(h.area().hidden, true);
+  assert.ok(h.area().classList.contains("ermine-offstage"), "the writers need the hidden document laid out");
+  assert.equal(h.pre().hidden, true);
+  assert.deepStrictEqual(h.states[h.states.length - 1], { view: "trace" });
+  assert.deepStrictEqual(h.renders, ["t"], "switching never re-renders the document");
+  assert.deepStrictEqual(h.posted, [{ type: "ready" }], "the view is never posted");
+  h.dom.window.close();
+  assert.equal(restoredView({ view: "trace" }), "trace");
+  const r = await traceHarness({ view: "trace" });
+  await r.send(envelopeOf({ answers: traced(12, traceFixture()) }, 1));
+  assert.equal(r.box().hidden, false, "restored from getState");
+  r.dom.window.close();
+});
+
+test("(pg-trace-headline) S2d: the headline, the connection line, and the in-memory wording", async () => {
+  const h = await traceHarness({ view: "trace" });
+  await h.send(envelopeOf({ answers: traced(12, traceFixture()), traceConnection: { host: "127.0.0.1", database: "ErmineSales" } }, 1));
+  assert.equal(h.box().querySelector(".ermine-trace-head")!.textContent, "render 412 ms: db 310 ms (75%), 2 queries, 396 rows · generation 12");
+  assert.equal(h.box().querySelector(".ermine-trace-conn")!.textContent, "sales-mssql (mssql) @ 127.0.0.1 / ErmineSales");
+  await h.send(envelopeOf({ answers: traced(13, traceFixture({ connection: { kind: "in-memory", dialect: "sqlite" } })) }, 2));
+  assert.equal(h.box().querySelector(".ermine-trace-conn")!.textContent, "in-memory sqlite (per render: memo tables are rebuilt every time)");
+  assert.equal(formatMs(0.44), "0.4 ms");
+  assert.equal(formatMs(60001.2), "60,001 ms");
+  assert.equal(formatCount(2052515), "2,052,515");
+  h.dom.window.close();
+});
+
+test("(pg-trace-bar) S2d: the phase bar -- db first, pipeline order, `other` last; widths SUM TO 100% in the DOM and in the pure function", async () => {
+  const h = await traceHarness({ view: "trace" });
+  await h.send(envelopeOf({ answers: traced(12, traceFixture()) }, 1));
+  const segs = [...h.box().querySelectorAll(".ermine-trace-bar .ermine-trace-seg")] as HTMLElement[];
+  assert.deepStrictEqual(segs.map((x) => x.getAttribute("data-phase")), ["db", "queue", "decode", "eval", "encode", "layout", "check", "other"]);
+  const widths = segs.map((x) => parseFloat(x.style.width));
+  assert.ok(Math.abs(widths.reduce((a, b) => a + b, 0) - 100) < 0.011, `sum ${widths.reduce((a, b) => a + b, 0)}`);
+  assert.equal(segs[0]!.style.width, "75.24%", "db = 310.2 / 412.3");
+  assert.equal(segs[0]!.textContent, "db 310 ms", "a wide segment is labelled");
+  assert.equal(segs[1]!.textContent, "", "a narrow one is not, but always has a tooltip");
+  assert.equal(segs[1]!.title, "queue: 0.4 ms (0.1%)");
+  assert.ok(h.box().querySelector(".ermine-trace-bar")!.getAttribute("aria-label")!.startsWith("time by phase: db 310 ms, queue 0.4 ms"));
+  assert.equal(h.box().querySelectorAll(".ermine-trace-legend .ermine-trace-key").length, 8, "every segment is in the legend");
+  h.dom.window.close();
+  // the pure half, over generated traces
+  fc.assert(fc.property(
+    fc.record({ db: fc.double({ min: 0, max: 1e5, noNaN: true }), wall: fc.double({ min: 0, max: 2e5, noNaN: true }),
+      phases: fc.array(fc.record({ name: fc.constantFrom("queue", "eval", "encode", "sql", "connect", "layout"), ms: fc.double({ min: 0, max: 1e5, noNaN: true }) }), { maxLength: 8 }) }),
+    ({ db, wall, phases }) => {
+      const segsP = traceSegments(readTrace({ wallMs: wall, phases, totals: { dbMs: db, wallMs: wall } }));
+      if (segsP.length === 0) return;
+      const sum = segsP.reduce((a, x) => a + x.pct, 0);
+      assert.ok(Math.abs(sum - 100) < 0.011, `sum ${sum}`);
+      assert.ok(segsP.every((x) => x.pct >= -0.011 && x.ms > 0));
+      if (db > 0) assert.equal(segsP[0]!.key, "db");
+      assert.ok(!segsP.some((x) => x.key === "sql" || x.key === "connect"), "the database phases are the db segment");
+      const o = segsP.findIndex((x) => x.key === "other");
+      assert.ok(o === -1 || o === segsP.length - 1);
+    }), { numRuns: 500 });
+});
+
+test("(pg-trace-rows) S2d: one table row per relation -- relation, delivery, rows, scanned, db ms, total, dialect -- and the notes", async () => {
+  const h = await traceHarness({ view: "trace" });
+  await h.send(envelopeOf({ answers: traced(12, traceFixture()) }, 1));
+  const heads = [...h.box().querySelectorAll("table.ermine-trace-queries th")].map((x) => x.textContent);
+  assert.deepStrictEqual(heads, ["#", "relation", "delivery", "rows", "scanned", "db", "total", "dialect", "share"]);
+  const rows = [...h.box().querySelectorAll("tr.ermine-trace-query")].map((tr) => [...tr.querySelectorAll("td")].map((td) => td.textContent));
+  assert.deepStrictEqual(rows, [
+    ["1", "$.fetch[1]", "fetched", "388", "400", "292 ms", "296 ms", "mssql", ""],
+    ["2", "$.fetch[2]", "fetched", "8", "8", "13 ms", "14 ms", "mssql", ""],
+    ["3", "$.children[1].props", "deferred", "", "", "", "", "", ""],
+  ]);
+  const notes = [...h.box().querySelectorAll(".ermine-trace-note")].map((x) => x.textContent);
+  assert.ok(notes.includes("the database returned 400 rows; Ermine reduced them to 388"), "rowsRead > rows is explained");
+  assert.ok(notes.some((n) => /no query ran/.test(n!)), "the deferred relation is explained");
+  assert.match(h.box().querySelector("summary")!.textContent!, /^SQL · \d+ bytes · 1 setup$/);
+  assert.ok(h.box().textContent!.includes("memo MemoHash_9f2c reused, 0.8 ms"));
+  h.dom.window.close();
+});
+
+test("(pg-trace-sql-text) S2d: SQL goes into a <pre> by textContent -- markup in a query is shown as text, never parsed", async () => {
+  const h = await traceHarness({ view: "trace" });
+  const evil = "SELECT '<img src=x onerror=\"window.pwned=1\"><script>window.pwned=2</script>' AS x";
+  await h.send(envelopeOf({ answers: traced(12, traceFixture({ queries: [{ relation: "$.fetch[1]", sql: evil, ms: 1, rows: 1 }] })) }, 1));
+  const pre = h.box().querySelector("pre.ermine-trace-sql") as HTMLPreElement;
+  assert.ok(pre, "the SQL <pre>");
+  assert.equal(pre.textContent, evil);
+  assert.equal(pre.children.length, 0, "no element inside the <pre>");
+  assert.equal(h.box().querySelector("img"), null);
+  assert.equal(h.box().querySelector("script"), null);
+  assert.equal((h.dom.window as unknown as { pwned?: number }).pwned, undefined);
+  h.dom.window.close();
+});
+
+test("(pg-trace-copy) S2d: Copy writes the SQL to the clipboard; with no clipboard it SELECTS the SQL and says so in the log", async () => {
+  const written: string[] = [];
+  const h = await traceHarness({ view: "trace" }, { writeText: async (t: string) => { written.push(t); } });
+  await h.send(envelopeOf({ answers: traced(12, traceFixture()) }, 1));
+  const copy = h.box().querySelector("button.ermine-trace-copy") as HTMLButtonElement;
+  assert.ok(copy, "a Copy button");
+  assert.equal(copy.textContent, "Copy");
+  assert.equal(copy.type, "button");
+  copy.click();
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepStrictEqual(written, ['SELECT "region", SUM("amount") AS "amount" FROM "sales" GROUP BY "region"']);
+  assert.equal(copy.textContent, "Copied");
+  h.dom.window.close();
+  const n = await traceHarness({ view: "trace" }, "none");
+  await n.send(envelopeOf({ answers: traced(12, traceFixture()) }, 1));
+  const c2 = n.box().querySelector("button.ermine-trace-copy") as HTMLButtonElement;
+  c2.click();
+  assert.equal(c2.textContent, "Selected: press Ctrl+C");
+  assert.equal(n.dom.window.getSelection()!.toString(), 'SELECT "region", SUM("amount") AS "amount" FROM "sales" GROUP BY "region"');
+  assert.ok(n.posted.some((m) => (m as { type?: string; message?: string }).type === "log" && /no clipboard/.test((m as { message: string }).message)));
+  n.dom.window.close();
+});
+
+test("(pg-trace-partial) S2d: a stuck render's PARTIAL trace says what had run and which query was still running, with its SQL", async () => {
+  const h = await traceHarness({ view: "trace" });
+  const stuck = { ok: false, status: 503, stuck: true, message: "the evaluation did not finish", generation: 9,
+    trace: traceFixture({ partial: true, wallMs: 60001, totals: { dbMs: 59800, wallMs: 60001, queries: 1, rows: 388 },
+      running: { relation: "$.fetch[2]", sql: "SELECT * FROM fact_order_line", sinceMs: 59800 } }) };
+  await h.send(envelopeOf({ answers: core.panelAnswerStep(core.initialPanelAnswers(), { answer: stuck }, 9) }, 1));
+  assert.equal(h.box().querySelector(".ermine-trace-head")!.textContent, "stuck: partial trace, 60,001 ms so far: db 59,800 ms (100%), 1 query, 388 rows · generation 9");
+  assert.equal(h.box().querySelector(".ermine-trace-partial")!.textContent,
+    "partial: the watchdog answered before the render finished; this is what had run, and this query was still running: $.fetch[2] (for 59,800 ms)");
+  assert.equal((h.box().querySelector(".ermine-trace-partial + .ermine-trace-sqlbox pre") as HTMLElement).textContent, "SELECT * FROM fact_order_line");
+  assert.match(h.box().querySelector(".ermine-trace-failed")!.textContent!, /^from the failed render \(generation 9\), status 503/);
+  h.dom.window.close();
+});
+
+test("(pg-trace-generation) S2d: through the REAL builders -- a failed answer's trace shows; a newer answer without one shows NO trace, never the old one", async () => {
+  const h = await traceHarness({ view: "trace" });
+  const good = traced(4, traceFixture());
+  const failed = core.panelAnswerStep(good, { answer: { ok: false, status: 500, message: "Invalid object name 'salez'", path: "$.fetch[2]", generation: 5,
+    trace: traceFixture({ queries: [{ relation: "$.fetch[2]", delivery: "fetched", sql: "SELECT * FROM salez", error: true, execMs: 12, ms: 12 }], totals: { dbMs: 12, wallMs: 42, queries: 1, rows: 0 }, wallMs: 42 }) } }, 5);
+  await h.send(envelopeOf({ answers: failed }, 1));
+  assert.match(h.box().querySelector(".ermine-trace-head")!.textContent!, /· generation 5$/);
+  assert.equal(h.box().querySelector("tr.ermine-trace-error td:nth-child(3)")!.textContent, "fetched (failed)");
+  // generation 6 answers with no trace (an older server, a dressed error): the Trace view says so
+  const newer = core.panelAnswerStep(failed, { answer: { ok: true, document: { ...doc, note: "g6" }, generation: 6 } }, 6);
+  await h.send(envelopeOf({ answers: newer }, 2));
+  assert.equal(h.box().textContent, NO_TRACE_OK);
+  const refused = core.panelAnswerStep(failed, { rejection: new Error("connection got disposed"), generation: 6 }, 6);
+  await h.send(envelopeOf({ answers: refused }, 3));
+  assert.equal(h.box().textContent, NO_TRACE_FAILED);
+  // and the page's own fold: generation 3's trace, then render 4 -> gone
+  const folded = foldSnapshot([{ kind: "render", document: doc, generation: 3 }, { kind: "trace", trace: { totals: {} }, generation: 3 },
+    { kind: "render", document: doc, generation: 4 }]);
+  assert.equal(folded.trace, null);
+  h.dom.window.close();
+});
+
+test("(pg-trace-stable) S2d: a stale toggle does not rebuild the Trace view (an expanded SQL stays open); a new trace does", async () => {
+  const h = await traceHarness({ view: "trace" });
+  const answers = traced(12, traceFixture());
+  await h.send(envelopeOf({ answers }, 1));
+  const det = h.box().querySelector("details") as HTMLDetailsElement;
+  det.open = true;
+  await h.send(envelopeOf({ answers, pending: true }, 2));
+  await h.send(envelopeOf({ answers, pending: false }, 3));
+  assert.equal(h.box().querySelector("details"), det, "the same element");
+  assert.equal(det.open, true);
+  await h.send(envelopeOf({ answers: traced(13, traceFixture({ wallMs: 99 })) }, 4));
+  assert.notEqual(h.box().querySelector("details"), det, "a new trace is drawn afresh");
+  h.dom.window.close();
+});
+
+// WCAG 2.x relative luminance and contrast ratio, from #rrggbb.
+function luminance(hex: string): number {
+  const v = hex.replace("#", "");
+  const full = v.length === 3 ? v.split("").map((c) => c + c).join("") : v;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255).map((c) => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+}
+function contrast(a: string, b: string): number {
+  const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+  return (x! + 0.05) / (y! + 0.05);
+}
+
+test("(pg-trace-contrast) S2d: every text colour in the Trace view is >= 4.5:1 on the background it is drawn on (read from the page's own CSS)", async () => {
+  const rules = await pageRules();
+  const decl = (sel: string, prop: "color" | "background"): string => {
+    const r = rules.find((x) => x.sel === sel);
+    assert.ok(r, `a rule for ${sel}`);
+    const m = new RegExp(`(?:^|;)${prop}:(#[0-9a-fA-F]{3,6})`).exec(r!.body);
+    assert.ok(m, `${sel} sets ${prop}: ${r!.body}`);
+    return m![1]!;
+  };
+  const T = TRACE_SEL;
+  const paper = decl(T, "background");
+  assert.equal(paper, "#fff", "the Trace view draws on the same white paper, whatever the theme");
+  const pairs: [string, string, string][] = [
+    ["body text", decl(T, "color"), paper],
+    ["secondary text", decl(`${T} .ermine-trace-sub`, "color"), paper],
+    ["failed", decl(`${T} .ermine-trace-failed`, "color"), paper],
+    ["error row", decl(`${T} .ermine-trace-queries tr.ermine-trace-error td`, "color"), paper],
+    ["db segment label", decl(`${T} .ermine-trace-seg`, "color"), decl(`${T} .ermine-trace-seg[data-phase=db]`, "background")],
+    ["phase segment label (tone a)", decl(`${T} .ermine-trace-seg`, "color"), decl(`${T} .ermine-trace-seg`, "background")],
+    ["phase segment label (tone b)", decl(`${T} .ermine-trace-seg`, "color"), decl(`${T} .ermine-trace-seg[data-tone=b]`, "background")],
+    ["other segment label", decl(`${T} .ermine-trace-seg[data-phase=other]`, "color"), decl(`${T} .ermine-trace-seg[data-phase=other]`, "background")],
+    ["SQL", decl(`${T} pre.ermine-trace-sql`, "color"), decl(`${T} pre.ermine-trace-sql`, "background")],
+    ["Copy", decl(`${T} button.ermine-trace-copy`, "color"), decl(`${T} button.ermine-trace-copy`, "background")],
+    ["SQL disclosure", decl(`${T} summary`, "color"), paper],
+    ["note", decl(`${T} .ermine-trace-note`, "color"), decl(`${T} .ermine-trace-note`, "background")],
+    ["empty", decl(`${T} .ermine-trace-empty`, "color"), paper],
+  ];
+  const measured = pairs.map(([what, fg, bg]) => [what, Math.round(contrast(fg, bg) * 100) / 100] as const);
+  for (const [what, ratio] of measured) assert.ok(ratio >= 4.5, `${what}: ${ratio}:1`);
+  // and no theme colour inside the paper (it would be chosen for the theme's background, not white)
+  for (const r of rules.filter((x) => x.sel.startsWith(T))) assert.doesNotMatch(r.body, /color:var\(--vscode-/, r.sel);
+});
+
+test("(pg-trace-real) S2d: server-trace's MEASURED trace (tracker/db/OBSERVABILITY.md §4, DbFetchTopN on ErmineSales tier s, `encode` renamed `scan`) draws as the numbers say", async () => {
+  const real = {"v": 1, "generation": 110, "partial": false, "wallMs": 51, "phases": [{"name": "session", "ms": 4.5}, {"name": "parse", "ms": 0}, {"name": "compile", "ms": 0, "cached": true}, {"name": "decode", "ms": 0.1}, {"name": "eval", "ms": 2.6}, {"name": "layout", "ms": 0.1}, {"name": "connect", "ms": 0}, {"name": "sql-emit", "ms": 0.8}, {"name": "db-execute", "ms": 9.2}, {"name": "db-fetch", "ms": 1.8}, {"name": "scan", "ms": 30.7, "attributed": true}, {"name": "check", "ms": 0.1}, {"name": "other", "ms": 1.2, "attributed": true}], "queries": [{"path": "$.fetch[1]", "delivery": "fetched", "dialect": "mssql", "sql": "select ([t1030144].[amount]) [amount], ([t1030144].[day]) [day], ([t1030144].[region]) [region], ([t1030144].[units]) [units] from [sales] [t1030144] order by [t1030144].[region] asc", "sqlBytes": 182, "statements": 1, "sqlEmitMs": 0.4, "execMs": 4.7, "fetchMs": 1.7, "dbMs": 6.4, "ms": 36.7, "rowsRead": 388, "rows": 8, "scanned": 8, "columns": 0, "bytes": 0, "deferred": false}, {"path": "$.fetch[2]", "delivery": "fetched", "dialect": "mssql", "sql": "select ([t1031168].[region]) [region], ([t1031168].[target]) [target] from [targets] [t1031168]", "sqlBytes": 95, "statements": 1, "sqlEmitMs": 0.2, "execMs": 3.5, "fetchMs": 0, "dbMs": 3.6, "ms": 4.1, "rowsRead": 8, "rows": 8, "scanned": 8, "columns": 0, "bytes": 0, "deferred": false}, {"path": "$.children[0].props.pieRows", "delivery": "inline", "dialect": "mssql", "sql": "select [amount],[region] from (values (225449.87999999998, 'china'), (172784.89, 'us-south'), (652859.45, 'Other')) as lit([amount],[region])", "sqlBytes": 141, "statements": 1, "sqlEmitMs": 0.2, "execMs": 0.9, "fetchMs": 0, "dbMs": 0.9, "ms": 1.6, "rowsRead": 3, "rows": 3, "scanned": 3, "columns": 2, "bytes": 225, "deferred": false}], "totals": {"dbMs": 11, "otherMs": 40, "wallMs": 51, "queueMs": 0, "relations": 3, "queries": 3, "rowsRead": 399, "rows": 19, "bytes": 225, "documentBytes": 717}, "connection": {"kind": "profile", "dialect": "mssql", "database": "ErmineSales", "profile": "sales-mssql"}};
+  const h = await traceHarness({ view: "trace" });
+  await h.send(envelopeOf({ answers: traced(110, real) }, 1));
+  assert.equal(h.box().querySelector(".ermine-trace-head")!.textContent, "render 51 ms: db 11 ms (22%), 3 queries, 19 rows (399 read) · generation 110");
+  assert.equal(h.box().querySelector(".ermine-trace-conn")!.textContent, "sales-mssql (mssql) / ErmineSales");
+  const segs = [...h.box().querySelectorAll(".ermine-trace-seg")] as HTMLElement[];
+  assert.equal(segs[0]!.getAttribute("data-phase"), "db");
+  assert.ok(!segs.some((x) => ["connect", "db-execute", "db-fetch"].includes(x.getAttribute("data-phase")!)), "the database phases are the db segment");
+  assert.ok(Math.abs(segs.map((x) => parseFloat(x.style.width)).reduce((a, b) => a + b, 0) - 100) < 0.011);
+  assert.equal(segs.find((x) => x.getAttribute("data-phase") === "scan")!.textContent, "scan 31 ms");
+  const rows = [...h.box().querySelectorAll("tr.ermine-trace-query")].map((tr) => [...tr.querySelectorAll("td")].slice(0, 7).map((td) => td.textContent));
+  assert.deepStrictEqual(rows, [
+    ["1", "$.fetch[1]", "fetched", "8", "388", "6.4 ms", "37 ms"],
+    ["2", "$.fetch[2]", "fetched", "8", "8", "3.6 ms", "4.1 ms"],
+    ["3", "$.children[0].props.pieRows", "inline", "3", "3", "0.9 ms", "1.6 ms"],
+  ]);
+  assert.ok([...h.box().querySelectorAll(".ermine-trace-note")].some((n) => n.textContent === "the database returned 388 rows; Ermine reduced them to 8"));
   h.dom.window.close();
 });

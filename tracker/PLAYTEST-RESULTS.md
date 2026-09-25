@@ -163,6 +163,25 @@ become meaningless)
 | **E14** | [new] | `writersPath` -> an empty folder: the writers banner, dimmed, legacy error boxes; `""` and a command put it right |  |  |  |
 | **E15** | [new, WP-31] | the panel's **JSON** button: under `target: both` its text equals the JSON tab's; no re-render on a click; a save while on JSON re-renders the hidden document once; **Document** shows the tables at once; the choice survives a bundle reload; a window reload's new panel starts in Document |  |  |  |
 
+## Group F — the database (extension 0.1.17; the profile in USER settings; target `both`; walkthrough `tracker/db/DOGFOOD.md`)
+
+**Never paste the password here**, and check any pasted channel text for it first.
+
+| Step | Was | What it checks | Result | What you saw | Notes |
+|---|---|---|---|---|---|
+| **F1** | [new] | `scripts/db.sh status` → `status OK`, `tls=TRUE`; `db.sh verify sales` → `tier=s seed=42 ... OK` |  |  |  |
+| **F2** | [new] | the profile in USER settings; a workspace copy is ignored and named once (`profiles set in workspace settings are ignored (user settings only)`) |  |  |  |
+| **F3** | [new] | one folder, the Ermine channel open, target `both` |  |  |  |
+| **F4** | [new] | ONE prompt `Password for ermine @ 127.0.0.1 (profile sales-mssql) ...`; `sales-mssql: connecting` → `sales-mssql (mssql) @ 127.0.0.1`; `db: connected sales-mssql (mssql) @ 127.0.0.1 / ErmineSales`; a restart does not prompt, a window reload does |  |  |  |
+| **F5** | [new] | `DbFetchTopN` → `report`: keep 0 = one `Other` slice (1,051,094.22); keep 2 = china 225,449.88, us-south 172,784.89, Other 652,859.45; `metTargets` an error box by design, 1 in the JSON tab |  |  |  |
+| **F6** | [new] | `db.sh load sales --tier m` then save: new numbers, only after the save; tier xs: north 4,350.75, east 4,175.50, Other 4,155.75, met 2 (= in-memory `FetchTopN`); back to s |  |  |  |
+| **F7** | [new] | `keep` 2 → 3: ONE re-render; france 154,111.45 appears, Other 498,748.00 |  |  |  |
+| **F8** | [new] | **Trace**: headline `render N ms: db M ms (P%), 3 queries, 19 rows (399 read)`; connection `sales-mssql (mssql) @ 127.0.0.1 / ErmineSales`; `$.fetch[1]` scanned 388, rows 8, "Ermine reduced them to 8"; Copy + `db.sh sql` = 388 rows; status bar `· N ms`; one channel line, no SQL in it |  |  |  |
+| **F9** | [new] | Disconnect: `sales-mssql: not connected`; the re-render's banner `503: not connected (... is not connected) -- run "Ermine: Connect Database", ...`; reconnect prompts again and re-sends the render |  |  |  |
+| **F10** | [new] | wrong password: `FAILED auth (connect-auth, password forgotten)`; the notification with Retry / Disconnect; `sales-mssql: auth`; Retry prompts. Note whether `<user> @ <host>` in the message bothers you |  |  |  |
+| **F11** | [new] | `db.sh down`: 503, `the server closed the connection ... reconnecting`, then the NEW-2 retry chain: `sales-mssql: reconnecting (2/3)` / `(3/3)` at 5 s and 15 s, three attempts, then `unreachable`, no Retry; `up` inside the chain reconnects by itself; after the chain, a save connects once (`connecting once before showing it`) and draws; never a prompt |  |  |  |
+| **F12** | [new] | Disconnect, `ermine.preview.profile` = `""`: the database item goes, renders are in-memory again; ErmineSales left at tier ___ |  |  |  |
+
 ## Group D — not observable by any step (record as SKIP)
 
 These are here so that nobody later mistakes silence for evidence. `SKIP` is

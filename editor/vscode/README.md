@@ -221,6 +221,86 @@ is sent to the server). The first three reach a running server at once, with
 no restart; `ermine.maxHeap` is the one that needs a fresh process, and
 changing it restarts the server.
 
+## Database profiles
+
+The preview renders against the built-in in-memory SQLite unless a **profile**
+is active. A profile is a JDBC URL and, for SQL Server, a login; the password
+is **asked for, never stored** (WP-13, the user's decision: *"prompted pass
+lives for the window"*).
+
+**Both settings go in your USER settings** (`Preferences: Open User Settings
+(JSON)`). A value in workspace or folder settings is **ignored**, and the
+output channel and the status bar say *"profiles set in workspace settings are
+ignored (user settings only)"*: a checked-in `.vscode/settings.json` could
+otherwise point a profile at another host, and the extension would ask for
+your password and send it there (tracker §8.1 A2).
+
+```jsonc
+"ermine.preview.profiles": [
+  { "id": "sales-mssql", "dialect": "mssql",
+    "url": "jdbc:sqlserver://127.0.0.1:1433;databaseName=ErmineSales;encrypt=true;trustServerCertificate=true",
+    "user": "ermine" },
+  { "id": "sales-sqlite", "dialect": "sqlite",
+    "url": "jdbc:sqlite:/absolute/path/to/data/out/sales/xs/sales.sqlite" }
+],
+"ermine.preview.profile": "sales-mssql"
+```
+
+| Field | |
+|---|---|
+| `id` | the name the status bar shows and `ermine.preview.profile` picks; unique |
+| `dialect` | `sqlite`, `mssql` (or `sqlserver`), `mysql`, `postgres` (or `postgresql`), `vertica` |
+| `url` | JDBC, **without credentials**: a URL with `password=`, `user=`, `pwd=`, `userName=`, `integratedSecurity=`, `authentication=` or `user@host` is refused. A `jdbc:sqlite:` path must be **absolute** |
+| `user` | optional; present means "ask for a password" |
+| `driver`, `scanner` | optional: a driver class other than the dialect's, and `noTransactions` (SQL Server only) |
+
+A profile with a `password` key is refused, and so are duplicate ids, an
+unknown dialect and an `ermine.preview.profile` that names no profile. Each
+refusal is one `settings:` line in the output channel and the status bar
+says `<id>: profile`. Empty `ermine.preview.profile` (or `local`) means the
+in-memory SQLite and nothing is connected.
+
+**When it connects.** When the language server is up (which is also "on
+activation"), when the active profile changes, after the server restarts, on
+**Ermine: Connect Database**, and when the server says it dropped the
+connection. It asks for the password only if none is held for that profile's
+id, URL and user; a changed URL or user asks again. Every successful connect
+re-sends the last render once, and a report that wedged the server is held
+exactly as after a restart (WP-22).
+
+**The password's lifetime.** Held in the extension host's memory for the
+window: never on disk, never in settings or `globalState`, never in the
+panel, never in the output channel. It is forgotten when the window closes or
+reloads, on **Ermine: Disconnect Database**, after a rejected login (which
+offers **Retry**, which asks again, and **Disconnect**), and when no profile
+has that id, URL and user any more. It is sent only in
+`ermine/preview/connect`, whose body the server never logs. **While
+`ermine.trace.server` is `verbose` nothing connects**, because that level
+would print the request with the password in it; set it to `messages` or
+`off`.
+
+**The status bar** (a second item, only while a profile is active; click it to
+connect):
+
+| Text | Means |
+|---|---|
+| `sales-mssql (mssql) @ 127.0.0.1` | connected (the tooltip names the database and the server version) |
+| `sales-mssql: password?` / `connecting` | waiting for you / for the server |
+| `sales-mssql: reconnecting (2/3)` | a connect failed as `unreachable` or `driver` with the password held; it is retried by itself 5 s and then 15 s later (three attempts in all), and Disconnect, a restart or a profile change stops it |
+| `sales-mssql: auth` / `unreachable` / `driver` / `profile` | the connect failed for that reason; the notification and the output channel say more |
+| `sales-mssql: trace is verbose` | refused, see above |
+| `workspace profiles ignored` | the profiles are in workspace settings; move them to user settings |
+| `sales-mssql: disconnected` / `not connected` | the server dropped it and no password is held / you disconnected or cancelled the prompt |
+
+While nothing is connected a render answers **503 not connected**. If a
+password is held (or none is needed) the extension first tries ONE connect,
+and the render is re-sent when it succeeds, so after `scripts/db.sh up` a save
+or a render just works; only if that connect fails does the panel show the
+error, naming **Ermine: Connect Database**. A render never asks for a
+password. Each connect,
+disconnect and failure is one `db:` line in the output channel, with the
+class and reason and never the password or the URL.
+
 ## Params files
 
 A report that takes parameters reads them from an ordinary file in your
@@ -445,6 +525,32 @@ type one frame early and without its constraints (`go : List a -> a -> a` for
 a `go` held at `forall a. Num a => List a -> a -> a`); it now renders the
 scheme the checker generalised, like a top-level hover does. Pattern binders
 and equation arguments stay monotypes.
+
+### 0.1.17
+
+**WP-13, the extension half: database profiles and the prompted password.**
+`ermine.preview.profiles` + `ermine.preview.profile`, **Ermine: Connect
+Database** and **Ermine: Disconnect Database**, a connection status bar item,
+the automatic reconnect after a restart or a dropped connection, and the 503
+"not connected" shown with what to do. See **Database profiles**. Needs a
+server with `ermine/preview/connect` (the DB programme's stage 2a); an older
+one answers the connect with "method not found", shown as
+`<id>: profile` and "this language server has no ermine/preview/connect".
+
+**WP-35, the panel half: the Trace view** (no setting). The preview panel's
+toolbar is now **Document | JSON | Trace**. Trace shows what the last render
+did: `render 412 ms: db 310 ms (75%), 2 queries, 396 rows`, the connection, a
+bar of where the time went (db against everything else), and one row per
+relation with its rows, rows scanned and milliseconds; open a row to see its
+SQL and **Copy** it. A stuck render shows what had run and the query that was
+still running. The status bar's idle text gains the render time
+(`Ermine: DbFetchTopN.report · 412 ms`), and the **Ermine** output channel gets
+one line per render, e.g. `preview: render 12 ok 418 ms (server 412 ms: db
+310 ms, 2 queries, 396 rows; eval 42 ms, encode 29 ms, other 32 ms)
+sales-mssql`; no SQL goes in the channel. Needs a server that sends `trace`
+(the DB programme's stage 2b); with an older one the view says "no trace: this
+answer carried none (a server from before DB stage 2 sends none)" and nothing
+else changes.
 
 ### 0.1.16
 
@@ -962,7 +1068,9 @@ Three costs, in the order you meet them:
 | `ermine.preview.maxDocumentBytes` | `16777216` | Largest rendered document the server will send |
 | `ermine.preview.target` | `panel` | Where a render is shown: the webview `panel`, the `json` tab (0.1.11's, unchanged), or `both` |
 | `ermine.preview.writersPath` | *(sibling `ermine-writers`)* | The legacy writers' `web/` folder the panel loads `htmlwriter.js` and its CSS from; empty = `<checkout>/../ermine-writers/writers/html/src/main/resources/web`, this machine's layout, not a guarantee |
-| `ermine.trace.server` | `off` | Trace LSP traffic to the output channel |
+| `ermine.preview.profiles` | `[]` | Database connection profiles (no password field); **user settings only**; see **Database profiles** |
+| `ermine.preview.profile` | *(in-memory SQLite)* | The active profile's `id`; **user settings only** |
+| `ermine.trace.server` | `off` | Trace LSP traffic to the output channel; at `verbose` no database connects |
 
 | Command | |
 |---|---|
@@ -972,6 +1080,8 @@ Three costs, in the order you meet them:
 | **Ermine: Reload Modules** | Declared by the *server* and registered by the language client; the extension only adds the status-bar line |
 | **Ermine: Preview Report...** | Picks a file and a binding, and renders it |
 | **Ermine: Render Report to JSON** | Re-renders the picked report into the same panel or tab |
+| **Ermine: Connect Database** | Connects the active profile, asking for its password if none is held |
+| **Ermine: Disconnect Database** | Forgets the password and lets the connection go |
 | **Ermine: Write Params Skeleton** | Replaces the picked report's params file with a fresh skeleton, **after a modal you answer** — see **Params files**. The only thing in this extension that overwrites a params file |
 
 There is no setting for the completion trigger character, the code-action

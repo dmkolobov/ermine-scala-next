@@ -2,7 +2,7 @@
   "name": "ermine-lang",
   "displayName": "Ermine",
   "description": "Ermine language support: syntax highlighting, diagnostics, navigation, hover types, references, rename, symbols, completion and quick fixes, backed by bin/ermine-lsp.",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "publisher": "clarifi",
   "license": "SEE LICENSE IN ../../LICENSE",
   "engines": {
@@ -121,6 +121,68 @@
           "scope": "window",
           "markdownDescription": "Largest rendered document the server will send, in UTF-8 bytes. A document over the cap is refused with a 500 instead of being written to the wire. The server accepts 1KiB to 1TiB and ignores anything outside that. A change reaches a running server at once; no restart."
         },
+        "ermine.preview.profiles": {
+          "type": "array",
+          "default": [],
+          "scope": "application",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "dialect",
+              "url"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "markdownDescription": "The profile's name, shown in the status bar and chosen by `ermine.preview.profile`. Unique."
+              },
+              "dialect": {
+                "type": "string",
+                "enum": [
+                  "sqlite",
+                  "mssql",
+                  "sqlserver",
+                  "mysql",
+                  "postgres",
+                  "postgresql",
+                  "vertica"
+                ],
+                "markdownDescription": "Which SQL the preview emits and which scanner reads the rows."
+              },
+              "url": {
+                "type": "string",
+                "pattern": "^jdbc:",
+                "markdownDescription": "The JDBC URL **without credentials**: a URL carrying `password=`, `user=` (or `pwd`, `userName`, `integratedSecurity`, `authentication`, or `user@host`) is refused. A `jdbc:sqlite:` path must be absolute."
+              },
+              "user": {
+                "type": "string",
+                "markdownDescription": "The SQL login. Present: the extension asks for the password once per window and holds it in memory only. Absent: no password (a SQLite file)."
+              },
+              "driver": {
+                "type": "string",
+                "markdownDescription": "The JDBC driver class, when not the dialect's default."
+              },
+              "scanner": {
+                "type": "string",
+                "enum": [
+                  "default",
+                  "noTransactions"
+                ],
+                "markdownDescription": "`noTransactions` is SQL Server's only."
+              }
+            }
+          },
+          "markdownDescription": "Database connection profiles for the preview, e.g. `{\"id\": \"sales-mssql\", \"dialect\": \"mssql\", \"url\": \"jdbc:sqlserver://127.0.0.1:1433;databaseName=ErmineSales;encrypt=true;trustServerCertificate=true\", \"user\": \"ermine\"}`. **There is no password field**: when the active profile has a `user`, the extension asks for the password once and holds it in this window's memory only (never on disk, never in settings, never in a log) until the window closes, **Ermine: Disconnect Database**, or a rejected login. Pick the active one with `ermine.preview.profile`. **User settings only**: a value in workspace or folder settings is ignored and named, because a checked-in `.vscode/settings.json` could point a profile at another host."
+        },
+        "ermine.preview.profile": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "markdownDescription": "The `id` of the active profile in `ermine.preview.profiles`. Empty (or `local`) means the built-in in-memory SQLite: nothing is connected and nothing is asked. Changing it connects the new profile (asking for its password if none is held for that id, URL and user) and re-sends the last render."
+        },
         "ermine.trace.server": {
           "type": "string",
           "enum": [
@@ -161,6 +223,14 @@
       {
         "command": "ermine.writeParamsSkeleton",
         "title": "Ermine: Write Params Skeleton"
+      },
+      {
+        "command": "ermine.connectDatabase",
+        "title": "Ermine: Connect Database"
+      },
+      {
+        "command": "ermine.disconnectDatabase",
+        "title": "Ermine: Disconnect Database"
       }
     ]
   },
@@ -171,8 +241,8 @@
     "@types/vscode": "^1.75.0"
   },
   "scripts": {
-    "test": "node --test test/preview-core.test.js && node test/load-test.js && python3 test/grammar-test.py",
-    "test:preview": "node --test test/preview-core.test.js",
+    "test": "node --test test/preview-core.test.js test/connect-core.test.js && node test/load-test.js && python3 test/grammar-test.py",
+    "test:preview": "node --test test/preview-core.test.js test/connect-core.test.js",
     "test:load": "node test/load-test.js",
     "test:grammar": "python3 test/grammar-test.py",
     "package": "vsce package"

@@ -1,7 +1,7 @@
 package com.clarifi.reporting.ermine.json
 
 import argonaut.{ Json, Parse }
-import com.clarifi.reporting.{ Record, Run, SortOrder }
+import com.clarifi.reporting.{ Record, RenderTrace, Run, SortOrder }
 import com.clarifi.reporting.backends.{ DB, Runners, Scanners }
 import com.clarifi.reporting.relational.{ ClosedExt, SMEnv, Scanner }
 import com.clarifi.reporting.ermine.{ AppT, Data, Global, InfixR, Memory, Prim, Runtime, Type }
@@ -462,7 +462,14 @@ final class Runner(val cfg: RunnerConfig) {
 
   /** The same, for one `(module, binding)` pair. */
   def renderText(module: String, binding: String, body: String, out: Appendable): Either[RunError, WriteStats] =
-    parseBody(body).right.flatMap(j => render(module, binding, j, out))
+    renderText(module, binding, body, out, RenderTrace.Off)
+
+  /** The same, recording what the render did on `trace` (S2b; the preview's
+    * `ermine/render`).  `RenderTrace.Off` is the overload above. */
+  def renderText(module: String, binding: String, body: String, out: Appendable,
+                 trace: RenderTrace): Either[RunError, WriteStats] =
+    trace.phase("parse")(parseBody(body)).right.flatMap(j =>
+      Request.parse(j).right.flatMap(req => render(module, binding, req, out, trace)))
 
   /** ONE PATH (J3g), ONE LOOP (J3h).  A report is `Params -> Fetch Node`; a
     * report typed `Params -> Node` is read as `done` of its value, so the
@@ -484,10 +491,23 @@ final class Runner(val cfg: RunnerConfig) {
 
   /** The same, for one `(module, binding)` pair (WP-4). */
   def render(module: String, binding: String, req: Request, out: Appendable): Either[RunError, WriteStats] =
-    report(module, binding).right.flatMap { rep =>
+    render(module, binding, req, out, RenderTrace.Off)
+
+  /** The same, recording on `trace` (S2b): `compile` (load, typecheck and
+    * the decoder; `cached` when the report was already compiled), `decode`,
+    * `eval` and `layout` (summed over every step), and -- through
+    * `WriteConfig.trace` and the thread-local `drive` installs -- every
+    * relation, query and setup statement. */
+  def render(module: String, binding: String, req: Request, out: Appendable,
+             trace: RenderTrace): Either[RunError, WriteStats] = {
+    val cached = trace.on && (reports.get((module, binding)) ne null)
+    val t0 = if (trace.on) System.nanoTime else 0L
+    val compiled = report(module, binding)
+    if (trace.on) trace.addPhase("compile", System.nanoTime - t0, Some(cached))
+    compiled.right.flatMap { rep =>
       val wcfg = WriteConfig(default = req.default, strategy = req.strategy,
-                             threshold = req.threshold, clock = cfg.clock)
-      decode(rep, req).right.flatMap { arg =>
+                             threshold = req.threshold, clock = cfg.clock, trace = trace)
+      trace.phase("decode")(decode(rep, req)).right.flatMap { arg =>
         // WP-34: a report with NO parameters is not applied to anything --
         // its value IS the `Node` or the `Fetch Node` (`Report.decoder`).
         val first: () => Runtime = arg match {
@@ -497,6 +517,7 @@ final class Runner(val cfg: RunnerConfig) {
         evalStep(rep, first, 1, wcfg).right.flatMap(ss => drive(ss, out, wcfg))
       }
     }
+  }
 
   // ---------------------------------------------------------------------
   // GET /data/<token>
@@ -932,8 +953,16 @@ final class Runner(val cfg: RunnerConfig) {
     * scan or a row through `WriteFailure`, the Ermine side through `Abort`,
     * which carries the `RunError` the evaluation step made. */
   private def drive(steps: List[Step], out: Appendable, wcfg: WriteConfig): Either[RunError, WriteStats] =
-    try Right(cfg.run.run(Interp.run[DB](steps, out, wcfg, plans)(cfg.scanner, Guard.db)))
-    catch {
+    try {
+      // S2b: the thread-local hop to `SqlExecution`/`SqlScanner`, for this
+      // one run and this thread only (`RenderTrace.installed` restores it);
+      // `Off` installs nothing.  `driveEnter`/`driveExit` bracket the run so
+      // the connection's open and close are the trace's `connect`.
+      val tr = wcfg.trace
+      tr.driveEnter()
+      try Right(RenderTrace.installed(tr)(cfg.run.run(Interp.run[DB](steps, out, wcfg, plans)(cfg.scanner, Guard.db))))
+      finally tr.driveExit()
+    } catch {
       case a: Abort        => Left(a.error)
       case f: WriteFailure => Left(Failed("cannot write " + f.path + ": " + f.message, Some(f.path)))
       case NonFatal(e)     => Left(Failed(messageOf(e)))
@@ -961,8 +990,8 @@ final class Runner(val cfg: RunnerConfig) {
     * failure is a `Left`; every later step is taken INSIDE the driver, where
     * a `Left` cannot be returned, so `stepping` throws it as an `Abort`. */
   private def evalStep(rep: Report, next: () => Runtime, n: Int, wcfg: WriteConfig): Either[RunError, List[Step]] =
-    evaluate(rep, next, n, wcfg).right.map {
-      case Left(d)      => Write.steps(Doc.document(d, cfg.settings), wcfg)
+    wcfg.trace.phase("eval")(evaluate(rep, next, n, wcfg)).right.map {
+      case Left(d)      => wcfg.trace.phase("layout")(Write.steps(Doc.document(d, cfg.settings), wcfg))
       case Right(steps) => steps
     }
 
