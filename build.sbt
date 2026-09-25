@@ -111,6 +111,9 @@ lazy val core = (project in file("core"))
       "com.mysql"            % "mysql-connector-j" % "9.5.0",
       "net.sourceforge.jtds" % "jtds"              % "1.3.1",
       "org.xerial"           % "sqlite-jdbc"       % "3.51.1.0",
+      // SQL Server (WP-12(a), tracker/db/SERVER.md): "jre11" is part of the
+      // version string, not a classifier; its compile deps are all optional.
+      "com.microsoft.sqlserver" % "mssql-jdbc"   % "13.6.0.jre11",
       "org.scalacheck" %% "scalacheck" % "1.15.4" % Test,
       "org.scalaz"     %% "scalaz-scalacheck-binding" % "7.2.36-scalacheck-1.15" % Test
     ),

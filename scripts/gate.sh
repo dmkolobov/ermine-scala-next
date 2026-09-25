@@ -64,6 +64,21 @@ tree_key() {  # tree SHA of HEAD + every uncommitted/untracked change, without t
   local rc=$?; rm -f "$idx"; return $rc
 }
 
+extra_key() {  # extra_key GATE KEY: KEY, or KEY hashed with GATE_KEYFN's output (state outside the tree)
+  # A gate WITH a key function whose function fails or prints nothing gets a key no cache entry can
+  # ever match, and exit 1: the caller must not write that run's result.  Never a silent content-only
+  # key -- that let one transient failure leave a PASS later runs with the server down printed as
+  # CACHED-PASS (REVIEW-S1 round 2, R2-1).
+  local fn=${GATE_KEYFN[$1]:-} x
+  [[ -n $fn ]] || { echo "$2"; return 0; }
+  if x=$("$fn" 2>/dev/null) && [[ -n $x ]]; then
+    printf '%s\n%s\n' "$2" "$x" | git hash-object --stdin
+    return 0
+  fi
+  echo "uncached/$2-$(date +%s%N)-$$-$RANDOM"
+  return 1
+}
+
 expand_targets() {
   local t g
   for t in "$@"; do
@@ -84,9 +99,11 @@ case $cmd in
   key) tree_key; exit $? ;;
   status)
     root=$(common_root) || exit 2
+    cd "$(git rev-parse --show-toplevel)" || exit 2   # GATE_KEYFN functions read tree-relative paths
     tree=$(git rev-parse "${1:-HEAD}^{tree}") || exit 2
     for g in $GATE_ORDER; do
       k=$tree; [[ -n ${GATE_KEYPATH[$g]:-} ]] && k=$(git rev-parse "$tree:${GATE_KEYPATH[$g]}")
+      k=$(extra_key "$g" "$k") || k="uncached"   # a failed key function matches no cache entry
       f="$root/.gate-cache/$k/$g.result"
       if [[ -f $f ]]; then
         awk -F= '{a[$1]=substr($0, length($1)+2)} END {printf "%-16s %-5s %6ss %s  %s\n", a["gate"], a["status"], a["seconds"], a["finished"], a["summary"]}' "$f"
@@ -124,6 +141,11 @@ for g in $gates; do
   # a gate that reads only part of the tree (GATE_KEYPATH) is keyed by that subtree
   gkey=$key
   [[ -n ${GATE_KEYPATH[$g]:-} ]] && gkey=$(git rev-parse "$key:${GATE_KEYPATH[$g]}")
+  gwrite=$write
+  if ! gkey=$(extra_key "$g" "$gkey"); then
+    gwrite=0
+    echo "gate $g: key function ${GATE_KEYFN[$g]} failed or printed nothing; this run is uncacheable (key $gkey) and its result will not be written"
+  fi
   cache="$root/.gate-cache/$gkey"; mkdir -p "$cache"
   res="$cache/$g.result"
   if [[ -f $res ]]; then
@@ -148,7 +170,7 @@ for g in $gates; do
     *)   st=FAIL ;;
   esac
   echo "gate $g $st ${secs}s ${sum}"
-  if [[ $st != UNAVAILABLE && $write == 1 ]]; then
+  if [[ $st != UNAVAILABLE && $gwrite == 1 ]]; then
     {
       echo "gate=$g"; echo "key=$gkey"; echo "tree=$key"; echo "commit=$(git rev-parse HEAD)"
       echo "clean=$([[ -z $(git status --porcelain) ]] && echo yes || echo no)"

@@ -1,0 +1,382 @@
+{
+ "source": "Populations in millions, rounded to 0.1 M, typed in by hand (not scraped). Countries: mid-2024 estimates consistent with the U.S. Census Bureau International Database (IDB, a U.S. government work, public domain under 17 U.S.C. 105) and UN WPP 2024 to within about 2%; the four United States rows are the 2020 Decennial Census resident population by Census region (U.S. Census Bureau, public domain: Northeast 57,609,148; Midwest 68,985,454; South 126,266,107; West 78,588,572). Income groups: World Bank country classification by income, FY2025 (published July 2024); the classification is a fact, used as a coarse market-size factor only. NOT re-verified row by row against the source tables from this box: treat every figure as approximate.",
+ "licence": "Figures are facts from public-domain U.S. government publications; this file is part of the Ermine repository (BSD-3-Clause).",
+ "incomeFactor": {
+  "H": 1.0,
+  "UM": 0.15,
+  "LM": 0.04
+ },
+ "incomeFactorNote": "Market-size factor per World Bank income group: a region's share of orders is population x factor. A modelling choice, not a measured figure: it keeps China and India large but not dominant for a company selling durable goods priced in USD.",
+ "countries": [
+  {
+   "code": "us-northeast",
+   "iso2": "US",
+   "country": "United States",
+   "name": "US Northeast",
+   "group": "AMER",
+   "pop": 57.6,
+   "income": "H",
+   "locale": "en_US"
+  },
+  {
+   "code": "us-midwest",
+   "iso2": "US",
+   "country": "United States",
+   "name": "US Midwest",
+   "group": "AMER",
+   "pop": 69.0,
+   "income": "H",
+   "locale": "en_US"
+  },
+  {
+   "code": "us-south",
+   "iso2": "US",
+   "country": "United States",
+   "name": "US South",
+   "group": "AMER",
+   "pop": 126.3,
+   "income": "H",
+   "locale": "en_US"
+  },
+  {
+   "code": "us-west",
+   "iso2": "US",
+   "country": "United States",
+   "name": "US West",
+   "group": "AMER",
+   "pop": 78.6,
+   "income": "H",
+   "locale": "en_US"
+  },
+  {
+   "code": "canada",
+   "iso2": "CA",
+   "country": "Canada",
+   "name": "Canada",
+   "group": "AMER",
+   "pop": 41.0,
+   "income": "H",
+   "locale": "en_CA"
+  },
+  {
+   "code": "mexico",
+   "iso2": "MX",
+   "country": "Mexico",
+   "name": "Mexico",
+   "group": "AMER",
+   "pop": 130.9,
+   "income": "UM",
+   "locale": "es_MX"
+  },
+  {
+   "code": "brazil",
+   "iso2": "BR",
+   "country": "Brazil",
+   "name": "Brazil",
+   "group": "AMER",
+   "pop": 211.9,
+   "income": "UM",
+   "locale": "pt_BR"
+  },
+  {
+   "code": "argentina",
+   "iso2": "AR",
+   "country": "Argentina",
+   "name": "Argentina",
+   "group": "AMER",
+   "pop": 45.7,
+   "income": "UM",
+   "locale": "es"
+  },
+  {
+   "code": "chile",
+   "iso2": "CL",
+   "country": "Chile",
+   "name": "Chile",
+   "group": "AMER",
+   "pop": 19.8,
+   "income": "H",
+   "locale": "es"
+  },
+  {
+   "code": "colombia",
+   "iso2": "CO",
+   "country": "Colombia",
+   "name": "Colombia",
+   "group": "AMER",
+   "pop": 52.9,
+   "income": "UM",
+   "locale": "es"
+  },
+  {
+   "code": "united-kingdom",
+   "iso2": "GB",
+   "country": "United Kingdom",
+   "name": "United Kingdom",
+   "group": "EMEA",
+   "pop": 69.1,
+   "income": "H",
+   "locale": "en_GB"
+  },
+  {
+   "code": "ireland",
+   "iso2": "IE",
+   "country": "Ireland",
+   "name": "Ireland",
+   "group": "EMEA",
+   "pop": 5.3,
+   "income": "H",
+   "locale": "en_IE"
+  },
+  {
+   "code": "germany",
+   "iso2": "DE",
+   "country": "Germany",
+   "name": "Germany",
+   "group": "EMEA",
+   "pop": 84.5,
+   "income": "H",
+   "locale": "de"
+  },
+  {
+   "code": "france",
+   "iso2": "FR",
+   "country": "France",
+   "name": "France",
+   "group": "EMEA",
+   "pop": 66.5,
+   "income": "H",
+   "locale": "fr"
+  },
+  {
+   "code": "italy",
+   "iso2": "IT",
+   "country": "Italy",
+   "name": "Italy",
+   "group": "EMEA",
+   "pop": 59.0,
+   "income": "H",
+   "locale": "it"
+  },
+  {
+   "code": "spain",
+   "iso2": "ES",
+   "country": "Spain",
+   "name": "Spain",
+   "group": "EMEA",
+   "pop": 48.6,
+   "income": "H",
+   "locale": "es"
+  },
+  {
+   "code": "netherlands",
+   "iso2": "NL",
+   "country": "Netherlands",
+   "name": "Netherlands",
+   "group": "EMEA",
+   "pop": 18.0,
+   "income": "H",
+   "locale": "nl"
+  },
+  {
+   "code": "belgium",
+   "iso2": "BE",
+   "country": "Belgium",
+   "name": "Belgium",
+   "group": "EMEA",
+   "pop": 11.8,
+   "income": "H",
+   "locale": "nl_BE"
+  },
+  {
+   "code": "switzerland",
+   "iso2": "CH",
+   "country": "Switzerland",
+   "name": "Switzerland",
+   "group": "EMEA",
+   "pop": 8.9,
+   "income": "H",
+   "locale": "de_CH"
+  },
+  {
+   "code": "sweden",
+   "iso2": "SE",
+   "country": "Sweden",
+   "name": "Sweden",
+   "group": "EMEA",
+   "pop": 10.6,
+   "income": "H",
+   "locale": "sv"
+  },
+  {
+   "code": "poland",
+   "iso2": "PL",
+   "country": "Poland",
+   "name": "Poland",
+   "group": "EMEA",
+   "pop": 38.5,
+   "income": "H",
+   "locale": "pl"
+  },
+  {
+   "code": "turkey",
+   "iso2": "TR",
+   "country": "Turkey",
+   "name": "Turkey",
+   "group": "EMEA",
+   "pop": 87.5,
+   "income": "UM",
+   "locale": "tr"
+  },
+  {
+   "code": "united-arab-emirates",
+   "iso2": "AE",
+   "country": "United Arab Emirates",
+   "name": "United Arab Emirates",
+   "group": "EMEA",
+   "pop": 11.0,
+   "income": "H",
+   "locale": "ar"
+  },
+  {
+   "code": "saudi-arabia",
+   "iso2": "SA",
+   "country": "Saudi Arabia",
+   "name": "Saudi Arabia",
+   "group": "EMEA",
+   "pop": 33.9,
+   "income": "H",
+   "locale": "ar"
+  },
+  {
+   "code": "south-africa",
+   "iso2": "ZA",
+   "country": "South Africa",
+   "name": "South Africa",
+   "group": "EMEA",
+   "pop": 64.0,
+   "income": "UM",
+   "locale": "en_ZA"
+  },
+  {
+   "code": "nigeria",
+   "iso2": "NG",
+   "country": "Nigeria",
+   "name": "Nigeria",
+   "group": "EMEA",
+   "pop": 232.7,
+   "income": "LM",
+   "locale": "en_NG"
+  },
+  {
+   "code": "egypt",
+   "iso2": "EG",
+   "country": "Egypt",
+   "name": "Egypt",
+   "group": "EMEA",
+   "pop": 116.5,
+   "income": "LM",
+   "locale": "ar"
+  },
+  {
+   "code": "japan",
+   "iso2": "JP",
+   "country": "Japan",
+   "name": "Japan",
+   "group": "APAC",
+   "pop": 123.8,
+   "income": "H",
+   "locale": "ja"
+  },
+  {
+   "code": "south-korea",
+   "iso2": "KR",
+   "country": "South Korea",
+   "name": "South Korea",
+   "group": "APAC",
+   "pop": 51.7,
+   "income": "H",
+   "locale": "ko"
+  },
+  {
+   "code": "china",
+   "iso2": "CN",
+   "country": "China",
+   "name": "China",
+   "group": "APAC",
+   "pop": 1419.3,
+   "income": "UM",
+   "locale": "zh_CN"
+  },
+  {
+   "code": "india",
+   "iso2": "IN",
+   "country": "India",
+   "name": "India",
+   "group": "APAC",
+   "pop": 1450.9,
+   "income": "LM",
+   "locale": "en_IN"
+  },
+  {
+   "code": "indonesia",
+   "iso2": "ID",
+   "country": "Indonesia",
+   "name": "Indonesia",
+   "group": "APAC",
+   "pop": 283.5,
+   "income": "UM",
+   "locale": "id_ID"
+  },
+  {
+   "code": "vietnam",
+   "iso2": "VN",
+   "country": "Vietnam",
+   "name": "Vietnam",
+   "group": "APAC",
+   "pop": 101.0,
+   "income": "LM",
+   "locale": "vi"
+  },
+  {
+   "code": "philippines",
+   "iso2": "PH",
+   "country": "Philippines",
+   "name": "Philippines",
+   "group": "APAC",
+   "pop": 115.8,
+   "income": "LM",
+   "locale": "en"
+  },
+  {
+   "code": "singapore",
+   "iso2": "SG",
+   "country": "Singapore",
+   "name": "Singapore",
+   "group": "APAC",
+   "pop": 6.0,
+   "income": "H",
+   "locale": "en"
+  },
+  {
+   "code": "australia",
+   "iso2": "AU",
+   "country": "Australia",
+   "name": "Australia",
+   "group": "APAC",
+   "pop": 26.7,
+   "income": "H",
+   "locale": "en_AU"
+  },
+  {
+   "code": "new-zealand",
+   "iso2": "NZ",
+   "country": "New Zealand",
+   "name": "New Zealand",
+   "group": "APAC",
+   "pop": 5.2,
+   "income": "H",
+   "locale": "en"
+  }
+ ]
+}

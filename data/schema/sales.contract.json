@@ -1,0 +1,1798 @@
+{
+  "contract": "ErmineSales column contract",
+  "version": 1,
+  "domain": "sales",
+  "database": "ErmineSales",
+  "schema": "dbo",
+  "source": "data/schema/build-sales-schema.mjs (edit that, rerun; do not hand-edit this file)",
+  "doc": "tracker/db/SCHEMA-SALES.md",
+  "dialects": {
+    "mssql": {
+      "ddl": "data/schema/sales.mssql.sql",
+      "names": "dbo.<table>",
+      "date": "date",
+      "double": "float",
+      "string": "nvarchar(n)",
+      "int": "int"
+    },
+    "sqlite": {
+      "ddl": "data/schema/sales.sqlite.sql",
+      "names": "<table> in main (no schema)",
+      "date": "INTEGER epoch ms at 00:00 GMT",
+      "double": "REAL",
+      "string": "TEXT (STRICT tables)",
+      "int": "INTEGER"
+    }
+  },
+  "csv": {
+    "header": true,
+    "delimiter": ",",
+    "quote": "\"",
+    "null": "An empty CSV field (quoted \"\" or unquoted) means NULL. A Nullable String column never holds the empty string, and a non-Nullable String column never holds it either (BULK INSERT loads \"\" in a nullable column as NULL; REVIEW-S1 M3).",
+    "date": "YYYY-MM-DD",
+    "double": "shortest round-trip decimal (JS Number#toString)",
+    "encoding": "UTF-8, LF"
+  },
+  "hintKinds": [
+    "id",
+    "fk",
+    "code",
+    "name",
+    "money",
+    "ratio",
+    "count",
+    "date",
+    "derived",
+    "weight",
+    "score",
+    "flag",
+    "view"
+  ],
+  "tiers": {
+    "xs": {
+      "factRows": 8,
+      "dateRange": "literal",
+      "note": "exactly the Doc fixture literals (FetchData.e, Sales.e, SalesReport.e); every row given in tables[].xs.rows"
+    },
+    "s": {
+      "factRows": 1000,
+      "dateRange": "2026-01-01..2026-12-31"
+    },
+    "m": {
+      "factRows": 100000,
+      "dateRange": "2025-01-01..2026-12-31"
+    },
+    "l": {
+      "factRows": 2000000,
+      "dateRange": "2024-01-01..2026-12-31"
+    }
+  },
+  "loadOrder": [
+    "dim_region",
+    "dim_product",
+    "dim_channel",
+    "dim_rep",
+    "dim_customer",
+    "dim_date",
+    "fact_order_line",
+    "fact_target",
+    "sales_report"
+  ],
+  "invariants": [
+    "No NULL outside the two Nullable columns (dim_rep.repScore, fact_order_line.promoCode): a NULL in a non-Nullable column fails the scan (SURVEY-CORPUS §5, SqlExecution.scala:62-87).",
+    "Every PK and UNIQUE holds; every FK resolves (the DDL enforces both on MSSQL and on SQLite with PRAGMA foreign_keys = ON).",
+    "String natural keys (regionCode, productName, channelName, regionGroup) are unique case-insensitively: MSSQL default collation is CI, SQLite BINARY; a CI collision would merge groups on one dialect only (SURVEY-CORPUS §4, §9.3 row).",
+    "regionCode is lowercase ASCII [a-z][a-z0-9-]*: the Fetch reports sort and filter on it (FetchTabs scanInOrder by region); keeps MSSQL and SQLite ordering identical.",
+    "lineAmount = round(quantity * unitPrice * (1 - discountPct), 2); money columns carry cents (2 dp) except unitPrice (4 dp).",
+    "fact_order_line: dim_rep[repId].regionId = regionId and dim_customer[customerId].regionId = regionId; all lines of one orderId share orderDate, regionId, customerId, repId, channelId.",
+    "dim_date is contiguous over the tier range at s, m, l; at xs it is exactly the 8 sale days. Every orderDate is a dim_date.day (FK).",
+    "fact_target has one row per (region, year, quarter) of the tier range, so the `targets` view has one row per region.",
+    "Dates carry no time of day. CSV carries YYYY-MM-DD; the SQLite loader writes INTEGER epoch milliseconds at 00:00:00 GMT (Date.UTC(y, m-1, d)), because SqliteEmitter compares Date columns against d.getTime literals (SqlEmitter.scala:696).",
+    "Every tier is a pure function of (seed, tier); xs ignores the seed and is exactly tables[].xs.rows.",
+    "No String column holds the empty string: an empty CSV field means NULL (only legal in a Nullable column), so a Nullable String value is either NULL or non-empty (BULK INSERT loads \"\" in a nullable column as NULL; REVIEW-S1 M3)."
+  ],
+  "tables": [
+    {
+      "name": "dim_region",
+      "kind": "table",
+      "layer": "full",
+      "doc": "One row per sales region. regionCode is the Ermine `region` value every view exposes.",
+      "pk": [
+        "regionId"
+      ],
+      "unique": [
+        [
+          "regionCode"
+        ]
+      ],
+      "fks": [],
+      "rows": {
+        "xs": 4,
+        "s": 8,
+        "m": 12,
+        "l": 20
+      },
+      "columns": [
+        {
+          "name": "regionId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "id"
+          }
+        },
+        {
+          "name": "regionCode",
+          "ermine": "String",
+          "mssql": "nvarchar(40)",
+          "sqlite": "TEXT",
+          "maxLength": 40,
+          "nullable": false,
+          "hint": {
+            "kind": "code",
+            "vocabulary": "region",
+            "case": "lower-ascii",
+            "uniqueCaseInsensitive": true
+          }
+        },
+        {
+          "name": "regionName",
+          "ermine": "String",
+          "mssql": "nvarchar(80)",
+          "sqlite": "TEXT",
+          "maxLength": 80,
+          "nullable": false,
+          "hint": {
+            "kind": "name",
+            "of": "region"
+          }
+        },
+        {
+          "name": "regionGroup",
+          "ermine": "String",
+          "mssql": "nvarchar(8)",
+          "sqlite": "TEXT",
+          "maxLength": 8,
+          "nullable": false,
+          "hint": {
+            "kind": "code",
+            "values": [
+              "EMEA",
+              "APAC",
+              "AMER"
+            ]
+          }
+        },
+        {
+          "name": "countryName",
+          "ermine": "String",
+          "mssql": "nvarchar(80)",
+          "sqlite": "TEXT",
+          "maxLength": 80,
+          "nullable": false,
+          "hint": {
+            "kind": "name",
+            "source": "country"
+          }
+        },
+        {
+          "name": "countryCode",
+          "ermine": "String",
+          "mssql": "nvarchar(2)",
+          "sqlite": "TEXT",
+          "maxLength": 2,
+          "nullable": false,
+          "hint": {
+            "kind": "code",
+            "source": "iso3166-alpha2"
+          }
+        },
+        {
+          "name": "populationWeight",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "weight",
+            "min": 0,
+            "max": 1,
+            "sumsTo": 1,
+            "source": "vendored population of the country, normalised over the regions"
+          }
+        }
+      ],
+      "xs": {
+        "rows": [
+          {
+            "regionId": 1,
+            "regionCode": "north",
+            "regionName": "North",
+            "regionGroup": "EMEA",
+            "countryName": "United Kingdom",
+            "countryCode": "GB",
+            "populationWeight": 0.3
+          },
+          {
+            "regionId": 2,
+            "regionCode": "south",
+            "regionName": "South",
+            "regionGroup": "AMER",
+            "countryName": "Brazil",
+            "countryCode": "BR",
+            "populationWeight": 0.25
+          },
+          {
+            "regionId": 3,
+            "regionCode": "east",
+            "regionName": "East",
+            "regionGroup": "APAC",
+            "countryName": "Japan",
+            "countryCode": "JP",
+            "populationWeight": 0.25
+          },
+          {
+            "regionId": 4,
+            "regionCode": "west",
+            "regionName": "West",
+            "regionGroup": "AMER",
+            "countryName": "United States",
+            "countryCode": "US",
+            "populationWeight": 0.2
+          }
+        ]
+      }
+    },
+    {
+      "name": "dim_product",
+      "kind": "table",
+      "layer": "full",
+      "doc": "The catalogue. productName is the Ermine `item` value (Sales.e).",
+      "pk": [
+        "productId"
+      ],
+      "unique": [
+        [
+          "sku"
+        ],
+        [
+          "productName"
+        ]
+      ],
+      "fks": [],
+      "rows": {
+        "xs": 3,
+        "s": 40,
+        "m": 200,
+        "l": 1000
+      },
+      "columns": [
+        {
+          "name": "productId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "id"
+          }
+        },
+        {
+          "name": "sku",
+          "ermine": "String",
+          "mssql": "nvarchar(20)",
+          "sqlite": "TEXT",
+          "maxLength": 20,
+          "nullable": false,
+          "hint": {
+            "kind": "code",
+            "pattern": "SKU-[0-9]{5}"
+          }
+        },
+        {
+          "name": "productName",
+          "ermine": "String",
+          "mssql": "nvarchar(80)",
+          "sqlite": "TEXT",
+          "maxLength": 80,
+          "nullable": false,
+          "hint": {
+            "kind": "name",
+            "of": "product",
+            "uniqueCaseInsensitive": true
+          }
+        },
+        {
+          "name": "category",
+          "ermine": "String",
+          "mssql": "nvarchar(40)",
+          "sqlite": "TEXT",
+          "maxLength": 40,
+          "nullable": false,
+          "hint": {
+            "kind": "name",
+            "of": "category"
+          }
+        },
+        {
+          "name": "subCategory",
+          "ermine": "String",
+          "mssql": "nvarchar(40)",
+          "sqlite": "TEXT",
+          "maxLength": 40,
+          "nullable": false,
+          "hint": {
+            "kind": "name",
+            "of": "subCategory"
+          }
+        },
+        {
+          "name": "priceBand",
+          "ermine": "String",
+          "mssql": "nvarchar(10)",
+          "sqlite": "TEXT",
+          "maxLength": 10,
+          "nullable": false,
+          "hint": {
+            "kind": "code",
+            "values": [
+              "low",
+              "mid",
+              "high",
+              "premium"
+            ]
+          }
+        },
+        {
+          "name": "listPrice",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "money",
+            "min": 1,
+            "max": 5000,
+            "bandBy": "priceBand",
+            "cents": true
+          }
+        },
+        {
+          "name": "unitCost",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "money",
+            "min": 0.5,
+            "max": 4000,
+            "lessThan": "listPrice",
+            "cents": true
+          }
+        }
+      ],
+      "xs": {
+        "rows": [
+          {
+            "productId": 1,
+            "sku": "SKU-00001",
+            "productName": "widget",
+            "category": "Hardware",
+            "subCategory": "Widgets",
+            "priceBand": "mid",
+            "listPrice": 400,
+            "unitCost": 240
+          },
+          {
+            "productId": 2,
+            "sku": "SKU-00002",
+            "productName": "gizmo",
+            "category": "Hardware",
+            "subCategory": "Gizmos",
+            "priceBand": "mid",
+            "listPrice": 420,
+            "unitCost": 250
+          },
+          {
+            "productId": 3,
+            "sku": "SKU-00003",
+            "productName": "doohickey",
+            "category": "Hardware",
+            "subCategory": "Parts",
+            "priceBand": "mid",
+            "listPrice": 500,
+            "unitCost": 310
+          }
+        ]
+      }
+    },
+    {
+      "name": "dim_channel",
+      "kind": "table",
+      "layer": "full",
+      "doc": "Sales channel (Ai/SalesByRegion.e channel dimension). isDirect is a Y/N String: the corpus has 0 Bool columns (SURVEY-CORPUS §5).",
+      "pk": [
+        "channelId"
+      ],
+      "unique": [
+        [
+          "channelName"
+        ]
+      ],
+      "fks": [],
+      "rows": {
+        "xs": 1,
+        "s": 4,
+        "m": 5,
+        "l": 6
+      },
+      "columns": [
+        {
+          "name": "channelId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "id"
+          }
+        },
+        {
+          "name": "channelName",
+          "ermine": "String",
+          "mssql": "nvarchar(40)",
+          "sqlite": "TEXT",
+          "maxLength": 40,
+          "nullable": false,
+          "hint": {
+            "kind": "name",
+            "of": "channel",
+            "values": [
+              "Direct",
+              "Online",
+              "Partner",
+              "Retail",
+              "Marketplace",
+              "Telesales"
+            ]
+          }
+        },
+        {
+          "name": "isDirect",
+          "ermine": "String",
+          "mssql": "nvarchar(1)",
+          "sqlite": "TEXT",
+          "maxLength": 1,
+          "nullable": false,
+          "hint": {
+            "kind": "flag",
+            "values": [
+              "Y",
+              "N"
+            ]
+          }
+        }
+      ],
+      "xs": {
+        "rows": [
+          {
+            "channelId": 1,
+            "channelName": "Direct",
+            "isDirect": "Y"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dim_rep",
+      "kind": "table",
+      "layer": "full",
+      "doc": "Sales reps; each belongs to one region. repScore is the one Nullable Int (Present/SalesDashboard.e repScore).",
+      "pk": [
+        "repId"
+      ],
+      "unique": [],
+      "fks": [
+        {
+          "columns": [
+            "regionId"
+          ],
+          "ref": "dim_region",
+          "refColumns": [
+            "regionId"
+          ]
+        }
+      ],
+      "rows": {
+        "xs": 4,
+        "s": 24,
+        "m": 60,
+        "l": 150
+      },
+      "columns": [
+        {
+          "name": "repId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "id"
+          }
+        },
+        {
+          "name": "repName",
+          "ermine": "String",
+          "mssql": "nvarchar(80)",
+          "sqlite": "TEXT",
+          "maxLength": 80,
+          "nullable": false,
+          "hint": {
+            "kind": "name",
+            "of": "person",
+            "source": "faker"
+          }
+        },
+        {
+          "name": "regionId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "fk",
+            "ref": "dim_region.regionId"
+          }
+        },
+        {
+          "name": "repTeam",
+          "ermine": "String",
+          "mssql": "nvarchar(40)",
+          "sqlite": "TEXT",
+          "maxLength": 40,
+          "nullable": false,
+          "hint": {
+            "kind": "name",
+            "of": "team"
+          }
+        },
+        {
+          "name": "hireDate",
+          "ermine": "Date",
+          "mssql": "date",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "date",
+            "range": "2015-01-01..2025-12-31",
+            "notAfter": "first orderDate of the tier"
+          }
+        },
+        {
+          "name": "repScore",
+          "ermine": "Nullable Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": true,
+          "hint": {
+            "kind": "score",
+            "min": 0,
+            "max": 100,
+            "nullRate": 0.15
+          }
+        }
+      ],
+      "xs": {
+        "rows": [
+          {
+            "repId": 1,
+            "repName": "Ada Byrne",
+            "regionId": 1,
+            "repTeam": "North Field",
+            "hireDate": "2021-03-01",
+            "repScore": 82
+          },
+          {
+            "repId": 2,
+            "repName": "Bruno Costa",
+            "regionId": 2,
+            "repTeam": "South Field",
+            "hireDate": "2019-07-15",
+            "repScore": 64
+          },
+          {
+            "repId": 3,
+            "repName": "Chiaki Mori",
+            "regionId": 3,
+            "repTeam": "East Field",
+            "hireDate": "2023-01-09",
+            "repScore": 71
+          },
+          {
+            "repId": 4,
+            "repName": "Dana Hale",
+            "regionId": 4,
+            "repTeam": "West Field",
+            "hireDate": "2024-10-01",
+            "repScore": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "dim_customer",
+      "kind": "table",
+      "layer": "full",
+      "doc": "Customers; each belongs to one region (Algebra/OrderLedger.e customerDim, complete here: FKs are enforced).",
+      "pk": [
+        "customerId"
+      ],
+      "unique": [],
+      "fks": [
+        {
+          "columns": [
+            "regionId"
+          ],
+          "ref": "dim_region",
+          "refColumns": [
+            "regionId"
+          ]
+        }
+      ],
+      "rows": {
+        "xs": 4,
+        "s": 200,
+        "m": 5000,
+        "l": 50000
+      },
+      "columns": [
+        {
+          "name": "customerId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "id"
+          }
+        },
+        {
+          "name": "customerName",
+          "ermine": "String",
+          "mssql": "nvarchar(120)",
+          "sqlite": "TEXT",
+          "maxLength": 120,
+          "nullable": false,
+          "hint": {
+            "kind": "name",
+            "of": "company",
+            "source": "faker"
+          }
+        },
+        {
+          "name": "customerTier",
+          "ermine": "String",
+          "mssql": "nvarchar(10)",
+          "sqlite": "TEXT",
+          "maxLength": 10,
+          "nullable": false,
+          "hint": {
+            "kind": "code",
+            "values": [
+              "gold",
+              "silver",
+              "bronze"
+            ],
+            "weights": [
+              0.1,
+              0.3,
+              0.6
+            ]
+          }
+        },
+        {
+          "name": "regionId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "fk",
+            "ref": "dim_region.regionId",
+            "weightBy": "dim_region.populationWeight"
+          }
+        },
+        {
+          "name": "signupDate",
+          "ermine": "Date",
+          "mssql": "date",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "date",
+            "range": "2018-01-01..2026-12-31",
+            "notAfter": "the customer's first orderDate"
+          }
+        }
+      ],
+      "xs": {
+        "rows": [
+          {
+            "customerId": 1,
+            "customerName": "Northwind Traders",
+            "customerTier": "gold",
+            "regionId": 1,
+            "signupDate": "2020-02-10"
+          },
+          {
+            "customerId": 2,
+            "customerName": "Southgate Supply",
+            "customerTier": "silver",
+            "regionId": 2,
+            "signupDate": "2021-05-03"
+          },
+          {
+            "customerId": 3,
+            "customerName": "Eastern Parts Co",
+            "customerTier": "bronze",
+            "regionId": 3,
+            "signupDate": "2022-08-22"
+          },
+          {
+            "customerId": 4,
+            "customerName": "Westwood Retail",
+            "customerTier": "silver",
+            "regionId": 4,
+            "signupDate": "2023-11-30"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dim_date",
+      "kind": "table",
+      "layer": "full",
+      "doc": "The calendar. xs = exactly the 8 sale days (so the `calendar` view equals FetchCrosstab.e's literal); s+ = every day of the tier range. monthName is FetchCrosstab's \"YYYY-MM\" key.",
+      "pk": [
+        "day"
+      ],
+      "unique": [],
+      "fks": [],
+      "rows": {
+        "xs": 8,
+        "s": 365,
+        "m": 730,
+        "l": 1096
+      },
+      "columns": [
+        {
+          "name": "day",
+          "ermine": "Date",
+          "mssql": "date",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "date",
+            "range": "tier",
+            "contiguous": "every day of the tier range (s, m, l); the 8 sale days at xs"
+          }
+        },
+        {
+          "name": "yearNo",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "derived",
+            "from": "day",
+            "rule": "year"
+          }
+        },
+        {
+          "name": "quarterNo",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "derived",
+            "from": "day",
+            "rule": "quarter 1..4"
+          }
+        },
+        {
+          "name": "monthNo",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "derived",
+            "from": "day",
+            "rule": "month 1..12"
+          }
+        },
+        {
+          "name": "monthName",
+          "ermine": "String",
+          "mssql": "nvarchar(7)",
+          "sqlite": "TEXT",
+          "maxLength": 7,
+          "nullable": false,
+          "hint": {
+            "kind": "derived",
+            "from": "day",
+            "rule": "YYYY-MM"
+          }
+        },
+        {
+          "name": "quarterName",
+          "ermine": "String",
+          "mssql": "nvarchar(7)",
+          "sqlite": "TEXT",
+          "maxLength": 7,
+          "nullable": false,
+          "hint": {
+            "kind": "derived",
+            "from": "day",
+            "rule": "YYYY-Qn"
+          }
+        },
+        {
+          "name": "weekdayNo",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "derived",
+            "from": "day",
+            "rule": "ISO weekday, 1 = Monday .. 7 = Sunday"
+          }
+        },
+        {
+          "name": "weekdayName",
+          "ermine": "String",
+          "mssql": "nvarchar(9)",
+          "sqlite": "TEXT",
+          "maxLength": 9,
+          "nullable": false,
+          "hint": {
+            "kind": "derived",
+            "from": "day",
+            "rule": "English weekday name"
+          }
+        }
+      ],
+      "xs": {
+        "rows": [
+          {
+            "day": "2026-01-05",
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "monthNo": 1,
+            "monthName": "2026-01",
+            "quarterName": "2026-Q1",
+            "weekdayNo": 1,
+            "weekdayName": "Monday"
+          },
+          {
+            "day": "2026-01-09",
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "monthNo": 1,
+            "monthName": "2026-01",
+            "quarterName": "2026-Q1",
+            "weekdayNo": 5,
+            "weekdayName": "Friday"
+          },
+          {
+            "day": "2026-01-19",
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "monthNo": 1,
+            "monthName": "2026-01",
+            "quarterName": "2026-Q1",
+            "weekdayNo": 1,
+            "weekdayName": "Monday"
+          },
+          {
+            "day": "2026-02-02",
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "monthNo": 2,
+            "monthName": "2026-02",
+            "quarterName": "2026-Q1",
+            "weekdayNo": 1,
+            "weekdayName": "Monday"
+          },
+          {
+            "day": "2026-02-14",
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "monthNo": 2,
+            "monthName": "2026-02",
+            "quarterName": "2026-Q1",
+            "weekdayNo": 6,
+            "weekdayName": "Saturday"
+          },
+          {
+            "day": "2026-02-20",
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "monthNo": 2,
+            "monthName": "2026-02",
+            "quarterName": "2026-Q1",
+            "weekdayNo": 5,
+            "weekdayName": "Friday"
+          },
+          {
+            "day": "2026-03-03",
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "monthNo": 3,
+            "monthName": "2026-03",
+            "quarterName": "2026-Q1",
+            "weekdayNo": 2,
+            "weekdayName": "Tuesday"
+          },
+          {
+            "day": "2026-03-17",
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "monthNo": 3,
+            "monthName": "2026-03",
+            "quarterName": "2026-Q1",
+            "weekdayNo": 2,
+            "weekdayName": "Tuesday"
+          }
+        ]
+      }
+    },
+    {
+      "name": "fact_order_line",
+      "kind": "table",
+      "layer": "full",
+      "doc": "One row per order line. lineAmount is the Ermine `amount`, quantity the Ermine `units`, both summed by the views.",
+      "pk": [
+        "orderId",
+        "lineNo"
+      ],
+      "unique": [],
+      "fks": [
+        {
+          "columns": [
+            "orderDate"
+          ],
+          "ref": "dim_date",
+          "refColumns": [
+            "day"
+          ]
+        },
+        {
+          "columns": [
+            "regionId"
+          ],
+          "ref": "dim_region",
+          "refColumns": [
+            "regionId"
+          ]
+        },
+        {
+          "columns": [
+            "customerId"
+          ],
+          "ref": "dim_customer",
+          "refColumns": [
+            "customerId"
+          ]
+        },
+        {
+          "columns": [
+            "productId"
+          ],
+          "ref": "dim_product",
+          "refColumns": [
+            "productId"
+          ]
+        },
+        {
+          "columns": [
+            "repId"
+          ],
+          "ref": "dim_rep",
+          "refColumns": [
+            "repId"
+          ]
+        },
+        {
+          "columns": [
+            "channelId"
+          ],
+          "ref": "dim_channel",
+          "refColumns": [
+            "channelId"
+          ]
+        }
+      ],
+      "rows": {
+        "xs": 8,
+        "s": 1000,
+        "m": 100000,
+        "l": 2000000
+      },
+      "columns": [
+        {
+          "name": "orderId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "id"
+          }
+        },
+        {
+          "name": "lineNo",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "count",
+            "min": 1,
+            "max": 8,
+            "rule": "1..n within an order, no gaps"
+          }
+        },
+        {
+          "name": "orderDate",
+          "ermine": "Date",
+          "mssql": "date",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "fk",
+            "ref": "dim_date.day",
+            "shape": "weekday + seasonal"
+          }
+        },
+        {
+          "name": "regionId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "fk",
+            "ref": "dim_region.regionId",
+            "weightBy": "dim_region.populationWeight"
+          }
+        },
+        {
+          "name": "customerId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "fk",
+            "ref": "dim_customer.customerId",
+            "sameAs": "dim_customer.regionId = regionId"
+          }
+        },
+        {
+          "name": "productId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "fk",
+            "ref": "dim_product.productId"
+          }
+        },
+        {
+          "name": "repId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "fk",
+            "ref": "dim_rep.repId",
+            "sameAs": "dim_rep.regionId = regionId"
+          }
+        },
+        {
+          "name": "channelId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "fk",
+            "ref": "dim_channel.channelId"
+          }
+        },
+        {
+          "name": "quantity",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "count",
+            "min": 1,
+            "max": 50,
+            "by": "dim_product.category"
+          }
+        },
+        {
+          "name": "unitPrice",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "money",
+            "min": 0.5,
+            "max": 5000,
+            "rule": "listPrice * (1 + small spread), 4 dp; at xs round(amount/units, 4)"
+          }
+        },
+        {
+          "name": "discountPct",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "ratio",
+            "min": 0,
+            "max": 0.3,
+            "rule": "0 at xs"
+          }
+        },
+        {
+          "name": "lineAmount",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "money",
+            "min": 0,
+            "max": 50000,
+            "rule": "round(quantity * unitPrice * (1 - discountPct), 2)"
+          }
+        },
+        {
+          "name": "promoCode",
+          "ermine": "Nullable String",
+          "mssql": "nvarchar(20)",
+          "sqlite": "TEXT",
+          "maxLength": 20,
+          "nullable": true,
+          "hint": {
+            "kind": "code",
+            "pattern": "[A-Z]{4,8}[0-9]{2}",
+            "nullRate": 0.8,
+            "rule": "non-NULL only when discountPct > 0"
+          }
+        }
+      ],
+      "xs": {
+        "rows": [
+          {
+            "orderId": 1,
+            "lineNo": 1,
+            "orderDate": "2026-01-05",
+            "regionId": 1,
+            "customerId": 1,
+            "productId": 1,
+            "repId": 1,
+            "channelId": 1,
+            "quantity": 3,
+            "unitPrice": 400.1667,
+            "discountPct": 0,
+            "lineAmount": 1200.5,
+            "promoCode": null
+          },
+          {
+            "orderId": 2,
+            "lineNo": 1,
+            "orderDate": "2026-01-19",
+            "regionId": 1,
+            "customerId": 1,
+            "productId": 2,
+            "repId": 1,
+            "channelId": 1,
+            "quantity": 2,
+            "unitPrice": 420,
+            "discountPct": 0,
+            "lineAmount": 840,
+            "promoCode": null
+          },
+          {
+            "orderId": 3,
+            "lineNo": 1,
+            "orderDate": "2026-02-14",
+            "regionId": 1,
+            "customerId": 1,
+            "productId": 1,
+            "repId": 1,
+            "channelId": 1,
+            "quantity": 7,
+            "unitPrice": 330.0357,
+            "discountPct": 0,
+            "lineAmount": 2310.25,
+            "promoCode": null
+          },
+          {
+            "orderId": 4,
+            "lineNo": 1,
+            "orderDate": "2026-01-09",
+            "regionId": 2,
+            "customerId": 2,
+            "productId": 3,
+            "repId": 2,
+            "channelId": 1,
+            "quantity": 1,
+            "unitPrice": 615.75,
+            "discountPct": 0,
+            "lineAmount": 615.75,
+            "promoCode": null
+          },
+          {
+            "orderId": 5,
+            "lineNo": 1,
+            "orderDate": "2026-02-02",
+            "regionId": 2,
+            "customerId": 2,
+            "productId": 1,
+            "repId": 2,
+            "channelId": 1,
+            "quantity": 5,
+            "unitPrice": 398,
+            "discountPct": 0,
+            "lineAmount": 1990,
+            "promoCode": null
+          },
+          {
+            "orderId": 6,
+            "lineNo": 1,
+            "orderDate": "2026-02-20",
+            "regionId": 3,
+            "customerId": 3,
+            "productId": 2,
+            "repId": 3,
+            "channelId": 1,
+            "quantity": 1,
+            "unitPrice": 75.5,
+            "discountPct": 0,
+            "lineAmount": 75.5,
+            "promoCode": null
+          },
+          {
+            "orderId": 7,
+            "lineNo": 1,
+            "orderDate": "2026-03-03",
+            "regionId": 3,
+            "customerId": 3,
+            "productId": 3,
+            "repId": 3,
+            "channelId": 1,
+            "quantity": 11,
+            "unitPrice": 372.7273,
+            "discountPct": 0,
+            "lineAmount": 4100,
+            "promoCode": null
+          },
+          {
+            "orderId": 8,
+            "lineNo": 1,
+            "orderDate": "2026-03-17",
+            "regionId": 4,
+            "customerId": 4,
+            "productId": 1,
+            "repId": 4,
+            "channelId": 1,
+            "quantity": 4,
+            "unitPrice": 387.5,
+            "discountPct": 0,
+            "lineAmount": 1550,
+            "promoCode": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "fact_target",
+      "kind": "table",
+      "layer": "full",
+      "doc": "A sales target per region per quarter; the `targets` view sums them per region.",
+      "pk": [
+        "regionId",
+        "yearNo",
+        "quarterNo"
+      ],
+      "unique": [],
+      "fks": [
+        {
+          "columns": [
+            "regionId"
+          ],
+          "ref": "dim_region",
+          "refColumns": [
+            "regionId"
+          ]
+        }
+      ],
+      "rows": {
+        "xs": 4,
+        "s": 32,
+        "m": 96,
+        "l": 240
+      },
+      "columns": [
+        {
+          "name": "regionId",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "fk",
+            "ref": "dim_region.regionId"
+          }
+        },
+        {
+          "name": "yearNo",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "derived",
+            "rule": "every year of the tier range"
+          }
+        },
+        {
+          "name": "quarterNo",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "derived",
+            "rule": "1..4; xs has only Q1"
+          }
+        },
+        {
+          "name": "targetAmount",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "money",
+            "min": 0,
+            "max": 50000000,
+            "rule": "derived from history: the region's actual quarter sales * U(0.9, 1.2), cents"
+          }
+        }
+      ],
+      "xs": {
+        "rows": [
+          {
+            "regionId": 1,
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "targetAmount": 4000
+          },
+          {
+            "regionId": 2,
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "targetAmount": 3000
+          },
+          {
+            "regionId": 3,
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "targetAmount": 2000
+          },
+          {
+            "regionId": 4,
+            "yearNo": 2026,
+            "quarterNo": 1,
+            "targetAmount": 2500
+          }
+        ]
+      }
+    },
+    {
+      "name": "sales_report",
+      "kind": "table",
+      "layer": "minimal",
+      "doc": "Backs Doc/SalesReport.e (sales : [srRegion, srSales, srDelta]). A BASE TABLE (a mart snapshot) at every tier: its xs values are literals no view over the 8 sales can derive.",
+      "pk": [
+        "srRegion"
+      ],
+      "unique": [],
+      "fks": [],
+      "rows": {
+        "xs": 3,
+        "s": 3,
+        "m": 3,
+        "l": 3
+      },
+      "columns": [
+        {
+          "name": "srRegion",
+          "ermine": "String",
+          "mssql": "nvarchar(8)",
+          "sqlite": "TEXT",
+          "maxLength": 8,
+          "nullable": false,
+          "hint": {
+            "kind": "code",
+            "values": [
+              "EMEA",
+              "APAC",
+              "AMER"
+            ],
+            "ref": "dim_region.regionGroup"
+          }
+        },
+        {
+          "name": "srSales",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "money",
+            "unit": "thousands",
+            "rule": "s+: sum(lineAmount)/1000 of the regionGroup in the last full quarter of the tier range, 2 dp"
+          }
+        },
+        {
+          "name": "srDelta",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "ratio",
+            "min": -1,
+            "max": 5,
+            "rule": "s+: (last quarter - previous quarter) / previous quarter, 3 dp"
+          }
+        }
+      ],
+      "xs": {
+        "rows": [
+          {
+            "srRegion": "EMEA",
+            "srSales": 120.5,
+            "srDelta": 0.125
+          },
+          {
+            "srRegion": "APAC",
+            "srSales": 98.25,
+            "srDelta": -0.04
+          },
+          {
+            "srRegion": "AMER",
+            "srSales": 310.75,
+            "srDelta": 0.5
+          }
+        ]
+      }
+    }
+  ],
+  "views": [
+    {
+      "name": "sales",
+      "kind": "view",
+      "layer": "minimal",
+      "fixture": "FetchData.e:20 `sales : [region, day, amount, units]`",
+      "key": [
+        "region",
+        "day"
+      ],
+      "rows": {
+        "xs": 8,
+        "s": "derived: distinct keys of fact_order_line",
+        "m": "derived",
+        "l": "derived"
+      },
+      "columns": [
+        {
+          "name": "region",
+          "ermine": "String",
+          "mssql": "nvarchar(40)",
+          "sqlite": "TEXT",
+          "maxLength": 40,
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "dim_region.regionCode"
+          }
+        },
+        {
+          "name": "day",
+          "ermine": "Date",
+          "mssql": "date",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "fact_order_line.orderDate"
+          }
+        },
+        {
+          "name": "amount",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "SUM(fact_order_line.lineAmount)"
+          }
+        },
+        {
+          "name": "units",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "SUM(fact_order_line.quantity)"
+          }
+        }
+      ],
+      "sql": "SELECT r.regionCode AS region, f.orderDate AS day,\n       SUM(f.lineAmount) AS amount, SUM(f.quantity) AS units\nFROM dbo.fact_order_line AS f\nJOIN dbo.dim_region AS r ON r.regionId = f.regionId\nGROUP BY r.regionCode, f.orderDate"
+    },
+    {
+      "name": "sales_items",
+      "kind": "view",
+      "layer": "minimal",
+      "fixture": "Sales.e:71-75 the Sale record (region, day, amount, units, item)",
+      "key": [
+        "region",
+        "day",
+        "item"
+      ],
+      "rows": {
+        "xs": 8,
+        "s": "derived: distinct keys of fact_order_line",
+        "m": "derived",
+        "l": "derived"
+      },
+      "columns": [
+        {
+          "name": "region",
+          "ermine": "String",
+          "mssql": "nvarchar(40)",
+          "sqlite": "TEXT",
+          "maxLength": 40,
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "dim_region.regionCode"
+          }
+        },
+        {
+          "name": "day",
+          "ermine": "Date",
+          "mssql": "date",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "fact_order_line.orderDate"
+          }
+        },
+        {
+          "name": "item",
+          "ermine": "String",
+          "mssql": "nvarchar(80)",
+          "sqlite": "TEXT",
+          "maxLength": 80,
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "dim_product.productName"
+          }
+        },
+        {
+          "name": "amount",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "SUM(fact_order_line.lineAmount)"
+          }
+        },
+        {
+          "name": "units",
+          "ermine": "Int",
+          "mssql": "int",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "SUM(fact_order_line.quantity)"
+          }
+        }
+      ],
+      "sql": "SELECT r.regionCode AS region, f.orderDate AS day, p.productName AS item,\n       SUM(f.lineAmount) AS amount, SUM(f.quantity) AS units\nFROM dbo.fact_order_line AS f\nJOIN dbo.dim_region AS r ON r.regionId = f.regionId\nJOIN dbo.dim_product AS p ON p.productId = f.productId\nGROUP BY r.regionCode, f.orderDate, p.productName"
+    },
+    {
+      "name": "targets",
+      "kind": "view",
+      "layer": "minimal",
+      "fixture": "FetchData.e:33 `targets : [region, target]`",
+      "key": [
+        "region"
+      ],
+      "rows": {
+        "xs": 4,
+        "s": 8,
+        "m": 12,
+        "l": 20
+      },
+      "columns": [
+        {
+          "name": "region",
+          "ermine": "String",
+          "mssql": "nvarchar(40)",
+          "sqlite": "TEXT",
+          "maxLength": 40,
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "dim_region.regionCode"
+          }
+        },
+        {
+          "name": "target",
+          "ermine": "Double",
+          "mssql": "float",
+          "sqlite": "REAL",
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "SUM(fact_target.targetAmount)"
+          }
+        }
+      ],
+      "sql": "SELECT r.regionCode AS region, SUM(t.targetAmount) AS target\nFROM dbo.fact_target AS t\nJOIN dbo.dim_region AS r ON r.regionId = t.regionId\nGROUP BY r.regionCode"
+    },
+    {
+      "name": "calendar",
+      "kind": "view",
+      "layer": "minimal",
+      "fixture": "FetchCrosstab.e `calendar : [day, monthName]` (a module-local literal today)",
+      "key": [
+        "day"
+      ],
+      "rows": {
+        "xs": 8,
+        "s": 365,
+        "m": 730,
+        "l": 1096
+      },
+      "columns": [
+        {
+          "name": "day",
+          "ermine": "Date",
+          "mssql": "date",
+          "sqlite": "INTEGER",
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "dim_date.day"
+          }
+        },
+        {
+          "name": "monthName",
+          "ermine": "String",
+          "mssql": "nvarchar(7)",
+          "sqlite": "TEXT",
+          "maxLength": 7,
+          "nullable": false,
+          "hint": {
+            "kind": "view",
+            "from": "dim_date.monthName"
+          }
+        }
+      ],
+      "sql": "SELECT d.day AS day, d.monthName AS monthName\nFROM dbo.dim_date AS d"
+    }
+  ],
+  "fkGraph": [
+    "dim_rep(regionId) -> dim_region(regionId)",
+    "dim_customer(regionId) -> dim_region(regionId)",
+    "fact_order_line(orderDate) -> dim_date(day)",
+    "fact_order_line(regionId) -> dim_region(regionId)",
+    "fact_order_line(customerId) -> dim_customer(customerId)",
+    "fact_order_line(productId) -> dim_product(productId)",
+    "fact_order_line(repId) -> dim_rep(repId)",
+    "fact_order_line(channelId) -> dim_channel(channelId)",
+    "fact_target(regionId) -> dim_region(regionId)"
+  ],
+  "indexes": [
+    {
+      "name": "ix_fol_region_date",
+      "table": "fact_order_line",
+      "columns": [
+        "regionId",
+        "orderDate"
+      ],
+      "mssqlInclude": [
+        "lineAmount",
+        "quantity",
+        "productId"
+      ]
+    },
+    {
+      "name": "ix_fol_date",
+      "table": "fact_order_line",
+      "columns": [
+        "orderDate"
+      ]
+    },
+    {
+      "name": "ix_fol_product",
+      "table": "fact_order_line",
+      "columns": [
+        "productId"
+      ]
+    },
+    {
+      "name": "ix_rep_region",
+      "table": "dim_rep",
+      "columns": [
+        "regionId"
+      ]
+    },
+    {
+      "name": "ix_customer_region",
+      "table": "dim_customer",
+      "columns": [
+        "regionId"
+      ]
+    }
+  ],
+  "xsPinned": {
+    "source": "FetchData.e:18-19 and FetchTopN.e (the met count); units and targets totals are sums of the literals",
+    "regionAmount": {
+      "north": 4350.75,
+      "south": 2605.75,
+      "east": 4175.5,
+      "west": 1550
+    },
+    "totalAmount": 12682,
+    "totalUnits": 34,
+    "targetTotal": 11500,
+    "targetsMet": 2,
+    "monthRows": {
+      "2026-01": 3,
+      "2026-02": 3,
+      "2026-03": 2
+    },
+    "srSalesTotal": 529.5
+  }
+}

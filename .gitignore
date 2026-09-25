@@ -22,3 +22,8 @@ client/.tsc-probe-*/
 # WP-13/WP-14's *.db as well; this line is the one THIS checkout wants, in
 # the place people look.
 **/.ermine/preview/**/*.schema.json
+
+# data/ generator (tracker/db/GENERATOR.md): dependencies, build output, generated CSVs
+data/node_modules/
+data/dist/
+data/out/

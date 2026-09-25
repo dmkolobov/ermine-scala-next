@@ -1,0 +1,269 @@
+{
+ "source": "Hand-written for Ermine. Categories and price points follow the corpus: core/examples/Ai/SalesByRegion.e (Lighting 22.50-24.99, Seating 139-149, Surfaces 899 per unit; 15-310 units per order), core/examples/Present/SalesDashboard.e (Outdoor/Backpacks at 89.0, discountAmt about 5-12% of gross, marginPct 0.37-0.42, 180-420 units per order), core/examples/Wide/SalesLedger.e (productLine/family/tier). Price bands are list-price ranges per unit in USD; qtyMedian/qtySigma parameterise a log-normal order-line quantity for a bronze customer (silver x1.3, gold x2), capped at 50 by the contract; costRatio is cost of goods over list price; season names a monthly curve in src/domains/sales.ts.",
+ "licence": "Part of the Ermine repository (BSD-3-Clause).",
+ "categories": [
+  {
+   "category": "Lighting",
+   "sub": [
+    [
+     "Desk Lamps",
+     "Lamp"
+    ],
+    [
+     "Floor Lamps",
+     "Floor Lamp"
+    ],
+    [
+     "Bulbs",
+     "Bulb Pack"
+    ]
+   ],
+   "band": [
+    12,
+    180
+   ],
+   "qtyMedian": 6,
+   "qtySigma": 0.8,
+   "costRatio": 0.46,
+   "season": "office"
+  },
+  {
+   "category": "Seating",
+   "sub": [
+    [
+     "Task Chairs",
+     "Chair"
+    ],
+    [
+     "Stools",
+     "Stool"
+    ],
+    [
+     "Lounge",
+     "Lounge Chair"
+    ]
+   ],
+   "band": [
+    90,
+    780
+   ],
+   "qtyMedian": 4,
+   "qtySigma": 0.7,
+   "costRatio": 0.52,
+   "season": "office"
+  },
+  {
+   "category": "Surfaces",
+   "sub": [
+    [
+     "Standing Desks",
+     "Standing Desk"
+    ],
+    [
+     "Tables",
+     "Table"
+    ]
+   ],
+   "band": [
+    240,
+    1600
+   ],
+   "qtyMedian": 2,
+   "qtySigma": 0.6,
+   "costRatio": 0.58,
+   "season": "office"
+  },
+  {
+   "category": "Storage",
+   "sub": [
+    [
+     "Cabinets",
+     "Cabinet"
+    ],
+    [
+     "Shelving",
+     "Shelf Unit"
+    ]
+   ],
+   "band": [
+    45,
+    520
+   ],
+   "qtyMedian": 3,
+   "qtySigma": 0.7,
+   "costRatio": 0.5,
+   "season": "office"
+  },
+  {
+   "category": "Outdoor",
+   "sub": [
+    [
+     "Backpacks",
+     "Pack"
+    ],
+    [
+     "Shells",
+     "Shell"
+    ],
+    [
+     "Tents",
+     "Tent"
+    ]
+   ],
+   "band": [
+    45,
+    640
+   ],
+   "qtyMedian": 4,
+   "qtySigma": 0.8,
+   "costRatio": 0.55,
+   "season": "outdoor"
+  },
+  {
+   "category": "Accessories",
+   "sub": [
+    [
+     "Cables",
+     "Cable Kit"
+    ],
+    [
+     "Organisers",
+     "Organiser"
+    ],
+    [
+     "Mats",
+     "Mat"
+    ]
+   ],
+   "band": [
+    6,
+    70
+   ],
+   "qtyMedian": 8,
+   "qtySigma": 0.8,
+   "costRatio": 0.38,
+   "season": "flat"
+  }
+ ],
+ "series": [
+  "Aero",
+  "Summit",
+  "Trailhead",
+  "Harbor",
+  "Meridian",
+  "Alpine",
+  "Cobalt",
+  "Juniper",
+  "Halcyon",
+  "Northwind",
+  "Solstice",
+  "Keystone",
+  "Linden",
+  "Vantage",
+  "Orbit",
+  "Cascade",
+  "Ember",
+  "Tundra",
+  "Quarry",
+  "Beacon"
+ ],
+ "channels": [
+  {
+   "name": "Direct",
+   "isDirect": "Y",
+   "promoRate": 0.15,
+   "discountRate": 0.35,
+   "discountMax": 0.12
+  },
+  {
+   "name": "Online",
+   "isDirect": "Y",
+   "promoRate": 0.4,
+   "discountRate": 0.1,
+   "discountMax": 0.05
+  },
+  {
+   "name": "Partner",
+   "isDirect": "N",
+   "promoRate": 0.1,
+   "discountRate": 0.75,
+   "discountMax": 0.18
+  },
+  {
+   "name": "Marketplace",
+   "isDirect": "N",
+   "promoRate": 0.3,
+   "discountRate": 0.4,
+   "discountMax": 0.1
+  },
+  {
+   "name": "Retail",
+   "isDirect": "N",
+   "promoRate": 0.25,
+   "discountRate": 0.3,
+   "discountMax": 0.15
+  },
+  {
+   "name": "Telesales",
+   "isDirect": "Y",
+   "promoRate": 0.15,
+   "discountRate": 0.3,
+   "discountMax": 0.08
+  }
+ ],
+ "nounVariants": [
+  "",
+  "Pro",
+  "Lite",
+  "Max",
+  "II",
+  "XL",
+  "Mini",
+  "Plus"
+ ],
+ "channelMix": {
+  "gold": [
+   0.6,
+   0.05,
+   0.3,
+   0.0,
+   0.0,
+   0.05
+  ],
+  "silver": [
+   0.4,
+   0.15,
+   0.25,
+   0.05,
+   0.05,
+   0.1
+  ],
+  "bronze": [
+   0.15,
+   0.35,
+   0.15,
+   0.15,
+   0.1,
+   0.1
+  ]
+ },
+ "channelMixNote": "Share of orders per channel (in the order of `channels`) by customer tier; a tier with fewer channels renormalises over the first N.",
+ "campaigns": {
+  "1": [
+   "NEWYEAR",
+   "WINTER"
+  ],
+  "2": [
+   "SPRING",
+   "OFFICE"
+  ],
+  "3": [
+   "SUMMER",
+   "SCHOOL"
+  ],
+  "4": [
+   "AUTUMN",
+   "HOLIDAY"
+  ]
+ }
+}

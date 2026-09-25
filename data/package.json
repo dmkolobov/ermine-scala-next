@@ -1,0 +1,27 @@
+{
+  "name": "ermine-data",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic, semantically realistic data generator for the Ermine corpus databases (tracker/DB-PLAN.md, tracker/db/GENERATOR.md): (seed, tier, domain) -> CSV per table + manifest.",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "generate": "npm run --silent build && node dist/src/cli.js",
+    "timings": "npm run --silent build && node dist/src/timings.js",
+    "load:mssql": "npm run --silent build && node --disable-warning=ExperimentalWarning dist/src/load/cli.js mssql",
+    "load:sqlite": "npm run --silent build && node --disable-warning=ExperimentalWarning dist/src/load/cli.js sqlite",
+    "test": "npm run build && node --test \"dist/test/*.test.js\""
+  },
+  "dependencies": {
+    "@faker-js/faker": "10.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.9.0",
+    "typescript": "5.6.3"
+  }
+}

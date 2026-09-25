@@ -17,6 +17,13 @@ Every worktree shares that cache.
     either committing untested content or testing the same content twice.
   - A gate that reads only part of the tree declares `GATE_KEYPATH` and is keyed by that subtree. Today
     that is only `lean`, keyed by `tracker/lean`.
+  - A gate whose answer also depends on state OUTSIDE the tree declares `GATE_KEYFN`, a function whose
+    output `gate.sh` hashes into the key (empty or failing: content alone). Today that is only `db`,
+    keyed also by ErmineSales's loader stamp (tier, seed, manifest sha256), so reloading the
+    database is a new key and the same load is not re-run. The SQLite twin is NOT hashed: the gate
+    builds it itself from tier xs, a pure function of the tree's generator and contract, so content
+    covers it. A key function that fails or prints nothing gives an uncacheable key and no result is
+    written (never a silent content-only key).
 - **A cached result is final.** `gate.sh` prints it and does not run the gate again. There is no re-run
   flag. To get a different answer, change the content.
 - **UNAVAILABLE is not a result.** The gate did not run (e.g. no Lean binary built from this tree's
@@ -52,7 +59,7 @@ A higher tier includes every gate of the tiers below it.
 | tier | when | gates | wall clock (measured 2026-09-17, cold cache) |
 |---|---|---|---|
 | **commit** | before every `git commit` | `compile`, `corpus`, `lsp` | ~2.5 min: compile 5 s incremental / 74 s clean, corpus 42 s, lsp 47 s (640 checks; MEASURED 2026-09-20 after WP-5 stage C added the preview section to `lsp-client.py` -- 44 s / 628 checks before it) |
-| **pr** | on the merge result, before a branch lands on `json-encode` or `scala3-migration` | + `suites`, `lean` | + ~15 min: suites 11.3 min, lean 3.9 min (cached while `tracker/lean` is unchanged) |
+| **pr** | on the merge result, before a branch lands on `json-encode` or `scala3-migration` | + `suites`, `lean`, `db` (added 2026-09-24, DB-PLAN S1; not in the measured wall clock) | + ~15 min: suites 11.3 min, lean 3.9 min (cached while `tracker/lean` is unchanged) |
 | **nightly** | on the tip of each live line | + `looptrace-corpus` | + ~20 min |
 
 Why each gate is where it is (catch rates are real defects caught per machine-hour; see the audit):
@@ -65,6 +72,13 @@ Why each gate is where it is (catch rates are real defects caught per machine-ho
   - `suites` holds every per-suite catch in the window: 7 real defects (2 UNSURE) and 5 harness defects
     (1 UNSURE).
   - `lean` only matters when `tracker/lean` changes, and its subtree key makes it free when it has not.
+  - `db` (2026-09-24) runs `TestMsSqlSmoke` and `TestDbReports` against the local SQL Server
+    (`scripts/db.sh`) and the SQLite twin. Without `ERMINE_DB_*` those suites register nothing inside
+    `suites` and print a "DB suites: not requested" line, so `suites` stays free of SKIPPED; `db` FAILS
+    if that line reaches its own log. UNAVAILABLE, like `lean`, when the container is down, ErmineSales
+    is not at tier xs, `data/node_modules` is absent or another sbt is running; it BUILDS the SQLite twin
+    itself (tier xs, into its own directory) rather than reading the gitignored `data/out/`. No catch
+    record yet.
 - **nightly.**
   - `looptrace-corpus` is the only full-corpus model agreement, but at 20 min it caught 0.5 defects in
     16 machine-hours, and it missed both mutants it was given (E20 owes it a seed-drawn run; under

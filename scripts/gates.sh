@@ -10,7 +10,10 @@
 # shellcheck shell=bash
 
 GATE_ORDER=""
-declare -A GATE_TIER=() GATE_TIMEOUT=() GATE_DESC=() GATE_SCOPE=() GATE_NOSCOPE=() GATE_KEYPATH=()
+declare -A GATE_TIER=() GATE_TIMEOUT=() GATE_DESC=() GATE_SCOPE=() GATE_NOSCOPE=() GATE_KEYPATH=() GATE_KEYFN=()
+# GATE_KEYFN[g]=fn: a gate whose answer also depends on state OUTSIDE the tree (the `db` gate: what the
+# local SQL Server holds) names a function printing that state; scripts/gate.sh hashes its output into
+# the key.  An empty output or a failing function keys on content alone.
 
 E=core/src/main/scala/com/clarifi/reporting/ermine
 
@@ -215,6 +218,71 @@ gate_lean() {
   local audit; audit=$(cd tracker/lean && lake env lean Audit.lean 2>&1 | tee -a "$GATE_LOG" | grep -oE 'audited: [0-9]+; declarations using a non-standard axiom: [0-9]+' | tail -1)
   echo "SUMMARY ${audit:-no audit line}"
   [[ $audit =~ axiom:\ 0$ ]]
+}
+
+gate_def db pr 900 "the DB suites (TestMsSqlSmoke, TestDbReports) against the local SQL Server + the SQLite twin; keyed also by ErmineSales's load stamp"
+# DB-PLAN S1 (tracker/db/SERVER.md §5).  Without ERMINE_DB_* the two suites register NOTHING and print a
+# "DB suites: not requested" line, so `suites` (core/test) stays free of SKIPPED; this gate is where they
+# run.  UNAVAILABLE (3), the `lean` convention, when a precondition is missing: the container is not up
+# (`scripts/db.sh up`), ErmineSales does not hold tier xs (the twins pin xs's totals), data/ has no
+# node_modules, or another sbt is running (one sbt at a time on this box).  Never a silent pass.  The
+# SQLite twin is built by the gate itself into $GATE_OUT (below).  STAGE-2 NIT (SERVER.md §5): a gate
+# must not depend on the tier the user has loaded; the gate should load xs into its OWN database.  The password is read from
+# ~/.config/ermine/db.env (ERMINE_DB_ENV overrides) into the sbt JVM's ENVIRONMENT only: never argv,
+# never echoed, and the gate FAILS if it ever appears in its own log.
+GATE_KEYFN[db]=db_key_extra
+GATE_NOSCOPE[db]="needs the local SQL Server container and its loaded data; mutants are not run against a live database"
+db_env_file() { echo "${ERMINE_DB_ENV:-$HOME/.config/ermine/db.env}"; }
+db_stamp() {  # ErmineSales's loader stamp (tracker/db/LOADER.md §1), one JSON line, or nothing
+  scripts/db.sh sql ErmineSales "SET NOCOUNT ON; SELECT CAST(value AS nvarchar(4000)) FROM sys.extended_properties WHERE class = 0 AND name = 'ermine.load.sales'" -h -1 -W 2>/dev/null | grep -m1 '^{'
+}
+db_stamp_field() {  # db_stamp_field JSON NAME
+  sed -n "s/.*\"$2\":\"\{0,1\}\([^\",}]*\)\"\{0,1\}[,}].*/\1/p" <<<"$1"
+}
+db_key_extra() {  # tier + seed + manifest of what ErmineSales holds (the SQLite twin is built by the
+  # gate from tier xs, which is a pure function of the tree's generator and contract: content covers it)
+  local st; st=$(db_stamp) || return 1; [[ -n $st ]] || return 1
+  echo "tier=$(db_stamp_field "$st" tier) seed=$(db_stamp_field "$st" seed) manifest=$(db_stamp_field "$st" manifestSha256)"
+}
+gate_db() {
+  set +x
+  [[ -x scripts/db.sh ]] || { echo "SUMMARY no scripts/db.sh in this tree"; return 3; }
+  scripts/db.sh status > /dev/null 2>&1 || { echo "SUMMARY the SQL Server container is not up or not healthy (run scripts/db.sh up)"; return 3; }
+  local st tier; st=$(db_stamp); tier=$(db_stamp_field "$st" tier)
+  [[ $tier == xs ]] || { echo "SUMMARY ErmineSales holds tier ${tier:-<no stamp>}, the twins pin tier xs (run scripts/db.sh load sales --tier xs)"; return 3; }
+  if pgrep -f sbt-launch > /dev/null; then echo "SUMMARY another sbt is running (one sbt at a time on this box)"; return 3; fi
+  # The SQLite twin (D13) is BUILT HERE, into the gate's own directory, from tier xs: the suite must not
+  # depend on whatever sits in the gitignored data/out/.  The loader regenerates the CSVs if missing.
+  command -v npm > /dev/null || { echo "SUMMARY no npm on PATH (the SQLite twin is built with data/'s loader)"; return 3; }
+  [[ -d data/node_modules ]] || { echo "SUMMARY no data/node_modules (run npm install in data/)"; return 3; }
+  local lite=${GATE_OUT:-$PWD/target}/sales-xs.sqlite
+  rm -f "$lite"
+  ( cd data && npm run --silent load:sqlite -- --domain sales --tier xs --seed 42 --db "$lite" ) ||
+    { echo "SUMMARY FAIL: the SQLite twin did not build (data/ load:sqlite, tier xs)"; return 1; }
+  [[ -s $lite ]] || { echo "SUMMARY FAIL: the SQLite twin build left no file at $lite"; return 1; }
+  local envf; envf=$(db_env_file)
+  [[ -r $envf ]] || { echo "SUMMARY no readable $envf"; return 3; }
+  local pw; pw=$(sed -n 's/^ERMINE_DB_PASSWORD=//p' "$envf")
+  [[ -n $pw ]] || { echo "SUMMARY no ERMINE_DB_PASSWORD in $envf"; return 3; }
+  local rc
+  ERMINE_DB_PASSWORD=$pw \
+  ERMINE_DB_URL="${ERMINE_DB_URL:-jdbc:sqlserver://127.0.0.1:1433;databaseName=ErmineSales;encrypt=true;trustServerCertificate=true}" \
+  ERMINE_DB_USER="${ERMINE_DB_USER:-ermine}" \
+  ERMINE_DB_SQLITE=$lite \
+    sbt -batch 'core/testOnly *TestMsSqlSmoke* *TestDbReports*'
+  rc=$?
+  # the pattern goes in on a file descriptor, never on grep's command line (REVIEW-S1 R2-2)
+  if grep -qFf <(printf '%s\n' "$pw") "$GATE_LOG"; then unset pw; echo "SUMMARY FAIL: the password reached the gate log"; return 1; fi
+  unset pw
+  if grep -q 'DB suites:.*not requested' "$GATE_LOG"; then echo "SUMMARY FAIL: a DB suite printed 'not requested' (the environment did not reach sbt)"; return 1; fi
+  local n p f
+  n=$(grep -cE '^\[info\] [+!x] ' "$GATE_LOG"); p=$(grep -cE '^\[info\] \+ ' "$GATE_LOG"); f=$((n - p))
+  if [[ $rc == 0 && $f == 0 && $n -gt 0 ]]; then
+    echo "SUMMARY db $n properties, $p passed, twins equal, totals pinned (ErmineSales tier $tier)"
+    return 0
+  fi
+  echo "SUMMARY db $n properties, $p passed, $f failed (ErmineSales tier $tier; sbt exit $rc)"
+  return 1
 }
 
 gate_def looptrace-corpus nightly 5400 "tracker/tools/looptrace-corpus.sh: all 18 groups, every solve replayed in the Lean model"

@@ -1767,9 +1767,15 @@ are scanned through it.
 
 For a real report, `--db <jdbc url> --dialect sqlite|mssql|mysql|postgres|vertica`
 (`sqlserver` and `postgresql` are accepted spellings). An unknown dialect or an
-unopenable URL is refused at startup, not at request time. I did not exercise a
-non-SQLite backend for this guide, so treat the dialect list as read from
-`RunnerConfig.backend` rather than as tested.
+unopenable URL is refused at startup, not at request time. `--db` takes no user
+or password, so a server login has to travel inside the URL (untested). SQL
+Server is exercised through the runner, not through `ermine-serve`:
+`TestDbReports` builds `RunnerConfig(run = DB.RunUser(driver)(url, user,
+password), scanner = Scanners.MicrosoftSQLServer(...))` and renders the
+DB-backed twins of the Doc fixtures (`doc/DbFetch*.e`, `Doc/DbSalesReport.e`,
+whose relations are `table` statements) on a local SQL Server 2022
+(`tracker/db/REPORTS.md`). MySQL, Postgres and Vertica remain read from
+`RunnerConfig.backend`, not tested.
 
 Three more things worth knowing before you put this behind anything:
 
