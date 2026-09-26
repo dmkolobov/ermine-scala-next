@@ -189,7 +189,7 @@ document equals the in-memory original's, apart from row order (MEASURED, `TestD
    (checklist A4). The first render after a connect rebuilds the preview session, because the scanner
    is part of the session. MEASURED: 2.2 s in `TestPreviewDbLive` (SERVER.md §6.3), about 1.6-1.7 s of
    `boot` in the trace (OBSERVABILITY.md §9). Later renders took 22 ms in that test.
-3. The panel draws two widgets. (a) A pie **`Sales by region`**, from the `pieChart (PieChartProps "Sales by region" "Sales" "region" "amount"` line
+3. The panel draws two widgets. (a) A pie **`Sales by region`**, from the `pieChart (pieChartOf (PieSource "Sales by region" "Sales" region amount` line
    (`core/src/test/resources/doc/DbFetchTopN.e:58`), drawn by the legacy writers. With `keep` 0 it has
    ONE slice, `Other`, the whole of tier s: **1,051,094.22**. (b) An error box, and that is expected:
    `, rawWidget "metTargets" met ])))` (`core/src/test/resources/doc/DbFetchTopN.e:63`) has no renderer,

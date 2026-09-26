@@ -36,8 +36,12 @@ module Sales where
 --     cannot FORCE deferral (`rows : [..r]`, not `Deferred r`), so under the
 --     editor preview's request -- inline, no threshold -- all three arrive
 --     inline; SalesRaw.e keeps the forced `Deferred` the runner tests;
+--   * typed table columns: each column is named by its `field` (`col`,
+--     `numCol`, `dateCol`), so a column the relation does not have is a type
+--     error, not an empty cell;
 --   * VFlow / Grid layout, and the sort order a parameter picks carried into
---     the tables' `sorts`;
+--     the tables' `sorts` (a `sortAsc`/`sortDesc` mark on the picked column,
+--     which `simpleTable` lowers to the column's index);
 --   * a date range that matches NO sale still renders: `byDay` is built with
 --     `relationWithHeader`, so an empty table keeps its four columns.  A
 --     plain `relation []` has no columns to send (the header is read off the
@@ -50,12 +54,12 @@ import Eq
 import Json
 import Layout.Doc
 import Layout.Widgets.Format using type CellFormat; Default; Currency
-import Layout.Widgets.Heading using {heading; HeadingProps}
+import Layout.Widgets.Heading using {heading; headingOf; HeadingSource}
+import Constraint using type Has
 import Layout.Widgets.Text using {plainText; TextProps}
 -- a `using` list: Table's `sortColumn` selector would collide with Heading's
-import Layout.Widgets.Table using {tabular; TableProps; type TableColumn; TableColumn;
-                                   type ColumnSort; ColumnSort; AlignLeft; DateColumn;
-                                   textColumn; numberColumn}
+import Layout.Widgets.Table using {tabular; simpleTable; type Column; col; numCol; dateCol;
+                                   withHeader; sortAsc; sortDesc}
 -- the `using` list keeps `map`/`length` from colliding with String's and
 -- Control.Functor's; `empty_Bracket`/`cons_Bracket` are what a `[..]`
 -- literal desugars to
@@ -110,25 +114,30 @@ sales =
   , Sale "west"  @2026/3/17 1550.0  4  "widget"
   ]
 
-columnOf : Sort -> String
-columnOf ByDay    = "day"
-columnOf ByAmount = "amount"
-columnOf ByUnits  = "units"
+-- The column the heading names: picked at run time, but still a FIELD of the
+-- relation (`headingOf` checks it against `byDay`), never a String.
+columnOf : (Has r (|day|), Has r (|amount|), Has r (|units|)) => Sort -> Column r
+columnOf ByDay    = col day
+columnOf ByAmount = col amount
+columnOf ByUnits  = col units
 
--- The by-day table's sort: an INDEX into its columns below (region, day,
--- amount, units), oldest day first, the biggest amount or unit count first.
-sortOf : Sort -> ColumnSort
-sortOf ByDay    = ColumnSort 1 False
-sortOf ByAmount = ColumnSort 2 True
-sortOf ByUnits  = ColumnSort 3 True
+-- The by-day table's sort: a MARK on the column the parameter picks (the
+-- first argument), oldest day first, the biggest amount or unit count
+-- first; every other column is left as it is.  `simpleTable` turns the mark
+-- into the column's index, so reordering the columns cannot break the sort.
+sortedBy : Sort -> Sort -> Column r -> Column r
+sortedBy ByDay    ByDay    c = sortAsc c
+sortedBy ByAmount ByAmount c = sortDesc c
+sortedBy ByUnits  ByUnits  c = sortDesc c
+sortedBy _        _        c = c
 
 money : CellFormat
 money = Currency False False "$" 2
 
--- A typed table over a bare relation: every knob at its legacy default but
--- the sort.
-salesTable : List TableColumn -> List ColumnSort -> [..r] -> Node
-salesTable cs ss rs = tabular (TableProps cs Nothing ss True True rs)
+-- A typed table over a bare relation: every knob at its legacy default; the
+-- sort, if any, is a mark on one of the columns.
+salesTable : List (Column r) -> [..r] -> Node
+salesTable cs rs = tabular (simpleTable cs rs)
 
 -- `Date` is a Primitive, so <= and >= compare two of them.
 keep : Query -> Sale -> Bool
@@ -151,16 +160,16 @@ report q =
       items = relation (map_List (s -> { item = sItem s, amount = sAmount s,
                                          units = sUnits s }) sales)
   in vflow
-       [ heading (HeadingProps "Sales" (columnOf (orderBy q)) (length picked) total)
-       , grid [ [ salesTable [ textColumn "region" "Region"
-                             , TableColumn "day" "Day" Default AlignLeft DateColumn
-                             , numberColumn "amount" "Amount" money
-                             , numberColumn "units" "Units" Default ]
-                             [sortOf (orderBy q)] byDay
-                , salesTable [textColumn "region" "Region"] [] regions ]
-              , [ salesTable [ textColumn "item" "Item"
-                             , numberColumn "amount" "Amount" money
-                             , numberColumn "units" "Units" Default ]
-                             [] items
+       [ heading (headingOf (HeadingSource "Sales" (columnOf (orderBy q)) (length picked) total byDay))
+       , grid [ [ salesTable [ withHeader "Region" (col region)
+                             , sortedBy (orderBy q) ByDay (withHeader "Day" (dateCol day))
+                             , sortedBy (orderBy q) ByAmount (withHeader "Amount" (numCol amount money))
+                             , sortedBy (orderBy q) ByUnits (withHeader "Units" (numCol units Default)) ]
+                             byDay
+                , salesTable [withHeader "Region" (col region)] regions ]
+              , [ salesTable [ withHeader "Item" (col item)
+                             , withHeader "Amount" (numCol amount money)
+                             , withHeader "Units" (numCol units Default) ]
+                             items
                 , plainText (TextProps "every line item, whatever the date range") ] ]
        ]

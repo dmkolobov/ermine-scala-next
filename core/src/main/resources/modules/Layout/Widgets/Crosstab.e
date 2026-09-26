@@ -6,7 +6,7 @@ module Layout.Widgets.Crosstab where
 --
 -- This is the widget a query cannot produce.  A relation's row type is fixed
 -- at compile time, so `table` (Layout.Widgets.Table) can show any number of
--- ROWS but only the columns its `TableColumn` list names; a crosstab's
+-- ROWS but only the columns its `Column r` list names; a crosstab's
 -- column set IS the data, and nothing in the algebra can name it before the
 -- rows are read.  So the wire carries a MATRIX -- two label lists and a
 -- `List (List (Maybe Double))` -- and not a relation, and the client has its

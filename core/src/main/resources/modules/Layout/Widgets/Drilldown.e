@@ -12,7 +12,8 @@ module Layout.Widgets.Drilldown where
 -- Ermine, so two widgets that both want `columns`/`rows`/`sorts` cannot live in
 -- one module.  One module per widget is the pattern J3e should follow.
 
-import Layout.Widgets.Table using type TableColumn; type ColumnSort
+import Layout.Widgets.Table using {type TableColumn; type ColumnSort; type Column; simpleTable; columns; sorts}
+import Field using fieldName
 import List using empty_Bracket; cons_Bracket
 import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 
@@ -32,8 +33,28 @@ drilldownTableName = WidgetName "drilldownTable"
 drilldownTable : DrilldownTableProps r -> Node
 drilldownTable p = widget drilldownTableName p
 
--- | Every knob at its legacy default.
-simpleDrilldownTable : List TableColumn -> String -> String -> String -> [..r]
-                    -> DrilldownTableProps r
-simpleDrilldownTable cs parent child lbl rs =
-  DrilldownTableProps cs parent child lbl [] True True rs
+-- * The typed authoring API (WP-37, D1/D4)
+--
+-- `DrilldownTableProps` is the WIRE (column names, D3).  A report builds it with
+-- `drilldownTableOf` from a `DrilldownSource`: the displayed columns are an open
+-- list of `Layout.Widgets.Table.Column r` (as for a table), the three roles are
+-- FIELDS, and the partition proves parent, child and label are three DISTINCT
+-- columns of the relation (as `Layout.Report.drilldownTable` does).
+
+-- | What `drilldownTableOf` lowers.  Server-side only.  The parent and child
+-- carry the same value type: a parent cell names another row's child cell.
+data DrilldownSource h1 h2 h3 a b r =
+  DrilldownSource { ddSourceColumns : List (Column r)
+                  , ddParent : Field h1 a
+                  , ddChild : Field h2 a
+                  , ddLabel : Field h3 b
+                  , ddSourceRows : [..r] }
+
+-- | The wire props, every other knob at its legacy default (paginate, scroll).
+-- The columns lower as `simpleTable` lowers them, sort marks included; a
+-- `groupRows` mark is ignored (the drilldown wire has no row group).
+drilldownTableOf : (r <- (h1, h2, h3, t)) => DrilldownSource h1 h2 h3 a b r -> DrilldownTableProps r
+drilldownTableOf s =
+  let t = simpleTable (ddSourceColumns s) (ddSourceRows s)
+  in DrilldownTableProps (columns t) (fieldName (ddParent s)) (fieldName (ddChild s))
+                         (fieldName (ddLabel s)) (sorts t) True True (ddSourceRows s)

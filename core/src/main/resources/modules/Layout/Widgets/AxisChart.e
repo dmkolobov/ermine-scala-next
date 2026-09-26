@@ -21,8 +21,8 @@ module Layout.Widgets.AxisChart where
 -- `chartRows` is a BARE relation: the request's `data.default` decides inline or
 -- deferred, and the dispatcher resolves a deferred one before the adapter runs.
 
-import Layout.Widgets.Chart using type ChartMeta; type ChartSeries
-import List using empty_Bracket; cons_Bracket
+import Layout.Widgets.Chart using {type ChartMeta; type ChartSeries; type Series; seriesWire}
+import List using {map_List; empty_Bracket; cons_Bracket}
 import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 
 data AxisChartProps r = AxisChartProps { chartMeta : ChartMeta
@@ -36,6 +36,11 @@ axisChartName = WidgetName "axisChart"
 axisChart : AxisChartProps r -> Node
 axisChart p = widget axisChartName p
 
+-- | The typed constructor (WP-37): the series' columns are checked against the
+-- relation's row here (`Layout.Widgets.Chart.Series`), and lowered to names.
+axisChartOf : ChartMeta -> List (Series r) -> [..r] -> AxisChartProps r
+axisChartOf m ss rs = AxisChartProps m (map_List seriesWire ss) rs
+
 -- | One series over one relation.
-simpleAxisChart : ChartMeta -> ChartSeries -> [..r] -> AxisChartProps r
-simpleAxisChart m s rs = AxisChartProps m [s] rs
+simpleAxisChart : ChartMeta -> Series r -> [..r] -> AxisChartProps r
+simpleAxisChart m s rs = axisChartOf m [s] rs

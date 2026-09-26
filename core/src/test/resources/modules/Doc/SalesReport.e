@@ -40,25 +40,25 @@ sales = mkRelation# (toList#
 report : Node
 report =
   vflow
-    [ scorecard (ScorecardProps "Sales by region" "srRegion" "srSales" (Just "srDelta")
-                                (Round False False 1) (Inline sales))
-    , tabular (TableProps
-        [ TableColumn "srRegion" "Region" Default AlignLeft OtherColumn
-        , TableColumn "srSales" "Sales" (Currency False False "$" 2) AlignRight NumberColumn
-        , TableColumn "srDelta" "Change" (Percentage False True 1 False) AlignRight NumberColumn
+    [ scorecard (scorecardOf (ScorecardSource "Sales by region" srRegion srSales (Just srDelta)
+                                              (Round False False 1) (Inline sales)))
+    , tabular (simpleTable
+        [ withHeader "Region" (col srRegion)
+        , sortDesc (withHeader "Sales" (numCol srSales (Currency False False "$" 2)))
+        , withHeader "Change" (numCol srDelta (Percentage False True 1 False))
         ]
-        Nothing [ColumnSort 1 True] True True sales)
-    , axisChart (AxisChartProps
+        sales)
+    , axisChart (axisChartOf
         (ChartMeta "Sales by region"
           (ChartAxis "Region" "Region" Default (Scalar "String" False) True (Unscaled [Asc] []))
           (ChartAxis "Sales" "Sales" (Round False False 1) (Scalar "Double" True) True
                      (Scaled (Just 0.0) Nothing Linear))
           Vertical (ChartLegendOptions LegendAbove) (ChartRenderHints False))
-        [ChartSeries [] ["srRegion"] "srSales" [] Nothing (Constant "Sales") [] Bar]
+        [seriesOf [] [col srRegion] (col srSales) [] Nothing (Constant "Sales") [] Bar]
         sales)
-    , pieChart (PieChartProps "Share of sales" "Sales" "srRegion" "srSales"
-                              Nothing Nothing Nothing
-                              Default (Round False False 1)
-                              (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
-                              (Inline sales))
+    , pieChart (pieChartOf (PieSource "Share of sales" "Sales" srRegion srSales
+                                      Nothing Nothing Nothing
+                                      Default (Round False False 1)
+                                      (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
+                                      (Inline sales)))
     ]

@@ -62,10 +62,10 @@ report q =
     let running = relation (withRunning rows)   -- back into SQL as a literal
         joined  = join running targets          -- a SQL join on `region`
     in done (tabular (simpleTable
-               [ numberColumn "seqNo" "#" Default
-               , textColumn "region" "Region"
-               , textColumn "day" "Day"
-               , numberColumn "amount" "Amount" (Currency False False "$" 2)
-               , numberColumn "runningAmount" "Running" (Currency False False "$" 2)
-               , numberColumn "target" "Target" (Currency False False "$" 0) ]
+               [ withHeader "#" (numCol seqNo Default)
+               , withHeader "Region" (col region)
+               , withHeader "Day" (col day)
+               , withHeader "Amount" (numCol amount (Currency False False "$" 2))
+               , withHeader "Running" (numCol runningAmount (Currency False False "$" 2))
+               , withHeader "Target" (numCol target (Currency False False "$" 0)) ]
                (joined # {seqNo, region, day, amount, runningAmount, target}))))

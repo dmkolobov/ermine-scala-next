@@ -27,26 +27,29 @@ sales = mkRelation# (toList#
   , { rRegion = "AMER", rSales = 310.75, rDelta = 0.5 }
   ])
 
-sortIndex : Order -> Int
-sortIndex ByName  = 0
-sortIndex BySales = 1
+-- The sort is a MARK on the column the parameter picks; `simpleTable` turns it
+-- into that column's index on the wire.
+sortedBy : Order -> Order -> Column r -> Column r
+sortedBy ByName  ByName  c = sortDesc c
+sortedBy BySales BySales c = sortDesc c
+sortedBy _       _       c = c
 
 report : Params -> Node
 report p =
   tabbed
     [ ("Summary",
-        scorecard (ScorecardProps (heading p) "rRegion" "rSales" (Just "rDelta")
-                                  (Round False False 1) (Inline sales)))
+        scorecard (scorecardOf (ScorecardSource (heading p) rRegion rSales (Just rDelta)
+                                                (Round False False 1) (Inline sales))))
     , ("Detail",
-        tabular (TableProps
-          [ TableColumn "rRegion" "Region" Default AlignLeft OtherColumn
-          , TableColumn "rSales" "Sales" (Currency False False "$" 2) AlignRight NumberColumn
-          , TableColumn "rDelta" "Change" (Percentage False True 1 False) AlignRight NumberColumn ]
-          Nothing [ColumnSort (sortIndex (sortBy p)) True] True True sales))
+        tabular (simpleTable
+          [ sortedBy (sortBy p) ByName (withHeader "Region" (col rRegion))
+          , sortedBy (sortBy p) BySales (withHeader "Sales" (numCol rSales (Currency False False "$" 2)))
+          , withHeader "Change" (numCol rDelta (Percentage False True 1 False)) ]
+          sales))
     , ("Share",
-        pieChart (PieChartProps "Share of sales" "Sales" "rRegion" "rSales"
-                                Nothing Nothing Nothing
-                                Default (Round False False 1)
-                                (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
-                                (Inline sales)))
+        pieChart (pieChartOf (PieSource "Share of sales" "Sales" rRegion rSales
+                                        Nothing Nothing Nothing
+                                        Default (Round False False 1)
+                                        (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
+                                        (Inline sales))))
     ]

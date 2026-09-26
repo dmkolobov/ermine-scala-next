@@ -24,12 +24,18 @@ import Json using type Inline
 import Layout.Widgets.Chart using type ChartLegendOptions; type ChartRenderHints
 import Layout.Widgets.Format using type CellFormat
 import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
+import Field using fieldName
+
+-- The props below are the WIRE (column names, D3).  A report builds them with
+-- `pieChartOf` from a `PieSource`, whose column slots are FIELDS: the partition
+-- in `pieChartOf` proves every slot is a column of the relation and no two slots
+-- are the same column (WP-37, D4).
 
 data PieChartProps r = PieChartProps { pieTitle : String
                                      , seriesName : String
                                      , pieLabelColumn : String
                                      , pieValueColumn : String
-                                     , pieColorColumn : Maybe String  -- "#RRGGBB" cells
+                                     , pieColorColumn : Maybe String  -- "#RRGGBB" cells; typed: pieColor
                                      , pieChildColumn : Maybe String
                                      , pieParentColumn : Maybe String
                                      , pieLabelFormat : CellFormat
@@ -55,3 +61,38 @@ drilldownPieChartName = WidgetName "drilldownPieChart"
 
 drilldownPieChart : PieChartProps r -> Node
 drilldownPieChart p = widget drilldownPieChartName p
+
+-- * The typed authoring API (WP-37, D4)
+
+-- | What `pieChartOf` lowers: the props, with a FIELD in each column slot.
+-- Server-side only.  An absent optional slot (`Nothing`) leaves its row
+-- variable free, which the partition allows (it is the empty row).
+data PieSource h1 h2 h3 h4 h5 a b c r =
+  PieSource { pieSourceTitle : String
+            , pieSourceSeriesName : String
+            , pieLabel : Field h1 a
+            , pieValue : Field h2 b
+            , pieColor : Maybe (Field h3 String)  -- "#RRGGBB" cells
+            , pieChild : Maybe (Field h4 c)
+            , pieParent : Maybe (Field h5 c)
+            , pieSourceLabelFormat : CellFormat
+            , pieSourceValueFormat : CellFormat
+            , pieSourceLegend : ChartLegendOptions
+            , pieSourceHints : ChartRenderHints
+            , pieSourceRows : Inline r }
+
+-- | The wire props: each field becomes its name.  The five slots are five
+-- DISTINCT columns of the relation, or a type error.  Hand the result to
+-- `pieChart` or `drilldownPieChart`.
+pieChartOf : (r <- (h1, h2, h3, h4, h5, t)) => PieSource h1 h2 h3 h4 h5 a b c r -> PieChartProps r
+pieChartOf s =
+  PieChartProps (pieSourceTitle s) (pieSourceSeriesName s)
+                (fieldName (pieLabel s)) (fieldName (pieValue s))
+                (pieSlotName (pieColor s)) (pieSlotName (pieChild s)) (pieSlotName (pieParent s))
+                (pieSourceLabelFormat s) (pieSourceValueFormat s)
+                (pieSourceLegend s) (pieSourceHints s) (pieSourceRows s)
+
+private
+  pieSlotName : Maybe (Field h a) -> Maybe String
+  pieSlotName Nothing  = Nothing
+  pieSlotName (Just f) = Just (fieldName f)

@@ -48,9 +48,9 @@ report q = runScan (do
             met    = length (filter (t -> any (r -> r ! region == t ! region && r ! amount >= t ! target) ranked)
                                     goals)
         in done (vflow
-             [ pieChart (PieChartProps "Sales by region" "Sales" "region" "amount"
-                                       Nothing Nothing Nothing
-                                       Default (Currency False False "$" 2)
-                                       (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
-                                       (Inline slices))
+             [ pieChart (pieChartOf (PieSource "Sales by region" "Sales" region amount
+                                                   Nothing Nothing Nothing
+                                                   Default (Currency False False "$" 2)
+                                                   (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
+                                                   (Inline slices)))
              , rawWidget "metTargets" met ])))

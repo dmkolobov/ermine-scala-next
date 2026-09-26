@@ -12,7 +12,7 @@ module DbFetchCrosstab where
 --
 -- THE TABLE A QUERY CANNOT WRITE.
 --
--- `table` shows the columns its `TableColumn` list names, and that list is
+-- `table` shows the columns its `Column r` list names, and that list is
 -- written at compile time; a relation's row type is fixed then too.  So a
 -- table of regions DOWN the side and one column PER MONTH THAT HAS SALES
 -- cannot come out of the algebra: the column set is in the data.  A scan is

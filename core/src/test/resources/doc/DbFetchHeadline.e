@@ -65,7 +65,7 @@ report q =
       (done (headline (HeadlineProps "Sales" (place q) 0 0.0 0.0 Default)))
       (vflowF
         [ headlineOf (HeadlineSource "Sales" (place q) amount (picked q))
-        , done (tabular (simpleTable [ textColumn "region" "Region"
-                                     , textColumn "day" "Day"
-                                     , numberColumn "amount" "Amount" (Currency False False "$" 2) ]
+        , done (tabular (simpleTable [ withHeader "Region" (col region)
+                                     , withHeader "Day" (col day)
+                                     , withHeader "Amount" (numCol amount (Currency False False "$" 2)) ]
                                      (picked q))) ]))

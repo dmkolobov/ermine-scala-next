@@ -18,11 +18,12 @@ module Layout.Widgets.Heading where
 -- review), breaking Scorecard/Table code.  Import this module by name.
 
 import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
+import Layout.Widgets.Table using {type Column; columnName}
 
 -- | A record with one constructor carries no "tag" key: the props are the four
 -- fields, in this order.
 data HeadingProps = HeadingProps { title      : String
-                                 , sortColumn : String   -- a relation column name, shown as text
+                                 , sortColumn : String   -- a column name, shown as text (typed: headingSort)
                                  , matched    : Int
                                  , total      : Double }
 
@@ -32,3 +33,27 @@ headingName = WidgetName "heading"
 
 heading : HeadingProps -> Node
 heading p = widget headingName p
+
+-- * The typed authoring API (WP-37, D1/D4)
+--
+-- `HeadingProps` is the WIRE (D3).  A report builds it with `headingOf` from a
+-- `HeadingSource`, whose sort column is a `Layout.Widgets.Table.Column r`, not a
+-- String, and whose `headingOver` names the relation that column is checked
+-- against (it is not sent: the heading carries no rows).
+--
+-- A `Column r`, not a `Field h a` slot: the column a report sorts by is
+-- usually chosen at RUN TIME from a parameter, among fields of DIFFERENT value
+-- types (doc/Sales.e: day : Date, amount : Double, units : Int), which one
+-- `Field h a` cannot hold and a `Column r` can -- each branch's `Has r h`
+-- merges into one constraint on `r`.  Only the column's name reaches the wire.
+
+-- | What `headingOf` lowers.  Server-side only.
+data HeadingSource rel r = HeadingSource { headingSourceTitle : String
+                                         , headingSort : Column r
+                                         , headingMatched : Int
+                                         , headingTotal : Double
+                                         , headingOver : rel r }
+
+headingOf : HeadingSource rel r -> HeadingProps
+headingOf s = HeadingProps (headingSourceTitle s) (columnName (headingSort s))
+                           (headingMatched s) (headingTotal s)

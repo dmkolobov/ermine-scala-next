@@ -34,6 +34,17 @@ module Layout.Widgets where
 -- The source is server-side by design: no registry, no schema, nothing of it on
 -- the wire.  Because this module re-exports everything, a field name two widget
 -- modules both want has to be prefixed (`headlineTitle`, `crosstabRowLabels`).
+--
+-- TYPED COLUMNS (WP-37).  The wire props name relation columns by String, and
+-- stay so.  A report never writes those names: a table takes
+-- `Layout.Widgets.Table.Column r` values (`col region`), a chart a
+-- `Layout.Widgets.Chart.Series r` built from them, and a widget with FIXED column
+-- roles (pie, scorecard, drilldown table and bar, style box, heading) a `...Source`
+-- record of `Field` slots that `...Of` lowers to the wire props (`pieChartOf`,
+-- `scorecardOf`, `drilldownTableOf`, `drilldownBarOf`, `styleBoxOf`, and
+-- `Layout.Widgets.Heading.headingOf`, whose one column is a `Column r`); the
+-- partition constraint makes a slot the relation lacks, or two slots given one
+-- field, a type error.
 
 export Layout.Widgets.Format
 export Layout.Widgets.Table

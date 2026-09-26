@@ -30,7 +30,8 @@ module Layout.Widgets.Chart where
 -- client/src/charts.ts (TUPLE_LOSS).
 
 import Layout.Widgets.Format using type CellFormat; Default
-import List using empty_Bracket; cons_Bracket
+import Layout.Widgets.Table using {type Column; columnName}
+import List using {map_List; empty_Bracket; cons_Bracket}
 
 -- | writers.ChartLegendLocation (core/.../writers/ChartData.scala:90-99).  The
 -- JS compares the string: 'Above', 'Overlay', 'RightTable', 'RightNotOverlay'
@@ -82,7 +83,8 @@ data ChartAxis = ChartAxis { axisLabel : String
 data ChartVariant = Line | Bar | Step | Scatter | StackedBar | StackedArea
                   | BoxAndWhiskers | Bubble { zLabel : String }
 
--- | One series.  The three op-list handles become column names into the widget's
+-- | One series, as the WIRE carries it (build it typed with `seriesOf` below).
+-- The three op-list handles become column names into the widget's
 -- single relation: a row of the legacy `data` array is
 --
 --   [ [value..], [category..], [series..], cssColor|null, child?, parent? ]
@@ -124,10 +126,43 @@ valueAxis : String -> CellFormat -> ChartAxis
 valueAxis lbl fmt =
   ChartAxis lbl lbl fmt (Scalar "Double" True) True (Scaled Nothing Nothing Linear)
 
+-- * The typed authoring API (WP-37, D1/D4)
+--
+-- `ChartSeries` above is the WIRE: its columns are names.  A report builds a
+-- `Series r` instead, whose columns are `Layout.Widgets.Table.Column r` values
+-- (`col srRegion`), so each carries `Has r h`; the row `r` is settled where the
+-- series meets the chart's relation (`Layout.Widgets.AxisChart.axisChartOf`,
+-- `Layout.Widgets.DrilldownBar.drilldownBarOf`), and a column the relation does
+-- not have is a type error there.  The series and category lists are OPEN (any
+-- number of columns, a column may appear in more than one), so they are
+-- `Column r` lists, not partitioned slots.  Only a column's NAME reaches the
+-- wire: its header, format, alignment and a table's sort/row-group marks are
+-- ignored here (the chart's formats are `seriesFormat`/`extraFormats`).  A column
+-- named at run time is `Layout.Widgets.Table.Unsafe.rawColumn`.
+
+-- | A series valid for relations with row `r`.  `Series#` is the unchecked
+-- constructor: build one with `seriesOf` or `simpleSeries`.
+data Series (r : rho) = Series# ChartSeries
+
+-- | Every slot of `ChartSeries`, in its order, with columns for names.
+seriesOf : List (Column r) -> List (Column r) -> Column r -> List (Column r)
+        -> Maybe (Column r) -> CellFormat -> List CellFormat -> ChartVariant -> Series r
+seriesOf ss cs v xs c fmt xfs var =
+  Series# (ChartSeries (map_List columnName ss) (map_List columnName cs) (columnName v)
+                       (map_List columnName xs) (maybeName c) fmt xfs var)
+
 -- | A one-column category, one-column value series with no extras.
-simpleSeries : String -> String -> ChartVariant -> ChartSeries
-simpleSeries cat val v =
-  ChartSeries [] [cat] val [] Nothing Default [] v
+simpleSeries : Column r -> Column r -> ChartVariant -> Series r
+simpleSeries cat val v = seriesOf [] [cat] val [] Nothing Default [] v
+
+-- | The wire series.
+seriesWire : Series r -> ChartSeries
+seriesWire (Series# s) = s
+
+private
+  maybeName : Maybe (Column r) -> Maybe String
+  maybeName Nothing  = Nothing
+  maybeName (Just c) = Just (columnName c)
 
 -- | The default meta: a title and the two axes, vertical, legend where the
 -- report's theme puts it.

@@ -1329,7 +1329,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
     *
     * THE FIXTURE IS `SalesRaw.e`, NOT `Sales.e`, SINCE Q25 (2026-09-23):
     * `Sales.e` is typed now (its heading is `Layout.Widgets.Heading`'s
-    * `HeadingProps`) and declares no `data Heading`; `SalesRaw.e` is the
+    * `HeadingProps`, built with `headingOf (HeadingSource ..)` since WP-37) and declares no `data Heading`; `SalesRaw.e` is the
     * untyped copy kept for exactly this kind of runner-side property. */
   private val docRoot      = new File("core/src/test/resources/doc").getAbsoluteFile
   private val salesFile    = new File(docRoot, "Sales.e")
@@ -1564,7 +1564,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   private lazy val salesSource: String = new String(Files.readAllBytes(salesFile.toPath), UTF_8)
   private def wpSalesSource(title: String): String =
     salesSource.replace("module Sales where", "module WpSales where")
-               .replace("HeadingProps \"Sales\"", "HeadingProps \"" + title + "\"")
+               .replace("HeadingSource \"Sales\"", "HeadingSource \"" + title + "\"")
 
 
   private def wpWidget(module: String, n: Int): String =
@@ -1737,7 +1737,7 @@ object TestLspRobustness extends Properties("LSP robustness") {
   property("D: a render answers a document, echoes the generation, and follows the file once invalidated") = secure {
     previewLock.synchronized { renderingD("render/invalidate/render") {
       val vacuous = !salesSource.contains("module Sales where") ||
-                    !salesSource.contains("HeadingProps \"Sales\"")
+                    !salesSource.contains("HeadingSource \"Sales\"")
       val sales = writeFixture("WpSales", wpSalesSource("Sales"))
       bench.render(10, sales, "report", wpSalesParams, 41)
       val a1 = bench.answer(10)

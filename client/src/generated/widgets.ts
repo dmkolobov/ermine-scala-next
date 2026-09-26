@@ -2,7 +2,7 @@
 // generator sha256 fd620fc9b2709307610e341ba9b147fba536ff2aa08e038ce04061bd20bd9b6a core/src/main/scala/com/clarifi/reporting/ermine/json/Schema.scala
 // generator sha256 945ed57841a8286d214ab99b09ea7ff1b0cbddc52b9558d8a460fdfd0e9d7192 core/src/main/scala/com/clarifi/reporting/ermine/json/SchemaMain.scala
 // generator sha256 86cb46708f035d0540e7b5f9ef9b73ffed587f2aff800bd7e5119ea823e173e8 core/src/main/scala/com/clarifi/reporting/ermine/json/Zod.scala
-// body sha256: 3bb927b6058ba9f60b61076f2e7100b6ec9dae47bb2f8d9d3576656aab670cd4
+// body sha256: b90c288f31496a2a8faec5f02f2befe5ed186015bb6771d4eb9054d95ad2a103
 // Generated from Ermine by bin/ermine-schema (com.clarifi.reporting.ermine.json.Zod) -- do not edit.
 // command: bin/ermine-schema --widgets Layout.Widgets Layout.Doc:Node=DocNode Layout.Doc:Tab=DocTab
 //
@@ -10,6 +10,7 @@
 //   Layout.Widgets               treeMap : no props (Unsupported)
 //   Layout.Widgets.AxisChart     axisChart : AxisChartProps r
 //   Layout.Widgets.Chart         no WidgetName term: not a widget
+//   Layout.Widgets.Column        no WidgetName term: not a widget
 //   Layout.Widgets.Crosstab      crosstab : CrosstabProps
 //   Layout.Widgets.Drilldown     drilldownTable : DrilldownTableProps r
 //   Layout.Widgets.DrilldownBar  drilldownBar : DrilldownBarProps r
@@ -19,6 +20,7 @@
 //   Layout.Widgets.PieChart      drilldownPieChart : PieChartProps r, pieChart : PieChartProps r
 //   Layout.Widgets.Scorecard     scorecard : ScorecardProps r
 //   Layout.Widgets.StyleBox      styleBox : StyleBoxProps r
+//   Layout.Widgets.Table.Unsafe  no WidgetName term: not a widget
 //   Layout.Widgets.Table         table : TableProps r
 //   Layout.Widgets.Text          text : TextProps
 //
@@ -50,19 +52,21 @@
 // sha256 b84bf1d0f3d427e81e5cef22f0ec38423f65783859e892a0e386bb58f00ea7be Layout/BorderOptions.e
 // sha256 34815e30f92b2c2737c9cf86a26afd2f575a7f559edf9077851f16b9fcb21011 Layout/Doc.e
 // sha256 64401b6c1b5851c206b365486b7a5e9c6a6906665ab48cdd9f30395f6150e802 Layout/Fetch.e
-// sha256 edbba15a542cf3164cfde2cb99ea42ad3279025020e2bfebb42f5e66dd19132a Layout/Widgets.e
-// sha256 38eaab87a929fd272e9e7a7325d0651ad38446145d177ecca5f5462fc304fb48 Layout/Widgets/AxisChart.e
-// sha256 06eee101ed74664f32cf2184929751994bdcb7699d341f7d889d784ed11739a6 Layout/Widgets/Chart.e
-// sha256 b2b330cb8abe56908646cea0da519dfe657411524f61491bdbe83bdaa5efe268 Layout/Widgets/Crosstab.e
-// sha256 9dfcda07d769a51535759eabb082ffa170988b8d2e8c68590d37da4bc209c3a1 Layout/Widgets/Drilldown.e
-// sha256 8a9f59009f2a832d748390ddce3cf0b28089b18df5b417831bdbf059420fbed0 Layout/Widgets/DrilldownBar.e
+// sha256 3585105891e5724adf2ca9c7d86753afcb1047225f9fa64561def222e3f69c0c Layout/Widgets.e
+// sha256 2219356523bb130c759cfb0d84149a0c9f08bc84ff81ae65700633f2a94cd306 Layout/Widgets/AxisChart.e
+// sha256 d16ce6023d157d99178df6bc089ddc70d66c96b87ae515e26ead8ba9621dead1 Layout/Widgets/Chart.e
+// sha256 e3ea76c8fc33384ec0bf1abe6efb03e39743dcbffb0e3bd72f88b4baee4655ff Layout/Widgets/Column.e
+// sha256 8ef0a1c631629ba4525e2232f5274c2003368dd3492b32f80ae643325e387262 Layout/Widgets/Crosstab.e
+// sha256 5078db82633375bdfb119547a90d2d9b2056ae0e48486a43b1a6609a9ca570a3 Layout/Widgets/Drilldown.e
+// sha256 7645c1f2e26c0f1eb8365fe70e50c1ca1e9dd86d661a99dc9257303a92208e3b Layout/Widgets/DrilldownBar.e
 // sha256 5a0e9ceb846e7697af30e692f96579d88bbc27d263a210cfa8ea0156d2b03ab2 Layout/Widgets/Format.e
-// sha256 f771f97fdd5ec915b0929a00f32d5ea47bf391003f2e189b3b719ab3a59477c7 Layout/Widgets/Heading.e
+// sha256 fa7f40add731f64d541a56b43699c3aa3f7a88809518cac43a6e71fc876a3d4f Layout/Widgets/Heading.e
 // sha256 257f8544e1aedf9ded1048d43d53ad711007a5e373fa481edaaf5867ec7915bf Layout/Widgets/Headline.e
-// sha256 7f763b2d1eae23900d60a8150431657fad8f657561b56681bd3780231fa8bc65 Layout/Widgets/PieChart.e
-// sha256 0e743de5b4612b50518a1db82e0d0c9d387588a1c415154c0852d2c1960a3d1c Layout/Widgets/Scorecard.e
-// sha256 c6b9c6214a92c0ea6fc7b1401c7f20e7708f5e4c7a506900b105cfa94d79e4ac Layout/Widgets/StyleBox.e
-// sha256 976d966dfee0f7e28472def88290b95ceb4c934e6674c43752b06f20cc5a56dd Layout/Widgets/Table.e
+// sha256 487629d03809b87273bf7f76f9b7912dc0822bc05d0f4722b59a5d2026099d04 Layout/Widgets/PieChart.e
+// sha256 41905d8d5299490fc91b577ddbe8bf7079a3f6a554a78ae041326a08c9de22ec Layout/Widgets/Scorecard.e
+// sha256 9ac3d287fa72458ee0fafb3cc2d0902f3b323e1397cc6771fdf6612440fcae3f Layout/Widgets/StyleBox.e
+// sha256 a2d31e89594fd289eeafd075a568937bcfb68b386bc0473a8d0be617ea7d7585 Layout/Widgets/Table.e
+// sha256 cf3f492d2fcc2318f5468ed954f07c8f08fd392048856f0d12d661b9748f10f3 Layout/Widgets/Table/Unsafe.e
 // sha256 83535c5b7817d6b7a2e3d5305de0228fc118f55a915fb6ae6df1ebbe98f3d743 Layout/Widgets/Text.e
 // sha256 1dcf8e3e7c97e15cdb0813e70e8e14131ba8e5ef2a85ab5c1a5d9932c06c2d8b List.e
 // sha256 ca65266b55fb2a6c995201109b07141c07360e1650ec3f1a83972f3e35018084 List/NonEmpty.e

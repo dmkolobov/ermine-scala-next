@@ -16,7 +16,7 @@ only of boot banners and progress bars.
 5. [Relations](#5-relations) — `Inline` / `Deferred`, the wire shape, delivery
 6. [Schemas](#6-schemas) — `bin/ermine-schema`, zod, what is refused
 7. [`Spread Json`](#7-spread-json)
-8. [Writing a report](#8-writing-a-report) — `Layout.Doc`, the widgets, params
+8. [Writing a report](#8-writing-a-report) — `Layout.Doc`, the widgets, typed table columns, params
 9. [Serving and playing](#9-serving-and-playing) — the curl walkthrough, every status
 10. [The client](#10-the-client) — npm, the dispatcher, adding a widget
 11. [Testing your own work](#11-testing-your-own-work)
@@ -1056,19 +1056,28 @@ keys, plus `UNSUPPORTED_WIDGETS`):
 
 | Registry name | Name term | Module | Props type | Constructor | Relation field | Delivery |
 |---|---|---|---|---|---|---|
-| `axisChart` | `axisChartName` | `Layout.Widgets.AxisChart` | `AxisChartProps r` | `axisChart` | `chartRows` | bare `[..r]` |
+| `axisChart` | `axisChartName` | `Layout.Widgets.AxisChart` | `AxisChartProps r` | `axisChart` (props: `axisChartOf`) | `chartRows` | bare `[..r]` |
 | `crosstab` | `crosstabName` | `Layout.Widgets.Crosstab` | `CrosstabProps` | `crosstab`, `crosstabOf` | — | no relation (`crosstabOf` scans on the server) |
-| `drilldownBar` | `drilldownBarName` | `Layout.Widgets.DrilldownBar` | `DrilldownBarProps r` | `drilldownBar` | `barRows` | bare `[..r]` |
-| `drilldownPieChart` | `drilldownPieChartName` | `Layout.Widgets.PieChart` | `PieChartProps r` | `drilldownPieChart` | `pieRows` | `Inline r` |
-| `drilldownTable` | `drilldownTableName` | `Layout.Widgets.Drilldown` | `DrilldownTableProps r` | `drilldownTable` | `ddRows` | bare `[..r]` |
-| `heading` | `headingName` | `Layout.Widgets.Heading` | `HeadingProps` | `heading` | — | no relation |
+| `drilldownBar` | `drilldownBarName` | `Layout.Widgets.DrilldownBar` | `DrilldownBarProps r` | `drilldownBar` (props: `drilldownBarOf`) | `barRows` | bare `[..r]` |
+| `drilldownPieChart` | `drilldownPieChartName` | `Layout.Widgets.PieChart` | `PieChartProps r` | `drilldownPieChart` (props: `pieChartOf`) | `pieRows` | `Inline r` |
+| `drilldownTable` | `drilldownTableName` | `Layout.Widgets.Drilldown` | `DrilldownTableProps r` | `drilldownTable` (props: `drilldownTableOf`) | `ddRows` | bare `[..r]` |
+| `heading` | `headingName` | `Layout.Widgets.Heading` | `HeadingProps` | `heading` (props: `headingOf`) | — | no relation |
 | `headline` | `headlineName` | `Layout.Widgets.Headline` | `HeadlineProps` | `headline`, `headlineOf` | — | no relation (`headlineOf` scans on the server) |
-| `pieChart` | `pieChartName` | `Layout.Widgets.PieChart` | `PieChartProps r` | `pieChart` | `pieRows` | `Inline r` |
-| `scorecard` | `scorecardName` | `Layout.Widgets.Scorecard` | `ScorecardProps r` | `scorecard` | `cards` | `Inline r` |
-| `styleBox` | `styleBoxName` | `Layout.Widgets.StyleBox` | `StyleBoxProps r` | `styleBox` | `styleBoxRows` | `Inline r` |
-| `table` | `tableName` | `Layout.Widgets.Table` | `TableProps r` | `tabular` | `rows` | bare `[..r]` |
+| `pieChart` | `pieChartName` | `Layout.Widgets.PieChart` | `PieChartProps r` | `pieChart` (props: `pieChartOf`) | `pieRows` | `Inline r` |
+| `scorecard` | `scorecardName` | `Layout.Widgets.Scorecard` | `ScorecardProps r` | `scorecard` (props: `scorecardOf`) | `cards` | `Inline r` |
+| `styleBox` | `styleBoxName` | `Layout.Widgets.StyleBox` | `StyleBoxProps r` | `styleBox` (props: `styleBoxOf`) | `styleBoxRows` | `Inline r` |
+| `table` | `tableName` | `Layout.Widgets.Table` | `TableProps r` | `tabular` (props: `simpleTable`) | `rows` | bare `[..r]` |
 | `text` | `textName` | `Layout.Widgets.Text` | `TextProps` | `plainText` | — | no relation |
 | `treeMap` | `treeMapName` | `Layout.Widgets` | `Unsupported` | — | — | **unsupported** |
+
+**Columns are fields (WP-37).** The props records in the table are the WIRE, and
+their column slots are strings there. A report does not write those strings: it
+builds the props with the function in brackets, which takes each relation column
+as a `Field` (a table or chart column as a `Column r`, see "Table columns"
+below; a fixed role such as a pie's label or a scorecard's value as a named
+`Field` slot in a `...Source` record) and requires the fields to be columns of the
+relation (the fixed slots of one widget, pairwise distinct). The records can still be built by hand; the
+fixtures do not.
 
 `treeMap` is a reserved name with no renderer behind it at all (`runTreeMap` is
 undefined in the legacy bundle and the Local branch of `HTMLWriter.treeMap` is
@@ -1109,6 +1118,112 @@ There are spellings for the common cases: `plain`, `percent n`, `dollars n`,
 Scala-side fold. This is the single biggest thing standing between an existing
 `Presentation`-based report and this path (§12).
 
+### Table columns
+
+A table's columns are named by `Field`s, never by strings (WP-37, decisions in
+`tracker/TYPED-COLUMNS.md`). `Layout.Widgets.Table` exports:
+
+```
+data Column (r : rho)          -- a column valid for relations with row r (constructor not for use)
+
+col     : Has r h                        => Field h a -> Column r
+numCol  : (Has r h, PrimitiveNum a)      => Field h a -> CellFormat -> Column r
+dateCol : (Has r h, PrimitiveTemporal a) => Field h a -> Column r
+
+withHeader : String -> Column r -> Column r
+withFormat : CellFormat -> Column r -> Column r
+alignLeft, alignRight : Column r -> Column r
+sortAsc, sortDesc     : Column r -> Column r
+groupRows             : Column r -> Column r
+
+simpleTable : List (Column r) -> [..r] -> TableProps r
+columnWire  : Column r -> TableColumn      -- the wire record a column lowers to
+columnName  : Column r -> String           -- the relation column it reads
+```
+
+`textColumn`, `numberColumn` and the old `simpleTable : List TableColumn -> ...`
+are gone (removed, not deprecated). `TableColumn`, `TableProps`, `ColumnSort` and
+`tabular` are unchanged: they are the wire, and `TableProps` can still be built by
+hand.
+
+**The rule: `Has r h`.** `col region` does not know which relation it is for.
+Its type is `forall r. (exists c. r <- ((|region|), c)) => Column r`, "a column
+of any relation whose row contains `region`", and that constraint travels with it
+until `simpleTable` meets the relation, where `r` is fixed and the checker settles
+it. A list of columns merges their constraints into one: `[col day, col amount]`
+needs `r <- ((|amount, day|), a)`. So a column the relation does not have is a
+TYPE error at the table, not a surprise in the browser:
+
+```
+>> :type simpleTable [col target] sales               -- sales : [region, day, amount, units]
+<interactive>:1:14: Row partitions are unsatisfiable at field 'DocsProbe.target': the whole contains it but no part does
+>> :type simpleTable [col region, col day] (sales # {region})     -- projected to region alone
+<interactive>:1:14: Row partitions are unsatisfiable at field 'DocsProbe.day': a part contains it but the whole does not
+```
+
+(REPL, MEASURED 2026-09-25 on the `typed-columns` tree over a scratch module
+`DocsProbe` declaring those fields and `table sales`. Both messages point at the
+column list, column 14. The wording of the first is the solver's; read it as
+"`target` is not in the relation".)
+
+**Kind, alignment, header.** `col f` classifies the field by its runtime type
+(`fieldType`, via `Layout.Widgets.Column.fieldKind`): a numeric field becomes a
+right-aligned `NumberColumn`, a temporal one a left-aligned `DateColumn`,
+anything else a left-aligned `OtherColumn`. The header is the field's name and the
+format `Default`. `numCol` and `dateCol` put the kind in the TYPE instead, so a
+number format on a string, or a date column over a `Double`, does not compile:
+
+```
+>> :type numCol region Default          -- region : Field region String
+<interactive>:1:1: No instance for (PrimitiveNum String)
+>> :type dateCol amount                 -- amount : Field amount Double
+<interactive>:1:1: No instance for (PrimitiveTemporal Double)
+```
+
+`withHeader`, `withFormat`, `alignLeft` and `alignRight` override one part each.
+
+**Sorts and row groups are marks on the column.** Nobody writes an index.
+`simpleTable` lowers the marks to the wire's `sorts` and `rowGroup`, counting
+positions in the column list, so moving a column cannot leave a sort pointing at
+the wrong one. Three consequences of the wire's shape: several sorted columns sort
+in COLUMN order (the leftmost sorted column is the primary key); the last mark
+applied to one column wins (`sortDesc (sortAsc c)` is descending); and the wire has
+one row group, so the FIRST column marked `groupRows` is it.
+
+```
+>> :json sorts (simpleTable [col region, sortDesc (numCol amount (dollars 2)),
+                            groupRows (dateCol day), sortAsc (col units)] sales)
+[ { "sortColumn" : 1, "descending" : true }, { "sortColumn" : 3, "descending" : false } ]
+>> :json rowGroup (simpleTable ... the same columns ...)
+2
+```
+
+(MEASURED as above; the `:json` output is re-flowed onto one line.)
+
+**The escape hatch (`Layout.Widgets.Table.Unsafe`).** A column whose name is only
+known at run time cannot carry the proof. `rawColumn : String -> Column r` makes
+one anyway (an `OtherColumn`, left-aligned, `Default` format, header = the name)
+and asserts membership with no evidence: a wrong name is not caught by anything.
+Nothing in the stdlib or in the fixtures imports it.
+
+**Why.** This is the relational API's own discipline. `filterEq : Has r c =>
+Field c a -> a -> [..r] -> [..r]` and `ordering : Row r -> Sort r` also run on
+names at run time (a `Sort r` is `Sort (List (String, PrimT, SortOrder))`), but
+those strings are READ OFF a `Field` or a `Row`, and the phantom row parameter makes a name the relation does not have a
+type error. A `Column r` is the same arrangement: the runtime evidence is the
+field's name and `PrimT`, and the type keeps them honest. Before WP-37 a table was
+the one place a report wrote a relation column as a free string, where a typo
+type-checked and reached the client.
+
+**The wire does not change.** `Column r` exists only on the server; `simpleTable`
+lowers it to exactly the `TableColumn` records the JSON under "A servable widget
+report" shows, so the
+schema and the generated client types are what they were (D3), and every migrated
+report's JSON is byte for byte what it was (D8) with ONE accepted exception (D10):
+a `Date` column the old fixtures had written as `textColumn "day" "Day"` is now
+`"kind": "DateColumn"` instead of `"OtherColumn"`, because `col day` reads the
+field's type.
+
 ### `Sales.e`, line by line
 
 `core/src/test/resources/doc/Sales.e` is the runner's example report and, since
@@ -1133,12 +1248,15 @@ are module-global and `Layout.Widgets.Table`'s `sortColumn` would collide with
 `Layout.Widgets.Heading`'s:
 
 ```
-import Layout.Widgets.Heading using {heading; HeadingProps}
+import Layout.Widgets.Heading using {heading; headingOf; HeadingSource}
+import Constraint using type Has
 import Layout.Widgets.Text using {plainText; TextProps}
-import Layout.Widgets.Table using {tabular; TableProps; type TableColumn; TableColumn;
-                                   type ColumnSort; ColumnSort; AlignLeft; DateColumn;
-                                   textColumn; numberColumn}
+import Layout.Widgets.Table using {tabular; simpleTable; type Column; col; numCol; dateCol;
+                                   withHeader; sortAsc; sortDesc}
 ```
+
+(`Sales.e:57-62`. `Has` is imported because a helper below states it in its
+signature.)
 
 In the same way a `{region, day, ..}` Row literal desugars to `single_Brace` and
 `snoc_Brace`, which `Relation.Row` provides; the report needs one for the header
@@ -1177,10 +1295,31 @@ data Query = Query
 
 `Sale` is the in-memory fact type, and its named fields give the selectors
 (`sRegion`, `sDay`, ...) the rest of the module reads rows with. Then the data,
-eight `Sale` values with `@2026/1/5` date literals, and two helpers: `sortOf`
-turns the `orderBy` parameter into the by-day table's `ColumnSort` (an index into
-its columns), and `salesTable cs ss rs = tabular (TableProps cs Nothing ss True
-True rs)`.
+eight `Sale` values with `@2026/1/5` date literals, and the helpers. Two of them
+pick a column from a parameter, and neither writes a column name or an index
+(`Sales.e:119-140`):
+
+```
+columnOf : (Has r (|day|), Has r (|amount|), Has r (|units|)) => Sort -> Column r
+columnOf ByDay    = col day
+columnOf ByAmount = col amount
+columnOf ByUnits  = col units
+
+sortedBy : Sort -> Sort -> Column r -> Column r
+sortedBy ByDay    ByDay    c = sortAsc c
+sortedBy ByAmount ByAmount c = sortDesc c
+sortedBy ByUnits  ByUnits  c = sortDesc c
+sortedBy _        _        c = c
+
+salesTable : List (Column r) -> [..r] -> Node
+salesTable cs rs = tabular (simpleTable cs rs)
+```
+
+`columnOf` is the column the heading names: chosen at run time, still a field,
+and its three `Has` constraints are what lets it be used with a relation that has
+all three. `sortedBy` marks the one column the parameter picks (oldest day first,
+the biggest amount or unit count first), and `simpleTable` turns the mark into
+that column's index (see "Table columns" above).
 
 The report itself:
 
@@ -1200,20 +1339,22 @@ report q =
       items = relation (map_List (s -> { item = sItem s, amount = sAmount s,
                                          units = sUnits s }) sales)
   in vflow
-       [ heading (HeadingProps "Sales" (columnOf (orderBy q)) (length picked) total)
-       , grid [ [ salesTable [ textColumn "region" "Region"
-                             , TableColumn "day" "Day" Default AlignLeft DateColumn
-                             , numberColumn "amount" "Amount" money
-                             , numberColumn "units" "Units" Default ]
-                             [sortOf (orderBy q)] byDay
-                , salesTable [textColumn "region" "Region"] [] regions ]
-              , [ salesTable [ textColumn "item" "Item"
-                             , numberColumn "amount" "Amount" money
-                             , numberColumn "units" "Units" Default ]
-                             [] items
+       [ heading (headingOf (HeadingSource "Sales" (columnOf (orderBy q)) (length picked) total byDay))
+       , grid [ [ salesTable [ withHeader "Region" (col region)
+                             , sortedBy (orderBy q) ByDay (withHeader "Day" (dateCol day))
+                             , sortedBy (orderBy q) ByAmount (withHeader "Amount" (numCol amount money))
+                             , sortedBy (orderBy q) ByUnits (withHeader "Units" (numCol units Default)) ]
+                             byDay
+                , salesTable [withHeader "Region" (col region)] regions ]
+              , [ salesTable [ withHeader "Item" (col item)
+                             , withHeader "Amount" (numCol amount money)
+                             , withHeader "Units" (numCol units Default) ]
+                             items
                 , plainText (TextProps "every line item, whatever the date range") ] ]
        ]
 ```
+
+(`Sales.e:148-175`.)
 
 `byDay` is the one relation that can be empty (a date range that matches no
 sale), so it is built with `relationWithHeader`: plain `relation` reads the
@@ -1255,17 +1396,42 @@ sales = mkRelation# (toList#
 
 Then one `vflow` of four widgets over that single relation:
 
-* `scorecard (ScorecardProps "Sales by region" "srRegion" "srSales" (Just "srDelta") (Round False False 1) (Inline sales))`
-  — the new native widget. `cards` is `Inline r`, not a bare relation: a
-  scorecard with no numbers is nothing, so its rows always travel and the
-  exported schema is the inline arm alone.
-* `tabular (TableProps [TableColumn ...] Nothing [ColumnSort 1 True] True True sales)`
-  — three `TableColumn`s, each naming the relation column it reads, its header,
-  its `CellFormat` and the two presentation hints; `rowGroup` is `Nothing`;
-  one sort by column INDEX; paginate and scroll on; `rows` is the bare relation.
-* `axisChart (AxisChartProps (ChartMeta ...) [ChartSeries ...] sales)` — one
-  relation for the whole chart, each series naming its columns inside it.
-* `pieChart (PieChartProps ... (Inline sales))`.
+```
+    [ scorecard (scorecardOf (ScorecardSource "Sales by region" srRegion srSales (Just srDelta)
+                                              (Round False False 1) (Inline sales)))
+    , tabular (simpleTable
+        [ withHeader "Region" (col srRegion)
+        , sortDesc (withHeader "Sales" (numCol srSales (Currency False False "$" 2)))
+        , withHeader "Change" (numCol srDelta (Percentage False True 1 False))
+        ]
+        sales)
+    , axisChart (axisChartOf
+        (ChartMeta ...)
+        [seriesOf [] [col srRegion] (col srSales) [] Nothing (Constant "Sales") [] Bar]
+        sales)
+    , pieChart (pieChartOf (PieSource "Share of sales" "Sales" srRegion srSales
+                                      Nothing Nothing Nothing ...
+                                      (Inline sales)))
+```
+
+(`SalesReport.e:43-63`, the `ChartMeta` and the pie's formats elided.)
+
+* The scorecard -- the new native widget. Its label, value and delta columns are
+  FIELDS in a `ScorecardSource`, and `scorecardOf` requires them to be distinct
+  columns of the relation (`r <- (h1, h2, h3, t)`). `cards` is `Inline r`, not a
+  bare relation: a scorecard with no numbers is nothing, so its rows always
+  travel and the exported schema is the inline arm alone.
+* The table -- three typed columns, one sort MARK (`sortDesc` on Sales, which
+  `simpleTable` lowers to `sorts: [{sortColumn: 1, descending: true}]`); no row
+  group; paginate and scroll on; `rows` is the bare relation.
+* The axis chart -- one relation for the whole chart; each `Series` names its
+  columns inside it with `Column`s (`seriesOf`'s slots are `ChartSeries`'s, in
+  order).
+* The pie -- a `PieSource` with the label and value as fields.
+
+Each `...Of` function lowers to the unchanged wire record (`ScorecardProps`,
+`TableProps`, `AxisChartProps`, `PieChartProps`), whose column slots are still
+strings on the wire; they are just no longer written by hand.
 
 It lives under `modules/` rather than `doc/` because that is the directory the
 module loader searches on the classpath.
@@ -1340,7 +1506,9 @@ field rRegion : String
 field rSales  : Double
 field rDelta  : Double
 
+-- the request sends "sortBy": "BySales"
 data Order = ByName | BySales
+
 data Params = Params { heading : String, sortBy : Order }
 
 sales : [rRegion, rSales, rDelta]
@@ -1350,30 +1518,38 @@ sales = mkRelation# (toList#
   , { rRegion = "AMER", rSales = 310.75, rDelta = 0.5 }
   ])
 
-sortIndex : Order -> Int
-sortIndex ByName  = 0
-sortIndex BySales = 1
+-- The sort is a MARK on the column the parameter picks; `simpleTable` turns it
+-- into that column's index on the wire.
+sortedBy : Order -> Order -> Column r -> Column r
+sortedBy ByName  ByName  c = sortDesc c
+sortedBy BySales BySales c = sortDesc c
+sortedBy _       _       c = c
 
 report : Params -> Node
 report p =
   tabbed
     [ ("Summary",
-        scorecard (ScorecardProps (heading p) "rRegion" "rSales" (Just "rDelta")
-                                  (Round False False 1) (Inline sales)))
+        scorecard (scorecardOf (ScorecardSource (heading p) rRegion rSales (Just rDelta)
+                                                (Round False False 1) (Inline sales))))
     , ("Detail",
-        tabular (TableProps
-          [ TableColumn "rRegion" "Region" Default AlignLeft OtherColumn
-          , TableColumn "rSales" "Sales" (Currency False False "$" 2) AlignRight NumberColumn
-          , TableColumn "rDelta" "Change" (Percentage False True 1 False) AlignRight NumberColumn ]
-          Nothing [ColumnSort (sortIndex (sortBy p)) True] True True sales))
+        tabular (simpleTable
+          [ sortedBy (sortBy p) ByName (withHeader "Region" (col rRegion))
+          , sortedBy (sortBy p) BySales (withHeader "Sales" (numCol rSales (Currency False False "$" 2)))
+          , withHeader "Change" (numCol rDelta (Percentage False True 1 False)) ]
+          sales))
     , ("Share",
-        pieChart (PieChartProps "Share of sales" "Sales" "rRegion" "rSales"
-                                Nothing Nothing Nothing
-                                Default (Round False False 1)
-                                (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
-                                (Inline sales)))
+        pieChart (pieChartOf (PieSource "Share of sales" "Sales" rRegion rSales
+                                        Nothing Nothing Nothing
+                                        Default (Round False False 1)
+                                        (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
+                                        (Inline sales))))
     ]
 ```
+
+(`docs/examples/Regions.e`, whole. No suite loads it; it was type-checked with
+`bin/ermine` `:load` on 2026-09-25, and its table's `columns`, `sorts` and
+`rowGroup` compared equal, for both orders, to the hand-written `TableProps` it
+replaced.)
 
 ```
 $ bin/ermine-serve --root <dir>/reports --port 8081
@@ -2167,6 +2343,7 @@ the people who built it; all of it is a surprise to a new reader.
 | **Modules never unload** | J3c #3 | A module a request names stays for the process's life and a working report is cached forever. A REFUSAL is not cached, so fixing a broken module and retrying works. |
 | **No CORS, no compression, sequential deferred fetches** | J3c, J3d #9 | Same-origin or proxy; a large inline document goes out uncompressed; the dispatcher resolves deferred relations one round trip at a time. |
 | ~~**`Doc/SalesReport.e` is not servable**~~ **FIXED by WP-34** | measured here | Its binding is `report : Node`; since WP-34 (Q27 option (i)) a `Node` or `Fetch Node` is a report with no parameters, so `POST /report/Doc.SalesReport` with `{}` renders (§8). |
+| **Widgets send whole relations** | WP-38 | A widget's columns are proved to be in its relation, but the relation travels whole: a table showing two of six columns sends six. Projecting to the used columns is a separate, unscheduled ticket (`tracker/JSON-WIDGET-PLAYGROUND.md`). |
 | **Log configuration** | measured here | `res/conf/log4j.prp` is absent, AND the log4j 1.2 API is a bridge over log4j 2, so the file is ignored without `-Dlog4j1.compatibility=true` (§9). |
 
 Two bugs OUTSIDE the JSON code that this work found and fixed, worth knowing

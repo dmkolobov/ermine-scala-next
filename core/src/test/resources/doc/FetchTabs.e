@@ -27,12 +27,12 @@ import FetchData
 
 data Query = Query { showUnits : Bool }
 
-tabColumns : Query -> List TableColumn
+tabColumns : Query -> List (Column (|region, day, amount, units|))
 tabColumns q =
   if (showUnits q)
-    [ textColumn "day" "Day", numberColumn "amount" "Amount" (Currency False False "$" 2)
-    , numberColumn "units" "Units" Default ]
-    [ textColumn "day" "Day", numberColumn "amount" "Amount" (Currency False False "$" 2) ]
+    [ withHeader "Day" (col day), withHeader "Amount" (numCol amount (Currency False False "$" 2))
+    , withHeader "Units" (numCol units Default) ]
+    [ withHeader "Day" (col day), withHeader "Amount" (numCol amount (Currency False False "$" 2)) ]
 
 report : Query -> Fetch Node
 report q =

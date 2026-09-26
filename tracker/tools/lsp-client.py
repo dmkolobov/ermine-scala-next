@@ -3348,7 +3348,7 @@ def main():
     # same second as the one above, and a reload that compares mtimes would
     # then see nothing (the hazard TestLspRobustness.writeFixture writes down).
     before_mtime = sales_file.stat().st_mtime
-    sales_file.write_text(sales_src.replace('HeadingProps "Sales"', 'HeadingProps "Sales (edited)"'))
+    sales_file.write_text(sales_src.replace('HeadingSource "Sales"', 'HeadingSource "Sales (edited)"'))
     # UNCONDITIONALLY, not "only if it did not move": Python reads the
     # modification time in NANOSECONDS and Java's File.lastModified reports
     # MILLISECONDS, so a second write that looks strictly later here can still

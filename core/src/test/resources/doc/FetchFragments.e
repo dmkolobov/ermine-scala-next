@@ -66,11 +66,11 @@ runningTable : Fetch Node
 runningTable =
   scanRelationInOrder (ordering_Srt {day}) sales (rows ->
     done (tabular (simpleTable
-            [ numberColumn "rowNo" "#" Default
-            , textColumn "region" "Region"
-            , textColumn "day" "Day"
-            , numberColumn "runTotal" "Running" (Currency False False "$" 2)
-            , numberColumn "target" "Target" (Currency False False "$" 0) ]
+            [ withHeader "#" (numCol rowNo Default)
+            , withHeader "Region" (col region)
+            , withHeader "Day" (col day)
+            , withHeader "Running" (numCol runTotal (Currency False False "$" 2))
+            , withHeader "Target" (numCol target (Currency False False "$" 0)) ]
             (join (relation (withRunning rows)) targets
                # {rowNo, region, day, runTotal, target}))))
 
@@ -85,11 +85,11 @@ topSlices n =
         other = sum' (map_List (r -> r ! amount) (drop n ranked))
         slices = relation (map_List (r -> { region = r ! region, amount = r ! amount }) top
                            ++ [ { region = "Other", amount = other } ])
-    in done (pieChart (PieChartProps "Sales by region" "Sales" "region" "amount"
-                                     Nothing Nothing Nothing
-                                     Default (Currency False False "$" 2)
-                                     (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
-                                     (Inline slices))))
+    in done (pieChart (pieChartOf (PieSource "Sales by region" "Sales" region amount
+                                                 Nothing Nothing Nothing
+                                                 Default (Currency False False "$" 2)
+                                                 (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
+                                                 (Inline slices)))))
 
 -- the report: the fragments, composed.  `sequence_Fetch` for the row of
 -- headlines, `tabbedF` for the two big pieces, `vflowF` for the page.

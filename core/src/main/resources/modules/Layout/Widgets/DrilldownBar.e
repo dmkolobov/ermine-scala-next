@@ -13,7 +13,8 @@ module Layout.Widgets.DrilldownBar where
 -- the parent value (what `_.filter(d, [5, ddid])` restricts on, :1921).
 -- client/src/charts.ts appends them in that order.
 
-import Layout.Widgets.Chart using type ChartMeta; type ChartSeries
+import Layout.Widgets.Chart using {type ChartMeta; type ChartSeries; type Series; seriesWire}
+import Field using fieldName
 import Layout.Doc using {widget; type Node; type WidgetName; WidgetName}
 
 data DrilldownBarProps r = DrilldownBarProps { barMeta : ChartMeta
@@ -28,3 +29,24 @@ drilldownBarName = WidgetName "drilldownBar"
 
 drilldownBar : DrilldownBarProps r -> Node
 drilldownBar p = widget drilldownBarName p
+
+-- * The typed authoring API (WP-37, D1/D4)
+--
+-- `DrilldownBarProps` is the WIRE (column names, D3).  A report builds it with
+-- `drilldownBarOf` from a `DrilldownBarSource`: the series is a typed
+-- `Layout.Widgets.Chart.Series r`, and parent and child are FIELDS, two DISTINCT
+-- columns of the relation (the partition in `drilldownBarOf`).
+
+-- | What `drilldownBarOf` lowers.  Server-side only.  Parent and child carry the
+-- same value type: a parent cell names another row's child cell.
+data DrilldownBarSource h1 h2 a r =
+  DrilldownBarSource { barSourceMeta : ChartMeta
+                     , barSourceSeries : Series r
+                     , barParent : Field h1 a
+                     , barChild : Field h2 a
+                     , barSourceRows : [..r] }
+
+drilldownBarOf : (r <- (h1, h2, t)) => DrilldownBarSource h1 h2 a r -> DrilldownBarProps r
+drilldownBarOf s =
+  DrilldownBarProps (barSourceMeta s) (seriesWire (barSourceSeries s))
+                    (fieldName (barParent s)) (fieldName (barChild s)) (barSourceRows s)

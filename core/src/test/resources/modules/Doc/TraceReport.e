@@ -32,10 +32,8 @@ import Layout.Trace
 import Layout.Widgets.Format using {type CellFormat; Default; Round; Percentage; IntegralRound; Constant}
 import Layout.Widgets.Headline using {headline; HeadlineProps}
 import Layout.Widgets.Text using {plainText; TextProps}
-import Layout.Widgets.Scorecard using {scorecard; ScorecardProps}
-import Layout.Widgets.Table using {tabular; TableProps; type TableColumn; TableColumn; ColumnSort;
-                                   AlignLeft; AlignRight; OtherColumn; NumberColumn;
-                                   textColumn; numberColumn}
+import Layout.Widgets.Scorecard using {scorecard; scorecardOf; ScorecardSource}
+import Layout.Widgets.Table using {tabular; simpleTable; col; numCol; withHeader; sortAsc; sortDesc}
 import Layout.Widgets.Chart
 import Layout.Widgets.AxisChart
 import Layout.Widgets.PieChart
@@ -73,37 +71,38 @@ report t =
                               (traceRelationCount t) (traceWallMs t) (traceSlowestMs t) millis)
     , plainText (TextProps (caption t))
     , hflow
-        [ scorecard (ScorecardProps "Time (ms)" "tkLabel" "tkValue" Nothing millis (Inline (traceTimes t)))
-        , scorecard (ScorecardProps "Rows" "tkLabel" "tkValue" Nothing count (Inline (traceRowCounts t))) ]
-    , axisChart (AxisChartProps
+        [ scorecard (scorecardOf (ScorecardSource "Time (ms)" tkLabel tkValue Nothing millis (Inline (traceTimes t))))
+        , scorecard (scorecardOf (ScorecardSource "Rows" tkLabel tkValue Nothing count (Inline (traceRowCounts t)))) ]
+    , axisChart (axisChartOf
         (ChartMeta "Time by phase (ms)"
           (ChartAxis "Phase" "Phase" Default (Scalar "String" False) True (Unscaled [Asc] []))
           (ChartAxis "ms" "ms" millis (Scalar "Double" True) True (Scaled (Just 0.0) Nothing Linear))
           Vertical (ChartLegendOptions LegendHidden) (ChartRenderHints True))
-        [ChartSeries [] ["tpLabel"] "tpMs" [] Nothing (Constant "ms") [] Bar]
+        [seriesOf [] [col tpLabel] (col tpMs) [] Nothing (Constant "ms") [] Bar]
         (tracePhases t))
-    , tabular (TableProps
-        [ numberColumn "tqOrder" "#" count
-        , textColumn "tqPath" "Relation"
-        , textColumn "tqDelivery" "Delivery"
-        , textColumn "tqDialect" "Dialect"
-        , numberColumn "tqRowsRead" "Rows read" count
-        , numberColumn "tqRows" "Rows" count
-        , numberColumn "tqDbMs" "DB ms" millis
-        , numberColumn "tqMs" "Total ms" millis
-        , numberColumn "tqShare" "Share" share ]
-        Nothing [ColumnSort 7 True] True True (traceQueries t))
-    , pieChart (PieChartProps "Time by relation" "ms" "tqPath" "tqMs"
-                              Nothing Nothing Nothing Default millis
-                              (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
-                              (Inline (traceQueries t)))
-    , tabular (TableProps
-        [ numberColumn "tsOrder" "#" count
-        , textColumn "tsPath" "Relation"
-        , numberColumn "tsSqlBytes" "Bytes" count
-        , textColumn "tsSetup" "Setup"
-        , textColumn "tsSql" "SQL" ]
-        Nothing [ColumnSort 0 False] True True (traceSql t))
+    -- the slowest relation first: the sort is a mark on the Total ms column
+    , tabular (simpleTable
+        [ withHeader "#" (numCol tqOrder count)
+        , withHeader "Relation" (col tqPath)
+        , withHeader "Delivery" (col tqDelivery)
+        , withHeader "Dialect" (col tqDialect)
+        , withHeader "Rows read" (numCol tqRowsRead count)
+        , withHeader "Rows" (numCol tqRows count)
+        , withHeader "DB ms" (numCol tqDbMs millis)
+        , sortDesc (withHeader "Total ms" (numCol tqMs millis))
+        , withHeader "Share" (numCol tqShare share) ]
+        (traceQueries t))
+    , pieChart (pieChartOf (PieSource "Time by relation" "ms" tqPath tqMs
+                                      Nothing Nothing Nothing Default millis
+                                      (ChartLegendOptions LegendRightTable) (ChartRenderHints True)
+                                      (Inline (traceQueries t))))
+    , tabular (simpleTable
+        [ sortAsc (withHeader "#" (numCol tsOrder count))
+        , withHeader "Relation" (col tsPath)
+        , withHeader "Bytes" (numCol tsSqlBytes count)
+        , withHeader "Setup" (col tsSetup)
+        , withHeader "SQL" (col tsSql) ]
+        (traceSql t))
     , plainText (TextProps ("Each SQL text is capped at 16 KiB by the server, which then appends " ++
                             "\"-- [ermine: truncated, N more bytes]\"; Bytes is the full length."))
     ]
