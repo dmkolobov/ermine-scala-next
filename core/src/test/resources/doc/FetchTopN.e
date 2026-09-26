@@ -5,10 +5,12 @@ module FetchTopN where
 -- A pie of every region is unreadable past a handful of slices; the usual
 -- cure is the N largest and one "Other" slice that keeps the total exact.
 -- The relational algebra here has no LIMIT and no "everything but the top
--- N", so this is a scan: the SQL aggregate `groupBy {region} (sumBy
--- amount)` totals each region, `scanInOrder` delivers those totals largest
--- first, and `take`/`drop` split them.  The second scan reads the targets,
--- and a count over both lists says how many regions met theirs.  `scan` /
+-- N", so this is a scan: `aggregateByGroup (sum amount) {region} amount`
+-- totals each region IN SQL (one GROUP BY, one row per region; before F-1
+-- this was `groupBy {region} (sumBy amount)`, which fetched every sale row
+-- and summed in memory), `scanInOrder` delivers those totals largest first,
+-- and `take`/`drop` split them.  The second scan reads the targets, and a
+-- count over both lists says how many regions met theirs.  `scan` /
 -- `scanInOrder` under `runScan` are `scanRelation` in continuation-monad
 -- form, so the two reads sit in one `do` block instead of nesting.
 --
@@ -34,12 +36,16 @@ import FetchData
 
 data Query = Query { keep : Int }
 
-byRegion : Mem (|region, amount|)
-byRegion = groupBy {region} (sumBy amount) sales
+-- one SQL `GROUP BY region` with `SUM(amount)` written back into `amount`
+-- (F-1): `aggregateByGroup` lowers to the relational AggregateByGroup, so the
+-- database returns one row per region; `groupBy` would fetch every sale row
+-- and total them in memory, because its per-group function is arbitrary.
+byRegion : [region, amount]
+byRegion = aggregateByGroup_Aggregate (sum_Aggregate amount) {region} amount sales
 
 report : Query -> Fetch Node
 report q = runScan (do
-  ranked <- scanInOrder (invert_Srt (ordering_Srt {amount})) byRegion
+  ranked <- scanInOrder (append_Srt (invert_Srt (ordering_Srt {amount})) (ordering_Srt {region})) byRegion
   goals  <- scan targets
   unit (let top    = take (keep q) ranked
             other  = sum' (map_List (r -> r ! amount) (drop (keep q) ranked))

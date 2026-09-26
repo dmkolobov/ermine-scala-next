@@ -25,6 +25,7 @@ module Doc.TraceReport where
 --   sbt 'core/testOnly com.clarifi.reporting.TestRunner -- -f trace'
 --
 -- renders it over core/src/test/resources/doc/trace-sample.json.
+-- (The sample predates F-1: its $.fetch[1] is the old in-memory `groupBy`, 388 rows read for 8; kept as is.)
 
 import Json using type Inline; Inline
 import Layout.Doc using {vflow; hflow; type Node}

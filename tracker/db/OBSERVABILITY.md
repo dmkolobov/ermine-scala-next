@@ -187,7 +187,7 @@ check (twin entries == original entries) is xs-only by design.
 
 ## 9. Findings for the user
 
-1. **Ermine aggregates in memory what looks like SQL.** `groupBy {region} (sumBy amount) sales` is a
+1. **FIXED 2026-09-26 (F-1 = NEW-3; NOT REVIEWED, NOT COMMITTED): the fixtures now use `aggregateByGroup`.** `byRegion` in `doc/{Db,}FetchTopN.e` and `doc/{Db,}FetchFragments.e` is `aggregateByGroup_Aggregate (sum_Aggregate amount) {region} amount sales`, which lowers to the relational `AggregateByGroup` (`Relation/Aggregate.e:50-52`, `session/Lib.scala:630-640`) and so to `select (SUM([t].[amount])) [amount], ([t].[region]) [region] from [sales] [t] group by [t].[region] order by SUM([t].[amount]) desc` (MEASURED, SQL Server's `sys.dm_exec_query_stats`, tier s). Rows SQL Server returned for `$.fetch[1]` of `DbFetchTopN`: **388 before, 8 after** (`last_rows`, `scratch-widget-preview/db/f1/{before,after}/dmv.txt`); the render trace after (TestRenderTraceLive at tier s, 2026-09-26): `$.fetch[1]` `rowsRead` 8, re-run over JDBC 8, report `totals.rowsRead` 19 (8 + 8 targets + 3 pie rows); before, `trace-sample.json` records 388 for 8. Documents byte-identical before/after: 18 renders (6 `keep` values x TopN, 3 params x Fragments, in-memory and DB twins), `diff -r` empty. Pinned by TestRunner `(fx4-sql)`. The original finding: **Ermine aggregates in memory what looks like SQL.** `groupBy {region} (sumBy amount) sales` is a
    `Mem`: the database returns every row and Ermine does the grouping. At tier s that is 388 rows
    for 8 regions. At tier m, 7,701 rows for 12. At tier l (2,052,515 fact rows) this would be the
    dominant cost of `DbFetchTopN`. The trace makes it visible as `rowsRead` much larger than `rows`,

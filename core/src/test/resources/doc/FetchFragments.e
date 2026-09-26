@@ -75,12 +75,16 @@ runningTable =
                # {rowNo, region, day, runTotal, target}))))
 
 -- fragment 3: the N largest regions and one "Other" slice (FetchTopN's body).
-byRegion : Mem (|region, amount|)
-byRegion = groupBy {region} (sumBy amount) sales
+-- one SQL `GROUP BY region` with `SUM(amount)` written back into `amount`
+-- (F-1): `aggregateByGroup` lowers to the relational AggregateByGroup, so the
+-- database returns one row per region; `groupBy` would fetch every sale row
+-- and total them in memory, because its per-group function is arbitrary.
+byRegion : [region, amount]
+byRegion = aggregateByGroup_Aggregate (sum_Aggregate amount) {region} amount sales
 
 topSlices : Int -> Fetch Node
 topSlices n =
-  scanRelationInOrder (invert_Srt (ordering_Srt {amount})) byRegion (ranked ->
+  scanRelationInOrder (append_Srt (invert_Srt (ordering_Srt {amount})) (ordering_Srt {region})) byRegion (ranked ->
     let top   = take n ranked
         other = sum' (map_List (r -> r ! amount) (drop n ranked))
         slices = relation (map_List (r -> { region = r ! region, amount = r ! amount }) top

@@ -36,7 +36,7 @@ import Prop._
   *  - (t1)  an ok render of `FetchTopN` carries `trace` as its LAST key, with
   *          the answer's generation, connection in-memory sqlite, one entry
   *          per relation in execution order, the two fetch scans' SQL, rows
-  *          read 8 and 4 (the first is a Mem grouped by Ermine) and used 4, 4;
+  *          read 4 and 4 (the first is a SQL GROUP BY since F-1) and used 4, 4;
   *  - (t3)  a failing render (`DbFetchTopN`: its tables do not exist in the
   *          in-memory database) carries a trace whose LAST entry is the
   *          failing scan with `error: true` and its SQL;
@@ -335,10 +335,11 @@ object TestRenderTrace extends Properties("RenderTrace (DB programme S2b)") {
         ((conn1 flatMap (c => strOf(c, "dialect"))) ?= Some("sqlite")) &&
         ((fetches.map(q => strOf(q, "path").getOrElse("?")) ?= List("$.fetch[1]", "$.fetch[2]")) :| ("t1 fetch entries: " + fetches.map(Json.print))) &&
         (fetches.forall(q => strOf(q, "sql").exists(_.toUpperCase.contains("SELECT")) && strOf(q, "dialect") == Some("sqlite")) :| "t1 fetch SQL/dialect") &&
-        // fetch[1] is `groupBy {region} (sumBy amount) sales`: a Mem, grouped by
-        // Ermine over the 8 scanned rows, so the SQL reads 8 and the report
-        // gets 4; fetch[2] reads the 4 targets
-        ((fetches.map(q => (q / "rowsRead").flatMap(_.int)) ?= List(Some(8), Some(4))) :| "t1 rows read: 8 sales rows, 4 targets") &&
+        // fetch[1] is `aggregateByGroup (sum amount) {region} amount sales`: one
+        // SQL GROUP BY, so the database returns the 4 region totals (before F-1
+        // it was a `groupBy` Mem that read all 8 sales rows); fetch[2] reads the
+        // 4 targets
+        ((fetches.map(q => (q / "rowsRead").flatMap(_.int)) ?= List(Some(4), Some(4))) :| "t1 rows read: 4 region totals, 4 targets") &&
         ((fetches.map(q => (q / "rows").flatMap(_.int)) ?= List(Some(4), Some(4))) :| "t1 rows used: 4 regions, 4 targets") &&
         (near(numOf(tot1, "dbMs").get + numOf(tot1, "otherMs").get, numOf(tot1, "wallMs").get, 0.11) :| ("t1 totals " + tot1.map(Json.print))) &&
         ((numOf(tot1, "dbMs").get <= numOf(tot1, "wallMs").get) :| "t1 db <= wall") &&

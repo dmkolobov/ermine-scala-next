@@ -190,9 +190,9 @@ document equals the in-memory original's, apart from row order (MEASURED, `TestD
    is part of the session. MEASURED: 2.2 s in `TestPreviewDbLive` (SERVER.md §6.3), about 1.6-1.7 s of
    `boot` in the trace (OBSERVABILITY.md §9). Later renders took 22 ms in that test.
 3. The panel draws two widgets. (a) A pie **`Sales by region`**, from the `pieChart (pieChartOf (PieSource "Sales by region" "Sales" region amount` line
-   (`core/src/test/resources/doc/DbFetchTopN.e:58`), drawn by the legacy writers. With `keep` 0 it has
+   (`core/src/test/resources/doc/DbFetchTopN.e:64`), drawn by the legacy writers. With `keep` 0 it has
    ONE slice, `Other`, the whole of tier s: **1,051,094.22**. (b) An error box, and that is expected:
-   `, rawWidget "metTargets" met ])))` (`core/src/test/resources/doc/DbFetchTopN.e:63`) has no renderer,
+   `, rawWidget "metTargets" met ])))` (`core/src/test/resources/doc/DbFetchTopN.e:69`) has no renderer,
    so the box says `` title.textContent = `widget "${widget}" could not be rendered`; `` (`client/src/dispatcher.ts:131`)
    with the reason `` : fail(`no renderer is registered under that name`); `` (`client/src/dispatcher.ts:299`).
    Its value (1 at tier s) is in the JSON tab.
@@ -449,14 +449,14 @@ the server you run, so rebuild it first: `sbt core/compile core/copyResources`.)
    `core.TRACE_REPORT_BINDING, listed.module` (`editor/vscode/src/extension.js:3937`). It renders
    like any report: the queue, the wedge guard and the params watcher all apply.
 3. **The document** (headless, from the captured tier-s trace: `scratch-widget-preview/db/s2f/trace-report-dark.png`):
-   a headline titled `"Render trace, generation "` (`core/src/test/resources/modules/Doc/TraceReport.e:70`) with
+   a headline titled `"Render trace, generation "` (`core/src/test/resources/modules/Doc/TraceReport.e:69`) with
    `Rows 3, Total 51.0, Largest 36.7` under a scope that names them (`Rows = relations, Total = render
    wall ms, Largest = slowest relation ms`: the wall time includes work outside every relation, so it
    is more than the relations' 42.4 ms), the caption `db 11.0 ms of 51.0 ms, 3 queries.`, two scorecards
-   `"Time (ms)"` (`core/src/test/resources/modules/Doc/TraceReport.e:76`) (1 wall 51.0, 2 db 11.0, 3 other 40.0,
+   `"Time (ms)"` (`core/src/test/resources/modules/Doc/TraceReport.e:75`) (1 wall 51.0, 2 db 11.0, 3 other 40.0,
    4 queue 0.0; the number keeps the order, since a relation has none) and Rows (1 rows read 399,
    2 rows used 19, 3 queries 3), a bar chart
-   `"Time by phase (ms)"` (`core/src/test/resources/modules/Doc/TraceReport.e:79`) with the bars `01 session` ...
+   `"Time by phase (ms)"` (`core/src/test/resources/modules/Doc/TraceReport.e:78`) with the bars `01 session` ...
    `13 other`, the relations table sorted by Total ms (`$.fetch[1]` 388 read, 8 rows, 36.7 ms, 72%), a pie
    `"Time by relation"` (`core/src/test/resources/modules/Doc/TraceReport.e:96`) and the SQL table.
    Both charts are coloured and 320 px tall. (Finding S2f-1, FIXED 2026-09-25: the writers draw

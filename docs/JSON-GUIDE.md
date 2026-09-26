@@ -1972,6 +1972,20 @@ whose relations are `table` statements) on a local SQL Server 2022
 (`tracker/db/REPORTS.md`). MySQL, Postgres and Vertica remain read from
 `RunnerConfig.backend`, not tested.
 
+**Aggregate per group in SQL with `aggregateByGroup`, not `groupBy`.** On a
+`table`, `aggregateByGroup_Aggregate (sum_Aggregate amount) {region} amount
+sales` (from `Relation.Aggregate`, re-exported by `Relation` with the
+`_Aggregate` suffix) is ONE `SELECT SUM(amount) ... GROUP BY region`: the
+database returns one row per group, and the target field (`amount` here) can be
+the aggregated field itself, so the row keeps its shape. `groupBy {region}
+(sumBy amount) sales` computes the same numbers but returns a `Mem`: its group
+function is an arbitrary Ermine function, so `Relation.groupBy` scans EVERY
+row and groups in Ermine (F-1: `DbFetchTopN` read 388 rows at tier s for 8
+totals; with `aggregateByGroup` it reads 8). Keep `groupBy` for per-group
+computations SQL cannot express (`topKBy`, `bottomKBy`, medians; `maxRowBy`
+is NOT one: it is `join (maxBy f r) r`, `Relation.e:142`); the render
+trace shows the difference as `rowsRead` far above `rows`.
+
 Three more things worth knowing before you put this behind anything:
 
 * **There are no CORS headers.** Serve the client from the same origin or proxy.

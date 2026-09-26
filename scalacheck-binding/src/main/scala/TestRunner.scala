@@ -1111,6 +1111,39 @@ object TestRunner extends Properties("JSON document runner (J3c)") {
     }
   }
 
+  /** F-1 (tracker/db/OBSERVABILITY.md §9 item 1): the TopN fixtures total each
+    * region with `aggregateByGroup`, which lowers to the relational
+    * AggregateByGroup and so to ONE SQL `GROUP BY`; `groupBy` would scan every
+    * sale row and group a Mem in Ermine.  Pinned on the SQL the render trace
+    * records for `$.fetch[1]` (byRegion): the in-memory twin's (it runs, so its
+    * rows read must equal the regions it delivers) and the DB twin's, whose
+    * tables are not in this runner's database, so the scan fails AFTER the SQL
+    * was emitted and recorded. */
+  property("(fx4-sql) FetchTopN / DbFetchTopN: byRegion is one SQL GROUP BY, not a Mem grouped in Ermine") = secure {
+    def traced(module: String): (Int, RenderTrace.Snapshot) = {
+      val t = new RenderTrace()
+      val out = new java.lang.StringBuilder
+      t.start()
+      val st = runner.renderText(module, "report", params("{\"keep\":2}"), out, t) match {
+        case Left(e) => e.status; case Right(_) => 200 }
+      t.finish()
+      (st, t.snapshot())
+    }
+    def byRegion(s: RenderTrace.Snapshot) = s.queries.find(_.path == "$.fetch[1]")
+    def grouped(q: Option[RenderTrace.Query]): Boolean =
+      q.flatMap(_.sql).map(_.toUpperCase).exists(s => s.contains("GROUP BY") && s.contains("SUM("))
+    val (st, mem) = traced("FetchTopN")
+    val (dst, db) = traced("DbFetchTopN")
+    val q = byRegion(mem); val dq = byRegion(db)
+    ((st ?= 200) :| "FetchTopN did not render") &&
+      (grouped(q) :| ("FetchTopN $.fetch[1] SQL has no GROUP BY / SUM: " + q.flatMap(_.sql))) &&
+      ((q.map(_.rowsRead) ?= Some(4L)) :| ("FetchTopN $.fetch[1] read " + q.map(_.rowsRead) + " rows for 4 regions")) &&
+      ((q.map(_.rowsRead) ?= q.map(_.rows)) :| "rows read != rows delivered: grouped in Ermine") &&
+      ((dst != 200) :| "DbFetchTopN rendered without its tables?") &&
+      (dq.flatMap(_.sql).exists(_.contains("sales")) :| ("DbFetchTopN $.fetch[1] recorded no SQL over sales: " + db.queries)) &&
+      (grouped(dq) :| ("DbFetchTopN $.fetch[1] SQL has no GROUP BY / SUM: " + dq.flatMap(_.sql)))
+  }
+
   property("(fx-conn) a fetching report opens ONE connection, however many scans and relations") = secure {
     val warm = render(runner, "FetchTopN", params("{\"keep\":1}"))
     val before = counting.openedHere
