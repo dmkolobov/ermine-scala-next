@@ -31,9 +31,18 @@ sealed abstract class SqlQuery {
         raw(" group by ") |+| (fGroupBy.map((x: SqlExpr) => x.emitSql).rawMkString(", "))
       else raw("")
       } |+|
-      (if (!having.isEmpty)
-        raw(" having ") |+| having.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
-      else raw(""))
+      { // A GROUP BY whose expressions are ALL constants (a one-row literal squashed
+        // into the select) is dropped above, since SQL Server refuses constant group
+        // expressions; the query then aggregates ungrouped, which answers ONE row over
+        // no input where a grouped aggregate answers none.  `having count(*) > 0`
+        // removes that phantom row and keeps the one group otherwise (SQL audit E21).
+        val allConstantGroups = !groupBy.isEmpty && groupBy.forall(_.isConstant)
+        val fHaving = if (allConstantGroups) having :+ SqlGt(FunSqlExpr("count", List(Verbatim("*"))), LitSqlExpr(SqlInt(0)))
+                      else having
+        if (!fHaving.isEmpty)
+          raw(" having ") |+| fHaving.map(x => raw("(") |+| x.emitSql |+| ")").toIterable.rawMkString(" and ")
+        else raw("")
+      }
     case SqlNaryOp(op, rs) =>
       emitter.emitNaryOp(op, rs.map(q => q: SqlQuery))
     case SqlEmpty(h) => emitter.emitEmpty(h)
@@ -46,22 +55,6 @@ sealed abstract class SqlQuery {
           emitter.emitColumnName(x._1) |+| " " |+|
           x._2.emitSql
         ).toIterable.rawMkString(", "))
-    case SqlOrderByExpr(q, orderBy) =>
-      q.emitSql |+|
-      raw(" order by ") |+| {
-        val realOrder = orderBy filter {
-          i => i._1.deparenthesize match {
-            case LitSqlExpr(_) => false
-            case _ => true
-          }
-          // XXX could still fail if it's constant -- check for this?
-        }
-        if (realOrder.isEmpty) raw("1 asc")
-          else realOrder.distinct.map(x =>
-            x._1.emitSql |+| " " |+|
-            x._2.emitSql
-          ).toIterable.rawMkString(", ")
-      }
     case SqlLimit(q, from, to) =>
       (from, to) match {
         // always emit a limit clause even if it's trivial; this affects parsing.
@@ -80,10 +73,13 @@ object SqlQuery {
   sealed trait Limitable extends SqlQuery
   sealed trait Nestable extends SqlQuery
 
-  def orderBy(q: SqlQuery.Orderable, orderBy: List[(SqlColumn, SqlOrder)]) = q match {
-    case sel: SqlSelect => SqlOrderByExpr(sel, orderBy map { case (c,o) => (sel.attrs(c),o) })
-    case unsel => SqlOrderBy(unsel, orderBy)
-  }
+  /** Order by the select's ALIASES.  Ordering a `SqlSelect` by its attrs'
+    * expressions (the former `SqlOrderByExpr` node) made two columns that share an
+    * expression an ORDER BY with the same expression twice, and a computed
+    * column over an empty relation's typed NULLs a constant one; SQL Server
+    * rejects both, and every live dialect resolves a select-list alias in
+    * ORDER BY (SQL audit E23). */
+  def orderBy(q: SqlQuery.Orderable, orderBy: List[(SqlColumn, SqlOrder)]) = SqlOrderBy(q, orderBy)
 }
 
 sealed abstract class SqlSource {
@@ -191,9 +187,6 @@ case class SqlNaryOp(op: SqlBinOp, rs: NonEmptyList[SqlQuery.Orderable]) extends
 
 case class SqlOrderBy(q: SqlQuery.Orderable,
                       orderBy: List[(SqlColumn, SqlOrder)]) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Limitable
-
-case class SqlOrderByExpr(q: SqlQuery.Orderable,
-                          orderBy: List[(SqlExpr, SqlOrder)]) extends SqlQuery with SqlQuery.Scannable with SqlQuery.Limitable
 
 case class SqlLimit(q: SqlQuery.Limitable,
                     from: Option[Int] = None,

@@ -487,7 +487,9 @@ object TestErmine extends Properties("Ermine") {
       sessionProp(implicit s =>
         com.clarifi.reporting.ermine.surface.SurfaceParsers.expression("<date>", "@%d/%d/%d" format (y, m, d)) match {
           case Right(com.clarifi.reporting.ermine.surface.SLitDate(_, ermineDate)) =>
-            (emit emitDate ermineDate run) ?= ("'%d-%02d-%02d'" format (y, m, d))
+            // SQL Server wraps the ISO text in CAST(.. AS DATE) since SQL audit E11.
+            val iso = "'%d-%02d-%02d'" format (y, m, d)
+            (emit emitDate ermineDate run) ?= (if (emit eq SqlEmitter.msSqlEmitter) "CAST(" + iso + " AS DATE)" else iso)
           case fs => die("another day")
         })
     }
