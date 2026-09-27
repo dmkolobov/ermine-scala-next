@@ -35,11 +35,12 @@ sealed abstract class Op extends TraversableColumns[Op] {
         case m => dt.mapDate(u.incrementTimestamp(_, m.extractInt))
       }
     }
-    case DateDiff(u,s,e) =>
-      if(u == TimeUnit.Millisecond)
-        IntExpr(false, (e.eval(t).extractTimestamp.getTime - s.eval(t).extractTimestamp.getTime).toInt)
-      else
-        sys error "datediff is meant to be used from SQL; built-in Java date subtraction is limited to milliseconds"
+    // SQL audit P7 (S-19): every unit, as SQL Server's `datediff` counts it (the unit
+    // boundaries crossed on the GMT calendar `PrimExprs` pins), and NULL in, NULL out.
+    case DateDiff(u,s,e) => (s.eval(t), e.eval(t)) match {
+      case (_: NullExpr, _) | (_, _: NullExpr) => NullExpr(PrimT.IntT(true))
+      case (sv, ev) => IntExpr(false, u.boundariesBetween(sv.extractTimestamp, ev.extractTimestamp))
+    }
     case Funcall(n,_,_,_,_) => sys error ("Can't invoke %s outside of a database" format n)
     case Windowed(_, _) => sys error ("Can't evaluate window functions outside of a database")
     case BuiltinCall(b, args) => builtinEval(b, args.map(_ eval t))
@@ -74,28 +75,17 @@ sealed abstract class Op extends TraversableColumns[Op] {
        | _: NullExpr | _:TimestampExpr => false
   }
 
-  private def asNum(v: Byte)(p: PrimExpr) = p match {
-    case _ : ByteExpr => ByteExpr(p.nullable, v)
-    case _ : ShortExpr => ShortExpr(p.nullable, v)
-    case _ : IntExpr => IntExpr(p.nullable, v)
-    case _ : LongExpr => LongExpr(p.nullable, v)
-    case _ : DoubleExpr => DoubleExpr(p.nullable, v)
-    case _ => sys.error("Op.asNum: called with non-numeric prim expr")
-  }
-
-  def builtinSimplify(b: Builtin, args: List[Op]): Op = (b, args) match {
-    case (LogBase, List(l,r)) => r match {
-      case OpLiteral(pe) if pnum(1)(pe) => OpLiteral(asNum(0)(pe))
-    }
-    case _ =>
-      args.traverse {
-        case OpLiteral(pe) => Some(pe) ; case _ => None
-      } flatMap {
-        builtinEvalMaybe(b, _)
-      } map {
-        OpLiteral(_)
-      } getOrElse (BuiltinCall(b,args))
-  }
+  // SQL audit P1 (S-04, O-2): `LogBase` used to have its own branch that matched only a
+  // literal base of 1 (answering 0, which log base 1 is not) and threw `MatchError` for
+  // every other base; every builtin folds the same way now.
+  def builtinSimplify(b: Builtin, args: List[Op]): Op =
+    args.traverse {
+      case OpLiteral(pe) => Some(pe) ; case _ => None
+    } flatMap {
+      builtinEvalMaybe(b, _)
+    } map {
+      OpLiteral(_)
+    } getOrElse (BuiltinCall(b,args))
 
   def simplify(t: Map[ColumnName, Op]): Op = {
     def opbin(unsimpl: (Op, Op) => Op, simpl: (PrimExpr, PrimExpr) => PrimExpr,
@@ -286,10 +276,40 @@ sealed abstract class Op extends TraversableColumns[Op] {
 trait TimeUnit {
   import TimeUnit._ // constructors
 
+  // SQL audit P7 (S-28): `Calendar.getInstance` read the JVM's default zone, while every
+  // formatter and accessor (`PrimExprs`) is pinned to GMT, so an in-memory `dateAdd`
+  // across the machine zone's DST change was an hour off.  SQL's `dateadd` is calendar
+  // arithmetic on a zoneless value; GMT has no DST, so this is the same thing.
+  private def gmtCalendar(d: Date): Calendar = {
+    val cal = Calendar.getInstance(com.clarifi.reporting.util.YMDTriple.ymdPivotTimeZone)
+    cal.setTime(d)
+    cal
+  }
+
+  /** SQL Server's `datediff(unit, s, e)`: the number of `unit` boundaries crossed going
+    * from `s` to `e` on the GMT calendar (negative when `e` is earlier).  Days are GMT
+    * midnights, weeks are Sundays (`datediff(week, ..)` counts Sundays whatever
+    * `DATEFIRST` says), months and years are calendar boundaries.  For a date-typed
+    * value (midnight) this is also the whole-day difference.
+    */
+  def boundariesBetween(s: Timestamp, e: Timestamp): Int = {
+    val dayMs = 86400000L
+    def fd(ms: Long, unit: Long): Long = Math.floorDiv(ms, unit)
+    def ym(c: Calendar): Int = c.get(Calendar.YEAR) * 12 + c.get(Calendar.MONTH)
+    this match {
+      case Millisecond => (e.getTime - s.getTime).toInt
+      case Second => (fd(e.getTime, 1000L) - fd(s.getTime, 1000L)).toInt
+      case Day => (fd(e.getTime, dayMs) - fd(s.getTime, dayMs)).toInt
+      case Week => // 1970-01-01 was a Thursday: the first Sunday is day 3
+        (fd(fd(e.getTime, dayMs) - 3, 7L) - fd(fd(s.getTime, dayMs) - 3, 7L)).toInt
+      case Month => ym(gmtCalendar(e)) - ym(gmtCalendar(s))
+      case Year => gmtCalendar(e).get(Calendar.YEAR) - gmtCalendar(s).get(Calendar.YEAR)
+    }
+  }
+
   def incrementTimestamp(t: Timestamp, n: Int): Timestamp = {
     def go(t: Timestamp, untypedJavaCalendarUnits: Int, n: Int): Timestamp = {
-      val cal = Calendar.getInstance
-      cal.setTime(t)
+      val cal = gmtCalendar(t)
       cal.add(untypedJavaCalendarUnits, n)
       new Timestamp(cal.getTimeInMillis)
     }
@@ -310,8 +330,7 @@ trait TimeUnit {
    */
   def increment(d: Date, n: Int): Date = {
     def go(d: Date, untypedJavaCalendarUnits: Int, n: Int): Date = {
-      val cal = Calendar.getInstance
-      cal.setTime(d)
+      val cal = gmtCalendar(d)
       cal.add(untypedJavaCalendarUnits, n)
       cal.getTime
     }

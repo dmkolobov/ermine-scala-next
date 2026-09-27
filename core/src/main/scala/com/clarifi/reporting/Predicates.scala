@@ -13,16 +13,46 @@ object Predicates {
 
   def IsNull(expr: Op): Predicate = Predicate.IsNull(expr)
 
-  def toFn(pp: Predicate): Record => Boolean = pp.apply[Record => Boolean](
-    atom = b => (t: Record) => b,
-    lt = (a, b) => (t: Record) => a.eval(t) lt b.eval(t),
-    gt = (a, b) => (t: Record) => a.eval(t) gt b.eval(t),
-    eq = (a, b) => (t: Record) => a.eval(t).equalsIfNonNull(b.eval(t)),
-    not = p2 => (t: Record) => !p2.apply(t),
-    or = (a, b) => (t: Record) => a.apply(t) || b.apply(t),
-    and = (a, b) => (t: Record) => a.apply(t) && b.apply(t),
-    isNull = e => (t: Record) => e.eval(t).isNull,
+  // SQL audit P3 (S-14, D1).  Evaluation used to be two-valued: `NullExpr` sorted
+  // before everything, so `n < 2` KEPT a NULL row, and `not (n == v)` was `!false`, so
+  // it kept one too, while SQL drops both (a comparison with NULL is UNKNOWN, `not
+  // unknown` is unknown, and a filter keeps only TRUE).  `toFn3` is SQL's three-valued
+  // logic with `None` for unknown; `toFn` is the filter's view of it.
+
+  /** Three-valued evaluation: `None` is SQL's UNKNOWN. */
+  def toFn3(pp: Predicate): Record => Option[Boolean] = pp.apply[Record => Option[Boolean]](
+    atom = b => (t: Record) => Some(b),
+    lt = (a, b) => (t: Record) => compare3(a.eval(t), b.eval(t))(_ lt _),
+    gt = (a, b) => (t: Record) => compare3(a.eval(t), b.eval(t))(_ gt _),
+    eq = (a, b) => (t: Record) => compare3(a.eval(t), b.eval(t))(_ == _),
+    not = p2 => (t: Record) => p2.apply(t).map(!_),
+    or = (a, b) => (t: Record) => a.apply(t) match {
+      case Some(true) => Some(true)
+      case x => (x, b.apply(t)) match {
+        case (_, Some(true)) => Some(true)
+        case (Some(false), Some(false)) => Some(false)
+        case _ => None
+      }
+    },
+    and = (a, b) => (t: Record) => a.apply(t) match {
+      case Some(false) => Some(false)
+      case x => (x, b.apply(t)) match {
+        case (_, Some(false)) => Some(false)
+        case (Some(true), Some(true)) => Some(true)
+        case _ => None
+      }
+    },
+    isNull = e => (t: Record) => Some(e.eval(t).isNull),
     funtest = (n,_,_,_) => sys error ("Can't invoke %s outside of a database" format n) )
+
+  private def compare3(x: PrimExpr, y: PrimExpr)(f: (PrimExpr, PrimExpr) => Boolean): Option[Boolean] =
+    if (x.isNull || y.isNull) None else Some(f(x, y))
+
+  /** The filter's view: a row passes only when the predicate is TRUE. */
+  def toFn(pp: Predicate): Record => Boolean = {
+    val f = toFn3(pp)
+    (t: Record) => f(t) == Some(true)
+  }
 
   /** Answer things known to be true about every row in
     * `∀r. Filter(r, p)`.
