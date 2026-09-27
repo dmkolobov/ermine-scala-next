@@ -328,7 +328,23 @@ class Literal( r:  OneAnd[ ({type F[X] = Coproduct[IndexedSeq, List, X]})#F, Rec
     Coproduct( xs.run.bimap(f,g) )
   }
 
-  override def toString: String = "Literal{ size = " + seq.size + " }"
+  /** A SHA-1 of the rows (each row's columns in name order, NULL spelt out so it
+    * is not the empty string).  `SqlScanner` names a persistent memo table
+    * (`MemoR`) and a let scope by a SHA-1 of `toString`, so a print that gave
+    * only the SIZE let two memoised relations that differ in a literal's rows
+    * share one table, and the second read the first's rows (audit L-10, O-23). */
+  lazy val contentDigest: String = {
+    val md = java.security.MessageDigest.getInstance("SHA")
+    seq.foreach { r =>
+      md.update(r.toList.sortBy(_._1).map { case (k, v) =>
+        k + "=" + (if (v.isNull) "NULL" else v.toString)
+      }.mkString("|").getBytes("UTF-8"))
+      md.update('\n'.toByte)
+    }
+    md.digest.map("%02x" format _).mkString
+  }
+
+  override def toString: String = "Literal{ size = " + seq.size + ", digest = " + contentDigest + " }"
 }
 
 object Literal {
@@ -412,6 +428,36 @@ object Mem {
   def instantiate[R, M](x: => Mem[R, M], s: MScope[R, M]): Mem[R, M] = s flatMap {
     case MTop    => x
     case MPop(v) => v
+  }
+
+  /** Whether `m` holds a `LetM` or `MemoMem`: their memo lives ON THE NODE, so
+    * a `groupBy` body holding one is instantiated and compiled per group
+    * rather than compiled once (`SqlScanner`, `GroupByM`).  A `LetR` under an
+    * `EmbedMem` is refused there anyway (a group body may not make temp
+    * tables), so `EmbedMem(ExtRel(..))` is not searched. */
+  def hasMemo(m: Mem[_, _]): Boolean = m match {
+    case LetM(_, _) | MemoMem(_)      => true
+    case GroupByM(m1, _, e)           => hasMemo(m1) || hasMemo(e)
+    case AccumulateM(_, _, e, l, t)   => hasMemo(e) || hasMemo(l) || hasMemo(t)
+    case ProcessM(_, m1)              => hasMemo(m1)
+    case LimitM(m1, _, _, _)          => hasMemo(m1)
+    case FilterM(m1, _)               => hasMemo(m1)
+    case ProjectM(m1, _)              => hasMemo(m1)
+    case ExceptM(m1, _)               => hasMemo(m1)
+    case RenameM(m1, _, _, _)         => hasMemo(m1)
+    case CombineM(m1, _, _)           => hasMemo(m1)
+    case AggregateM(m1, _, _)         => hasMemo(m1)
+    case UnionM(a, b)                 => hasMemo(a) || hasMemo(b)
+    case DifferenceM(a, b)            => hasMemo(a) || hasMemo(b)
+    case HashInnerJoin(a, b)          => hasMemo(a) || hasMemo(b)
+    case HashLeftJoin(a, b)           => hasMemo(a) || hasMemo(b)
+    case MergeOuterJoin(a, b)         => hasMemo(a) || hasMemo(b)
+    case Pivot(u, _, _, _, _)         => hasMemo(u)
+    case AugmentSM(m1, _, _)          => hasMemo(m1)
+    case EmbedMem(ExtMem(m1))         => hasMemo(m1)
+    case EmbedMem(_)                  => false
+    case VarM(_)                      => false
+    case _: HardMem                   => false
   }
 
   implicit val memBifoldable: Bifoldable[Mem] = new Bifoldable.FromBifoldMap[Mem] {

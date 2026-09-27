@@ -37,6 +37,7 @@ object DebugBackend {
       import mySqlBackend.SqlPrg
       implicit val sup = Supply.create
       implicit val scopeBuilder = List[() => String]()
+      implicit val letCache = new mySqlBackend.LetCache
       val SqlPrg(p, _, dq, _) = mySqlBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
 
       if (p.isEmpty) {
@@ -70,6 +71,7 @@ object DebugBackend {
       import verticaBackend.SqlPrg
       implicit val sup = Supply.create
       implicit val scopeBuilder = List[() => String]()
+      implicit val letCache = new verticaBackend.LetCache
       val SqlPrg(p, _, dq, _) = verticaBackend.compileRel(r.out, (x:Nothing) => x, (x:Nothing) => x)
 
       if (p.isEmpty) {

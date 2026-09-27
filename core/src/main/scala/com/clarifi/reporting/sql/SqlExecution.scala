@@ -58,7 +58,9 @@ class SqlExecution(implicit emitter: SqlEmitter) {
         logger.debug("prepared statement fetch size: " + stmt.getFetchSize)
         stmt.setFetchSize(10000)
         stmt.setQueryTimeout(300) // 5 minutes
-        val rs = stmt.executeQuery
+        // A query the database REJECTS used to leave its statement open: the
+        // teardown below is only installed once `setup` returns (audit L-12).
+        val rs = try stmt.executeQuery catch { case t: Throwable => stmt.close(); throw t }
         val md = rs.getMetaData
 
         val cc = md.getColumnCount
@@ -70,16 +72,17 @@ class SqlExecution(implicit emitter: SqlEmitter) {
         val qDelta = qEnd - qStart
         logger trace ("Finished executing query -- took " + qDelta + "ms")
 
-        val keyCache = Range(0, cc).map { i =>
-          (md.getColumnLabel(i+1), i)
-        }.toMap
+        // Column labels, names and types are resolved ONCE per result set;
+        // they were looked up (a native call on sqlite-jdbc) for every cell
+        // of every row (audit W-2).
+        val labels = Range(0, cc).map(i => md.getColumnLabel(i + 1))
+        val keyCache = labels.zipWithIndex.toMap
+        val columnTypes: IndexedSeq[PrimT] = labels.map(l => h(emitter.unemitColumnName(l)))
 
         def nextRecord: Record =
           record.RecordMap.createWithKeyCache(keyCache){ i =>
             val x = i + 1
-            val columnLabel = md.getColumnLabel(x)
-            val columnName = emitter.unemitColumnName(columnLabel)
-            val columnType = h(columnName)
+            val columnType = columnTypes(i)
             val simpleExpr = columnType match {
               case DateT(n) => DateExpr(n, rs.getDate(x, gmtCalendar))
               case DoubleT(n) => DoubleExpr(n, rs.getDouble(x))
