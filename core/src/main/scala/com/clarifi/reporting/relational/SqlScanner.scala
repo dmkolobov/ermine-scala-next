@@ -48,6 +48,57 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                     p:  OrderedProcedure[DB, Record],
                     refl: Reflexivity[ColumnName])
 
+  /** One per scan: the temp table a CLOSED let-bound relation (`LetR` whose
+    * `ext` mentions no bound variable, e.g. `materialize r`) was compiled
+    * into, keyed by the relation value and its primary key.  Every reference
+    * to such a relation used to mint its own temp table and fill it again
+    * (`Algebra.Helpers.closure` at depth 4: 40 temp tables for 4 distinct
+    * relations, audit O-25, L-21); now the same statements are reused, so
+    * `sequenceSql`'s `distinct` runs them once.  Relations mentioning a bound
+    * variable are compiled per visit as before, since their meaning depends on
+    * the scope. */
+  final class LetCache {
+    private[this] val tables =
+      new scala.collection.mutable.HashMap[(String, List[String]), (Header, Reflexivity[ColumnName], List[SqlStatement], TableName)]
+    def getOrElseUpdate(ext: Any, pk: List[String],
+                        make: => (Header, Reflexivity[ColumnName], List[SqlStatement], TableName)) =
+      tables.getOrElseUpdate((LetCache.key(ext), pk), make)
+    def size: Int = tables.size
+  }
+
+  object LetCache {
+    /** A SHA-1 of an EXACT structural rendering of `x`: every `PrimExpr` with
+      * its type, nullability and exact value (`PrimExpr` equality is
+      * case-insensitive for strings and makes NULL equal to NULL, so keying by
+      * `==` would let `"a"` and `"A"` share one temp table and SQLite read the
+      * wrong case), every literal's rows (`Literal` is not a case class and
+      * `SmallLit` prints values without their types), and otherwise the case
+      * class structure.  A quote's identity object renders by identity. */
+    def key(x: Any): String = {
+      val md = java.security.MessageDigest.getInstance("SHA")
+      def put(s: String): Unit = { md.update(s.getBytes("UTF-8")); md.update(0.toByte) }
+      def go(v: Any): Unit = v match {
+        case p: PrimExpr =>
+          put(p.typ.toString); put(if (p.nullable) "?" else "!")
+          put(if (p.isNull) "NULL" else "=" + (p.value match {
+            case d: java.util.Date => d.getTime.toString // exact millis, not the zone-dependent print
+            case v => v.toString
+          }))
+        case l: Literal => put("Literal("); l.seq.foreach(go); put(")")
+        case m: scala.collection.Map[_, _] =>
+          put("Map("); m.toList.sortBy(_._1.toString).foreach { case (k, w) => go(k); put("->"); go(w) }; put(")")
+        case s: scala.collection.Set[_] => put("Set("); s.toList.map(e => key(e)).sorted.foreach(put); put(")")
+        case o: Option[_] => put("Option("); o.foreach(go); put(")")
+        case i: Iterable[_] => put("Seq("); i.foreach(go); put(")")
+        case p: Product => put(p.productPrefix + "("); p.productIterator.foreach(go); put(")")
+        case null => put("null")
+        case other => put(other.toString)
+      }
+      go(x)
+      md.digest.map("%02x" format _).mkString
+    }
+  }
+
   private[this] def logger = Logger getLogger this.getClass
 
   import AggFunc._
@@ -280,16 +331,16 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     implicit val sup = Supply.create
     implicit val memoLookup = new HashSet[TableName]()
     implicit val scopeBuilder = List()
+    implicit val letCache = new LetCache
     val tr = RenderTrace.current
     val c0 = if (tr.on) System.nanoTime else 0L
     compileMem(Optimizer.optimize(m), (x:Nothing) => x, (x: Nothing) => x) match {
       case MemPrg(h, p, q, rx) =>
         if (tr.on) tr.sqlEmitted(System.nanoTime - c0)
-        for {
-        ts <- sequenceSql(p)
-        a <- q(order) map (_ andThen f execute)
-        _ <- cleanTempTables(ts)
-      } yield a
+        // `ensure`: the temp tables are dropped when the scan FAILS too; the
+        // drop only ran after a successful scan (audit L-11, L-12).
+        sequenceSql(p).flatMap(ts =>
+          DB.ensure(q(order) map (_ andThen f execute), cleanTempTables(ts)))
     }
   }
 
@@ -299,16 +350,14 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     implicit val sup = Supply.create
     implicit val memoLookup = new HashSet[TableName]()
     implicit val scopeBuilder = List()
+    implicit val letCache = new LetCache
     val tr = RenderTrace.current
     val c0 = if (tr.on) System.nanoTime else 0L
     compileRel(Optimizer.optimize(m), (x:Nothing) => x, (x: Nothing) => x) match {
       case SqlPrg(p, ns, q, rx) =>
         if (tr.on) tr.sqlEmitted(System.nanoTime - c0)
-        for {
-        ts <- sequenceSql(p)
-        a <- scanAndUniq(q, order, ns) map (_ andThen f execute)
-        _ <- cleanTempTables(ts)
-      } yield a
+        sequenceSql(p).flatMap(ts =>
+          DB.ensure(scanAndUniq(q, order, ns) map (_ andThen f execute), cleanTempTables(ts)))
     }
   }
 
@@ -317,6 +366,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     implicit val sup = Supply.create
     implicit val memoLookup = new HashSet[TableName]()
     implicit val scopeBuilder = List()
+    implicit val letCache = new LetCache
     compileRel(Optimizer.optimize(m), (x: Nothing) => x, (x: Nothing) => x) match {
       case SqlPrg(prg, notes, dq, _) =>
         val stmts = prg.distinct.map(x => x.emitSql(emitter).run)
@@ -375,7 +425,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     case JoinMode.Full  => SqlJoinFull
   }
 
-  def compileMem[M,R](m: Mem[R, M], smv: M => MemPrg, srv: R => SqlPrg)(implicit sup: Supply, memoLookup: HashSet[TableName], scopeBuilder : List[() => String]): MemPrg =
+  def compileMem[M,R](m: Mem[R, M], smv: M => MemPrg, srv: R => SqlPrg)(implicit sup: Supply, memoLookup: HashSet[TableName], scopeBuilder : List[() => String], letCache: LetCache): MemPrg =
     m match {
       case VarM(v) => smv(v)
       case LetM(ext, expr) =>
@@ -424,14 +474,23 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                ForallTups(Map(attr.name -> None), PartitionedSet.zero))
       case LimitM(m, start, stop, order) =>
         val MemPrg(h, ps, q, rx) = compileMem(m, smv, srv)
-        val start2 = start.getOrElse(0)
-        val drop = start.map( Process.dropping[Record](_) )
-        val take = stop.map( stop2 => Process.taking[Record]( stop2 - start2) )
+        // 1-based and INCLUSIVE, as `Limit`, Sort.e and the emitters are
+        // (audit L-7, S-11, O-8): (Just 2, Just 3) is the second and third
+        // row, (Just 1, Just 1) the first; it used to drop `start` rows and
+        // take `stop - start`.  With no order it sorts by every column, as the
+        // SQL side does, and the rows are re-sorted to the order the consumer
+        // asked for, which it used to ignore (audit L-9).
+        val fromn = start.getOrElse(1)
+        val actualOrder = if (!order.isEmpty) order
+                          else h.map { case (k, _) => (k, SortOrder.Asc) }.toList
+        val drop = if (fromn > 1) Some(Process.dropping[Record](fromn - 1)) else None
+        val take = stop.map(t => Process.taking[Record](math.max(0, t - fromn + 1)))
         MemPrg( h,
-                ps,  // todo: do this less ugly-ily
-                o => q(order) map {proc => val dropped = drop.map( proc andThen _ ).getOrElse(proc)
-                                           take.map( dropped andThen _ ).getOrElse(dropped)
-                                  },
+                ps,
+                o => q(actualOrder) map {proc => val dropped = drop.map( proc andThen _ ).getOrElse(proc)
+                                                 val taken = take.map( dropped andThen _ ).getOrElse(dropped)
+                                                 taken andThen sorting(actualOrder, o)
+                                        },
                 rx
               )
 
@@ -450,7 +509,15 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         MemPrg(h1 ++ h2, p1 ++ p2, o => {
           val prefix = o takeWhile (x => jk contains x._1)
           val preo = prefix ++ jk.view.filterNot(prefix.toMap.contains).map(_ -> Asc)
-          val ord: Order[Record] = recordOrd(preo)
+          // A join key holding a NULL never matches (decision D1, item C21):
+          // two such keys that the record order calls EQUAL are answered LT,
+          // so the merge emits the left row unmatched and, on the next step,
+          // the right one; the streams stay sorted under either answer.
+          val ord0: Order[Record] = recordOrd(preo)
+          val ord: Order[Record] = Order.order((a: Record, b: Record) => ord0.order(a, b) match {
+            case scalaz.Ordering.EQ if nullKeyed(jk)(a) => scalaz.Ordering.LT
+            case o => o
+          })
           val merged = ^(q1(preo), q2(preo))(
             (q1p, q2p) => q1p.tee(q2p)(Tee.mergeOuterJoin((r: Record) => (r filterKeys jk).toMap,
                                                           (r: Record) => (r filterKeys jk).toMap
@@ -524,11 +591,12 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
             // for each leaf, recursively add itself to its parent, grandparent, (great^n)grandparent's list
             def insertIntoDescendantLeaves(parentId: PrimExpr, leaf: Record): Unit = {
               // Make sure the leaf's parent exists in the tree, because a leaf could be an orphan
-              // and it doesn't make sense to add orphans to descendantLeaves
-              tree.get(parentId) foreach { parent =>
+              // and it doesn't make sense to add orphans to descendantLeaves.  A NULL id
+              // matches no node (decision D1, item C21): `NullExpr == NullExpr` in memory.
+              if (!parentId.isNull) tree.get(parentId) foreach { parent =>
                 descendantLeaves = descendantLeaves + (parentId -> (descendantLeaves(parentId) :+ leaf))
                 val grandParentId = parent(parentIdCol.name)
-                if( tree.contains(grandParentId) ) // Are we at the root node yet?
+                if( !grandParentId.isNull && tree.contains(grandParentId) ) // Are we at the root node yet?
                   insertIntoDescendantLeaves(grandParentId, leaf)
               }
             }
@@ -560,6 +628,27 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         def toOp(a: Attribute) = Op.ColumnValue(a.name, a.t)
         val MemPrg(h, p, q, r) = compileMem(m, smv, srv)
         val knames = k.map(_.name).toSet
+        // The body is compiled ONCE, against a placeholder that reads the
+        // current group's rows when its procedure is made; it was
+        // instantiated with each group's literal and compiled again per group
+        // (audit S-22).  A body holding a `letM`/`MemoMem` keeps the old way:
+        // its memo lives on the node and would hold the FIRST group's rows.
+        // Within a group the key columns are constant (value unknown), on top
+        // of what `m` guarantees for every row.
+        val groupRows = new java.util.concurrent.atomic.AtomicReference[Literal]
+        val groupRx: Reflexivity[ColumnName] =
+          r && ForallTups(knames.map(n => (n, None: Option[PrimExpr])).toMap, PartitionedSet.zero)
+        val once: Option[OrderedProcedure[DB, Record]] =
+          if (Mem.hasMemo(expr)) None
+          else {
+            val MemPrg(_, sp, sq, _) = compileMem(expr, (v: MLevel[R, M]) => v match {
+                case MTop => MemPrg(h, List(), so => literalProcedure(groupRows.get, so).point[DB], groupRx)
+                case MPop(mex) => compileMem(mex, smv, srv)
+              }, srv)
+            if (!sp.isEmpty)
+              sys.error("subqueries of groupBy cannot 'let' new temp tables: " + expr)
+            Some(sq)
+          }
         val joined: OrderedProcedure[DB, Record] = {
           (ord: List[(String, SortOrder)]) => (db: java.sql.Connection) =>
              val kord_ = ord.filter { p => knames.contains(p._1) }
@@ -572,12 +661,18 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                  Process.groupingBy((r: Record) => r.filterKeys(knames.contains).toMap)).
                map { case (key, recs) =>
                  val x = Literal(recs.head, recs.tail)
-                 val subquery = Mem.instantiate(x, expr)
-                 val MemPrg(sh, sp, sq, sr) = compileMem(subquery, smv, srv)
-                 if (!sp.isEmpty)
-                   sys.error("subqueries of groupBy cannot 'let' new temp tables: " + subquery)
-                 else
-                   sq(v2ord)(db).map(_ ++ key)
+                 once match {
+                   case Some(sq) =>
+                     groupRows.set(x)
+                     sq(v2ord)(db).map(_ ++ key)
+                   case None =>
+                     val subquery = Mem.instantiate(x, expr)
+                     val MemPrg(sh, sp, sq, sr) = compileMem(subquery, smv, srv)
+                     if (!sp.isEmpty)
+                       sys.error("subqueries of groupBy cannot 'let' new temp tables: " + subquery)
+                     else
+                       sq(v2ord)(db).map(_ ++ key)
+                 }
                }
              }
              rows andThen sorting(kord ++ v2ord, ord) andThen uniq(ord.map(_._1).toSet)
@@ -591,12 +686,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         MemPrg(hdr, p, joined, r.filterKeys(knames.contains))
       case ProcedureCall(args, h, proc, namespace)  => sys.error("TODO")
       case l@Literal(t,ts) =>
-        def src(rs: Stream[Record]): com.clarifi.machines.Source[Record] = rs match {
-          case r #:: rs => Emit(r, () => src(rs))
-          case _       => Stop
-        }
         MemPrg(l.header, List(),
-          so => procedureFromSource(src(l.mapCollections( xs => sort(xs, so), xs => sort(xs, so)).toStream)).point[DB],
+          so => literalProcedure(l, so).point[DB],
           Reflexivity literalSeq (l.seq))
       case EmptyRel(h) => MemPrg(h, List(), _ => procedureFromSource(Machine.stopped).point[DB], KnownEmpty())
       case QuoteMem(n) => sys.error("Cannot scan quotes.")
@@ -648,6 +739,15 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         val (qq, hh, rxx) = sms.augment(h, rx, q, cur, hist)
         MemPrg(hh, p, qq, rxx)
       case x => sys.error("inconceivable! " + x)
+  }
+
+  /** The rows of a literal, sorted by `so`, as a procedure. */
+  private[this] def literalProcedure(l: Literal, so: List[(String, SortOrder)]): Procedure[Id, Record] = {
+    def src(rs: Stream[Record]): com.clarifi.machines.Source[Record] = rs match {
+      case r #:: rs => Emit(r, () => src(rs))
+      case _       => Stop
+    }
+    procedureFromSource(src(l.mapCollections( xs => sort(xs, so), xs => sort(xs, so)).toStream))
   }
 
   // `private[relational]` so `TestInMemoryScan` can drive the in-memory pivot.
@@ -702,7 +802,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     }
   }
 
-  def compileMerge[R,M](m1: Mem[R,M], m2: Mem[R,M],  smv: M => MemPrg, srv: R => SqlPrg, merge: Order[Record] => Tee[Record, Record, Record])(implicit sup: Supply, memoLookup: HashSet[TableName], scopeBuilder : List[() => String]) = {
+  def compileMerge[R,M](m1: Mem[R,M], m2: Mem[R,M],  smv: M => MemPrg, srv: R => SqlPrg, merge: Order[Record] => Tee[Record, Record, Record])(implicit sup: Supply, memoLookup: HashSet[TableName], scopeBuilder : List[() => String], letCache: LetCache) = {
         val r1 = compileMem(m1, smv, srv)
         val r2 = compileMem(m2, smv, srv)
         val MemPrg(h1, p1, q1, rx1) = r1
@@ -749,9 +849,16 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   // join emitted NOTHING (stage F3, ticket A1b; `mergeOuterJoin` at :421 and
   // `leftHashJoin` at :716 spell it correctly).  `private[relational]` so
   // `TestInMemoryScan` can drive it.
+  /** A row whose join key holds a NULL: under SQL's `on (k = k)` it never
+    * matches (decision D1), while in memory `NullExpr == NullExpr`, so the
+    * hash joins matched NULL keys with NULL keys (prims' note on P2). */
+  private[this] def nullKeyed(jk: Set[String])(r: Record): Boolean = jk.exists(c => r(c).isNull)
+
   private[relational] def hashJoin(q1: DB[Procedure[Id, Record]], q2: DB[Procedure[Id, Record]], jk: Set[String]) =
-    ^(q1, q2)((q1, q2) => q1.tee(q2)(Tee.hashJoin((r: Record) => (r filterKeys jk).toMap,
-                                                  (r: Record) => (r filterKeys jk).toMap)).map(p => p._1 ++ p._2))
+    ^(q1, q2)((q1, q2) => (q1 andThen Process.filtered((r: Record) => !nullKeyed(jk)(r)))
+                            .tee(q2 andThen Process.filtered((r: Record) => !nullKeyed(jk)(r)))(
+                              Tee.hashJoin((r: Record) => (r filterKeys jk).toMap,
+                                           (r: Record) => (r filterKeys jk).toMap)).map(p => p._1 ++ p._2))
 
   private def leftHashJoin(dq1: DB[Procedure[Id, Record]],
                            dq2: DB[Procedure[Id, Record]],
@@ -759,6 +866,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                            nulls: Record): DB[Procedure[Id, Record]] = {
     def build(m: Map[Record, Vector[Record]]): Plan[T[Record, Record], Nothing, Map[Record, Vector[Record]]] =
       awaits(right[Record]) flatMap { rr =>
+        if (nullKeyed(jk)(rr)) build(m) else {
         val k = (rr filterKeys jk).toMap
         val v = m.getOrElse(k, Vector.empty)
         /* Alexei: short-circuit a degenerate case of adding the same record to the vector over and over again
@@ -772,13 +880,16 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         }  
         
         val u = m.updated(k, rr2)
-        
+
         build(u)
+        }
       } orElse Return(m)
-    def augments(m: Map[Record, Vector[Record]], r: Record): Vector[Record] = m.lift((r filterKeys jk).toMap) match {
-      case None => Vector(r ++ nulls)
-      case Some(v) => v map (r ++ _)
-    }
+    def augments(m: Map[Record, Vector[Record]], r: Record): Vector[Record] =
+      if (nullKeyed(jk)(r)) Vector(r ++ nulls)
+      else m.lift((r filterKeys jk).toMap) match {
+        case None => Vector(r ++ nulls)
+        case Some(v) => v map (r ++ _)
+      }
     def emits(v: Vector[Record]): Plan[T[Record, Record], Record, Unit] =
       v.foldr[Plan[T[Record, Record], Record, Unit]](Return(()))(e => k => Emit(e, () => k))
     ^(dq1, dq2)((q1, q2) =>
@@ -795,12 +906,13 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   // Uses Reflexivity to determine if a projection preserves distinctness
   private def preservesDistinctness(h: Header, rx: Reflexivity[ColumnName], cols: Map[Attribute, Op]): Boolean = {
 
-    /** @todo SMRC Since this was written, the op language has changed
-      *       such that this answers true too often.
-      */
-    def columnDistinctness(rx: Reflexivity[ColumnName], op: Op, col: ColumnName): Boolean = {
-      val ms = op.foldMap((c: ColumnName) => Map(c -> 1))
-      ms.get(col).map(_ == 1).getOrElse(false) && ms.keySet.forall(c => c == col || rx.consts.isDefinedAt(c))
+    /** Only a bare column reference carries `col`'s distinctness through: any
+      * other op over it (`coalesce`, `if`, `upper`, `abs`, `x * 0`, ...) can
+      * send two values to one, and the old rule took every single-column op
+      * as injective (oracle O-14, item C15). */
+    def columnDistinctness(rx: Reflexivity[ColumnName], op: Op, col: ColumnName): Boolean = op match {
+      case Op.ColumnValue(c, _) => c == col
+      case _ => false
     }
 
     rx match {
@@ -857,7 +969,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
 
   def compileRel[M,R](m: Relation[M, R], smv: M => MemPrg,
                       srv: R => SqlPrg)(implicit sup: Supply, memoLookup: HashSet[TableName]
-                      , scopeBuilder: List[() => String]
+                      , scopeBuilder: List[() => String], letCache: LetCache
                       ): SqlPrg = {
 
     def combineBinary(
@@ -907,9 +1019,12 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       case Limit(r, from, to, order) =>
         val SqlPrg(p, ns, q, rx) = compileRel(r, smv, srv)
 
-        // Limiting to one row or less necessarily makes all things constant
+        // Limiting to one row or less necessarily makes all things constant.
+        // `from`/`to` are 1-based and INCLUSIVE (Sort.e, `emitLimit`), so
+        // (f, t) is one row iff t == f; `t - f < 2` counted a two-row range as
+        // one and the projection above it skipped its DISTINCT (audit L-4).
         val nrx = (from, to) match {
-          case (Some(f), Some(t)) if t-f < 2 =>
+          case (Some(f), Some(t)) if t-f < 1 =>
             ForallTups(q.h.map{ case (k, _) => k -> None}, PartitionedSet.zero)
           case _ => rx
         }
@@ -929,7 +1044,7 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                   :+ SqlExec(sink, src, namespace,
                              TableProc.argFoldable.foldMap(argable){
                                case (unt, SqlPrg(_, _, iq, _)) => // TODO: notes?
-                                 fillTable(unt, iq.h, iq.q(true)._2)
+                                 fillTable(unt, iq.h, iq.distinctQuery)
                              }, oh map (_._1),
                              argable map (_ bimap (_._1,
                                                    SqlExpr.compileLiteral)))
@@ -965,36 +1080,50 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         val relHash = "MemoHash_" + java.security.MessageDigest.getInstance("SHA").digest(s"$r\n$scopeStr".getBytes("UTF-8")).map("%02x" format _).mkString
         val myTN = TableName(relHash, List(), TableName.Persistent)
         val myHints = if (pk.isEmpty) { TableHints.empty } else { TableHints.empty.reorder(pk).withPK(SortedSet(pk: _*)) }
-        val createWithKey :: fillStat = fillTable(myTN, rc.q.h, rc.q.q(true)._2, myHints)
+        val createWithKey :: fillStat = fillTable(myTN, rc.q.h, rc.q.distinctQuery, myHints)
         val myPrg = List(SqlCreateIfNotExists(myTN, rc.prg, createWithKey, fillStat))
         SqlPrg(myPrg, List(), DistinctiveQuery.table(rc.q.h, myTN), rc.refl)
       }
+      case LetR(ext, pk, exp)
+          if exp.bifoldMap((_: M) => 0, (v: RLevel[M, R]) => v match { case RTop => 1; case RPop(_) => 0 }) == 0 =>
+        // The body never uses the binding: no temp table is made or filled
+        // (oracle O-19, item C20).
+        compileRel(exp, smv, (v: RLevel[M, R]) => v match {
+          case RTop => sys.error("Panic: an unused let binding was referenced")
+          case RPop(e) => compileRel(e, smv, srv)
+        })
       case LetR(ext, pk, exp) =>
-        val un = guidName
-        val tn = TableName(un, List(), TableName.Temporary)
-        val hnt = if (pk.isEmpty) { TableHints.empty } else { TableHints.empty.reorder(pk).withPK(SortedSet(pk: _*)) }
-        val tup = ext match {
-          case ExtRel(rel, _) => // TODO: Handle namespace
-            val SqlPrg(ip, _, iq, rx) = compileRel(rel, smv, srv) // TODO: do something with notes
-            (iq.h, rx, ip ++ fillTable(tn, iq.h, iq.q(true)._2, hnt))
-          case ExtSM(sm) =>
-            val (pop, h, rx) = sms(sm)
-            (h, rx,
-              List(SqlCreate(
-                     table = tn, header = h, hints = hnt),
-                   SqlLoad(tn, h, pop(List()))))
-          case ExtMem(mem) =>
-            val m = compileMem(mem, smv, srv)
-            val MemPrg(h, p, pop, rx) = m
-            (h, rx,
-              p ++ List(SqlCreate(table = tn, header = h, hints = hnt),
-                        SqlLoad(tn, h, pop(List()))))
+        def materialise: (Header, Reflexivity[ColumnName], List[SqlStatement], TableName) = {
+          val un = guidName
+          val tn = TableName(un, List(), TableName.Temporary)
+          val hnt = if (pk.isEmpty) { TableHints.empty } else { TableHints.empty.reorder(pk).withPK(SortedSet(pk: _*)) }
+          ext match {
+            case ExtRel(rel, _) => // TODO: Handle namespace
+              val SqlPrg(ip, _, iq, rx) = compileRel(rel, smv, srv) // TODO: do something with notes
+              (iq.h, rx, ip ++ fillTable(tn, iq.h, iq.distinctQuery, hnt), tn)
+            case ExtSM(sm) =>
+              val (pop, h, rx) = sms(sm)
+              (h, rx,
+                List(SqlCreate(
+                       table = tn, header = h, hints = hnt),
+                     SqlLoad(tn, h, pop(List()))), tn)
+            case ExtMem(mem) =>
+              val m = compileMem(mem, smv, srv)
+              val MemPrg(h, p, pop, rx) = m
+              (h, rx,
+                p ++ List(SqlCreate(table = tn, header = h, hints = hnt),
+                          SqlLoad(tn, h, pop(List()))), tn)
+          }
         }
-        val (ih, rx1, ps) = tup
+        // See `LetCache`: a closed `ext` is materialised once per scan.
+        val closed = ext.bifoldMap((_: M) => 1, (_: R) => 1) == 0
+        val (ih, rx1, ps, tn) =
+          if (closed) letCache.getOrElseUpdate(ext, pk, materialise)
+          else materialise
         val SqlPrg(p, ns, q, rx2) = compileRel(exp, smv, (v: RLevel[M,R]) => v match {
           case RTop => SqlPrg(List(), List(), DistinctiveQuery.table(ih, tn), rx1)
           case RPop(e) => compileRel(e, smv, srv)
-        })(sup, memoLookup, (() => ext.toString) :: scopeBuilder)
+        })(sup, memoLookup, (() => ext.toString) :: scopeBuilder, letCache)
         SqlPrg(ps ++ p, ns, q, rx2)
       case Note(ns, under) =>
         val SqlPrg(stmts, notes, q, rx) = compileRel(under, smv, srv)
@@ -1065,8 +1194,13 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       DistinctiveQuery(h, _ => result)
     }
 
+    /** A literal is distinct only when its rows are: a table-value constructor
+      * keeps duplicate rows (SQL Server), the union-of-selects form drops them
+      * by accident (SQLite), and the consumer trusted `true` (oracle O-2). */
     def literal(l: SmallLit)(implicit sup: Supply): DistinctiveQuery = {
-      DistinctiveQuery(l.header, _ => (true, LiteralSqlTable(l.tups.map(r => r.mapValues(x => SqlExpr.compileLiteral(x)).toMap))))
+      val rows = l.tups.list.toList
+      val distinct = rows.distinct.size == rows.size
+      DistinctiveQuery(l.header, _ => (distinct, LiteralSqlTable(l.tups.map(r => r.mapValues(x => SqlExpr.compileLiteral(x)).toMap))))
     }
 
     def empty(h: Header)(implicit sup: Supply): DistinctiveQuery = {
@@ -1081,38 +1215,76 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
     private[this] def guidName = "t" + sguid
     private[this] def freshName(implicit sup: Supply) = "t" + sup.fresh
 
-    import DistinctiveQuery.{satisfyDistinct, columns, asSelect, asOrderable}
+    import DistinctiveQuery.{satisfyDistinct, columns, asSelect, asOrderable, selectWrap}
     import emitter.distinctEagerly
+
+    /** The query with distinct rows, made so here when the inner query could
+      * not (a literal with duplicate rows): what fills a temp, memo or
+      * procedure-argument table, which `table` then rightly claims distinct
+      * (oracle O-2 through `LetR`). */
+    def distinctQuery(implicit sup: Supply): SqlQuery.Scannable with SqlQuery.Nestable =
+      q(true) match { case (d, q0) => satisfyDistinct(d, true, h, q0)._2 }
+
+    /** The operand of a set operation, grouped explicitly (wrapped in a select)
+      * when it is itself a set operation of ANOTHER kind, or the right operand
+      * of EXCEPT: `A UNION B EXCEPT C` is `(A UNION B) EXCEPT C` on SQL Server
+      * and Postgres (UNION and EXCEPT bind alike, left-associatively), so a
+      * nested tree emitted flat meant something else (audit L-2, decision D5:
+      * in the scanner, for every dialect; SQLite's emitter wraps every operand
+      * anyway).  One level of the emitted text then holds one operator, and
+      * how a dialect associates it no longer matters. */
+    private[this] def grouped(q: SqlQuery.Scannable with SqlQuery.Nestable, under: SqlBinOp, rightOfExcept: Boolean)
+                             (implicit sup: Supply): SqlQuery.Orderable = q match {
+      case SqlNaryOp(op, _) if rightOfExcept || (op.getClass != under.getClass) => selectWrap(h, q)
+      case _ => asOrderable(h, q)
+    }
 
     def union(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery =
       DistinctiveQuery(h, needDistinct =>
         (q(false), other.q(false)) match {
           case ((d1, q1), (d2, q2)) =>
-            (true, SqlUnion(asOrderable(h,q1), asOrderable(h,q2)))
+            (true, SqlUnion(grouped(q1, SqlUnion, false), grouped(q2, SqlUnion, false)))
         })
 
+    /** EXCEPT answers a set on every dialect that has it (SQL Server, SQLite,
+      * Postgres, Vertica), so the left arm need not be made distinct and the
+      * result IS distinct; only the MySQL emulation as a LEFT JOIN keeps the
+      * left arm's multiplicity, and there the old shape stays (audit L-19 b,
+      * O-26). */
     def minus(other: DistinctiveQuery)(implicit sup: Supply): DistinctiveQuery = {
       val ur = freshName
+      val exceptIsSet = emitter match {
+        case _: EmitNary_ExceptAsJoin => false
+        case _ => true
+      }
       DistinctiveQuery(h, needDistinct =>
-        (q(distinctEagerly), other.q(false)) match {
+        (q(needDistinct && !exceptIsSet), other.q(false)) match {
           case ((d, q1), (_, q2)) =>
             // No need for the thing we're subtracting to be distinct
-            satisfyDistinct(d, needDistinct, h, SqlDifference(TableName(ur), h, asOrderable(h, q1), asOrderable(h, q2)))
+            val ex = SqlExcept(TableName(ur), h)
+            val diff = SqlDifference(TableName(ur), h, grouped(q1, ex, false), grouped(q2, ex, true))
+            if (exceptIsSet) (true, diff)
+            else satisfyDistinct(d, needDistinct, h, diff)
         })
     }
 
+    /** A one-row literal joined to `q` becomes an equality predicate on `q`'s
+      * select and the literal's constants in its select list.  The select is
+      * wrapped first when it is WINDOWED (the predicate would otherwise filter
+      * the rows BEFORE the window function ranks them, and a predicate on the
+      * window column itself is rejected by T-SQL: audit L-3, O-3) or AGGREGATED
+      * (the predicate would become a HAVING and the literal's constant would
+      * replace the GROUP BY column with a constant, which `SqlSelect.emitSql`
+      * drops from the GROUP BY, so an empty input answered one row: oracle
+      * O-15).  Wrapped, the predicate is a plain WHERE on the outer select. */
     def squashLiteral(attrs: Map[SqlColumn, SqlExpr], h: Header, q: SqlQuery.Scannable with SqlQuery.Nestable, on: Set[(String,String)], mode: JoinMode)
                      (implicit sup: Supply): SqlSelect = {
-      val v = asSelect(h,q)
+      val v = asSelect(h, q, v => !v.isWindowed && !v.isAggregated)
       val preds = on.toList.map {
         case (l,r) => SqlEq(v.attrs(r),attrs(l))
       }
-      if (v.isAggregated)
-        v.copy(attrs = v.attrs ++ attrs,
-               having = v.having ++ preds)
-      else
-        v.copy(attrs = v.attrs ++ attrs,
-               where = v.where ++ preds)
+      v.copy(attrs = v.attrs ++ attrs,
+             where = v.where ++ preds)
     }
 
     def joinOn(on: Set[(String, String)], other: DistinctiveQuery, mode: JoinMode)(implicit sup: Supply): DistinctiveQuery = {
@@ -1130,18 +1302,28 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                 case (SqlSingle(row)) if mode == JoinMode.Inner =>
                   squashLiteral(row,h,q1,allOn map {_.swap},mode.reverse)
                 case _ =>
+                  // The side an outer join pads with NULLs is merged into the
+                  // join's select only when its select list is plain column
+                  // references: a constant or `coalesce` in it would be
+                  // computed on the padded rows too, where the answer must be
+                  // NULL (audit O-4); its WHERE would filter the join instead
+                  // of the side.
+                  def plainColumns(v: SqlSelect) = v.attrs.values.forall {
+                    case _: ColumnSqlExpr => true
+                    case _ => false
+                  }
                   val v1 = asSelect(h,q1, v => !v.isAggregated
                                             && !v.sources.sources.isEmpty
                                             && !v.isWindowed
                                             && (mode match {
-                                                 case JoinMode.Right | JoinMode.Full => v.where.isEmpty
+                                                 case JoinMode.Right | JoinMode.Full => v.where.isEmpty && plainColumns(v)
                                                  case _ => true
                                                }))
                   val v2 = asSelect(other.h,q2, v => !v.isAggregated
                                                   && !v.sources.sources.isEmpty
                                                   && !v.isWindowed
                                                   && (mode match {
-                                                       case JoinMode.Left | JoinMode.Full => v.where.isEmpty
+                                                       case JoinMode.Left | JoinMode.Full => v.where.isEmpty && plainColumns(v)
                                                        case _ => true
                                                      }))
                   v1.copy(sources = SourceList(
@@ -1160,28 +1342,84 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                          )
               }
           }
-          DistinctiveQuery(other.h ++ h, nd => satisfyDistinct(d1 && d2, nd, other.h ++ h, q3))
+          // The side an outer join pads is typed NULLABLE in the header the
+          // rows are decoded with, else an unmatched row's NULL is refused at
+          // decode time (decision D4; `Typer.joinHeader` says the same for the
+          // document's types).  A join column keeps the type of the side whose
+          // value the select list takes (`joinAttrs`); on a FULL join it is
+          // coalesced, so it stays as the left side has it.
+          def padded(side: Header, other: Header): Header =
+            (side -- other.keySet).map { case (c, t) => (c, t.withNull) }
+          val jh: Header = mode match {
+            case JoinMode.Inner => other.h ++ h
+            case JoinMode.Left  => padded(other.h, h) ++ h
+            case JoinMode.Right => padded(h, other.h) ++ other.h
+            case JoinMode.Full  =>
+              // a shared column is `coalesce(l, r)`: NULL when the one side
+              // present has a NULL there, so nullable iff EITHER side's is
+              // (`Typer.joinHeader`'s rule; review-scanner's must-fix)
+              padded(other.h, h) ++ padded(h, other.h) ++ (h filterKeys other.h.keySet).toMap.map {
+                case (c, t) => (c, if (t.nullable || other.h(c).nullable) t.withNull else t)
+              }
+          }
+          // An outer join over a NULLABLE join column cannot claim distinct
+          // output: a left-only and a right-only row whose keys are NULL
+          // coalesce to equal rows (oracle O-28, item C16).
+          val nullableKey = mode != JoinMode.Inner && allOn.exists {
+            case (c1, c2) => h.get(c1).exists(_.nullable) || other.h.get(c2).exists(_.nullable)
+          }
+          DistinctiveQuery(jh, nd => satisfyDistinct(d1 && d2 && !nullableKey, nd, jh, q3))
         }
     }
 
+    /** A filter over a UNION is pushed into every arm (σ(A ∪ B) = σ(A) ∪ σ(B),
+      * under three-valued logic too), so each arm is filtered before the union
+      * dedupes it instead of after (audit O-15).  Everything else takes the
+      * predicate in its WHERE, or its HAVING when aggregated. */
     def filter(pred: Predicate)(implicit sup: Supply): DistinctiveQuery = {
-      DistinctiveQuery(h, needDistinct => q(distinctEagerly) match {
-        case (d, q) => satisfyDistinct(d, needDistinct, h, asSelect(h,q, v => !v.isWindowed) match {
+      def filtered(q: SqlQuery.Nestable): SqlSelect =
+        asSelect(h, q, v => !v.isWindowed) match {
           case v =>
             if (v.isAggregated)
               v.copy(having = compilePredicate(pred, v.attrs) :: v.having)
             else
               v.copy(where  = compilePredicate(pred, v.attrs) :: v.where )
-        })
+        }
+      DistinctiveQuery(h, needDistinct => q(distinctEagerly) match {
+        case (d, SqlNaryOp(SqlUnion, arms)) =>
+          // every `Orderable` the scanner builds is `Nestable` too
+          satisfyDistinct(d, needDistinct, h, SqlNaryOp(SqlUnion, arms.map { case a: SqlQuery.Nestable => filtered(a): SqlQuery.Orderable }))
+        case (d, q) => satisfyDistinct(d, needDistinct, h, filtered(q))
       })
     }
 
+    /** An ungrouped aggregate over NO rows (decision D2, audit L-6, S-09,
+      * E-13): SUM answers 0 (`coalesce(SUM(x), 0)`, the typed zero of the
+      * result column) and COUNT 0 as SQL does already; MIN, MAX, AVG, STDDEV,
+      * VARIANCE and the weighted means answer NO ROW (`having count(*) > 0`)
+      * instead of one NULL row into a column typed non-nullable, which the
+      * decoder refused.  Grouped aggregates are unchanged: an absent group is
+      * absent.  The in-memory `AggregateM` follows the same rule (prims P4). */
     def aggregate(attr: Attribute, f: AggFunc)(implicit sup: Supply): DistinctiveQuery = {
       DistinctiveQuery(Map(attr.name -> attr.t), _ => q(true) match {
-        case (_, q) => (true, {
+        case (d0, q0) => (true, {
+          // An aggregate is over a SET: an input that could not make itself
+          // distinct (a literal with duplicate rows) is made so here; the
+          // inner answer used to be ignored (oracle O-2 through this path).
+          val (_, q) = satisfyDistinct(d0, true, h, q0)
           val v = asSelect(h, q, x => !x.isAggregated && !x.options("distinct") && !x.isWindowed)
-          v.copy(attrs = Map(attr.name -> compileAggFunc(f, v.attrs)),
-                 isAggregated = true)
+          val agg = compileAggFunc(f, v.attrs)
+          f match {
+            case Count =>
+              v.copy(attrs = Map(attr.name -> agg), isAggregated = true)
+            case Sum(_) =>
+              v.copy(attrs = Map(attr.name -> FunSqlExpr("coalesce", List(agg, compileLiteral(PrimExpr.sumMonoid(attr.t).zero)))),
+                     isAggregated = true)
+            case _ =>
+              v.copy(attrs = Map(attr.name -> agg),
+                     having = v.having :+ SqlGt(FunSqlExpr("COUNT", List(Verbatim("*"))), LitSqlExpr(SqlInt(0))),
+                     isAggregated = true)
+          }
         })
       })
     }
@@ -1190,7 +1428,8 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                          aggs: List[(Attribute,AggFunc)],
                          group: List[Op.ColumnValue]
                         )(implicit sup: Supply): DistinctiveQuery = {
-      val (_, sq) = q(true) // to aggregate, we need distinctness
+      val (d0, sq0) = q(true) // to aggregate, we need distinctness
+      val (_, sq) = satisfyDistinct(d0, true, h, sq0) // and make it so when the input could not (oracle O-2)
       val v = asSelect(h, sq, x => !x.isAggregated && !x.options("distinct") && !x.isWindowed)
       val q2 = v.copy(attrs = cs.map { case (attr, op) =>
                                 attr.name -> compileOp(op, v.attrs)
@@ -1204,16 +1443,35 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       DistinctiveQuery(cs.map(_._1.tuple) ++ aggs.map(_._1.tuple), _ => (true, q2))
     }
 
+    /** A projection of a grouped aggregate that keeps every GROUP BY column as
+      * a plain column reference keeps the rows distinct: the group columns are
+      * a key of the aggregate's output, which `Reflexivity` cannot say (audit
+      * L-19 a). */
+    private[this] def keepsGroupKey(v: SqlSelect, attrs: Map[SqlColumn, SqlExpr]): Boolean =
+      v.isAggregated && v.groupBy.nonEmpty && v.groupBy.forall(g => attrs.values.exists(_ == g))
+
+    /** An UNGROUPED aggregate select whose output the projection does not
+      * reference (`project {p = 3} (sumBy x r)`) can not be projected in
+      * place: without an aggregate function in its select list it is no longer
+      * an aggregate query and answers one row PER INPUT ROW (oracle O-9).  Such
+      * a select is wrapped. */
+    private[this] def dropsUngroupedAggregate(v: SqlSelect, cols: Map[Attribute, Op]): Boolean =
+      v.isAggregated && v.groupBy.isEmpty && cols.values.forall(_.columnReferences.isEmpty)
+
+    /** Distinctness is asked of the inner query only when the CONSUMER needs it
+      * and this projection can pass it on (`needDistinct && preservesDistinct`),
+      * not eagerly: an eager `select distinct` under a UNION arm, an EXCEPT arm
+      * or a join was a sort the consumer repeated (audit O-12, O-26).  The
+      * top-level scan still asks for distinctness, so results are unchanged. */
     def project(cols: Map[Attribute,Op], rx: Reflexivity[ColumnName])(implicit sup: Supply): DistinctiveQuery = {
       val resultHeader = cols.map(_._1.tuple)
       val preservesDistinct = preservesDistinctness(h, rx, cols)
-      DistinctiveQuery(resultHeader, needDistinct => q(preservesDistinct && distinctEagerly) match {
+      DistinctiveQuery(resultHeader, needDistinct => q(needDistinct && preservesDistinct) match {
         case (d, q) =>
-          val q2 = asSelect(h,q) match {
-            case v => v.copy(attrs = selectOps(cols, v.attrs),
-                             windowColumns = selectWindows(cols, v.windowColumns))
-          }
-          satisfyDistinct(d && preservesDistinct, needDistinct, resultHeader, q2)
+          val v = asSelect(h, q, s => !dropsUngroupedAggregate(s, cols))
+          val q2 = v.copy(attrs = selectOps(cols, v.attrs),
+                          windowColumns = selectWindows(cols, v.windowColumns))
+          satisfyDistinct(d && (preservesDistinct || keepsGroupKey(v, q2.attrs)), needDistinct, resultHeader, q2)
       })
     }
 
@@ -1234,11 +1492,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       val resultHeader = h -- cols
       val colOps = resultHeader map { case (c,t) => Attribute(c,t) -> Op.ColumnValue(c,t) }
       val preservesDistinct = preservesDistinctness(h, rx, colOps)
-      DistinctiveQuery(resultHeader, needDistinct => q(preservesDistinct && distinctEagerly) match {
+      DistinctiveQuery(resultHeader, needDistinct => q(needDistinct && preservesDistinct) match {
         case (d, q) =>
-          val v = asSelect(h,q)
+          val v = asSelect(h, q, s => !dropsUngroupedAggregate(s, colOps))
           val q2 = v.copy(attrs = v.attrs -- cols, windowColumns = v.windowColumns -- cols)
-          satisfyDistinct(d && preservesDistinct, needDistinct, resultHeader, q2)
+          satisfyDistinct(d && (preservesDistinct || keepsGroupKey(v, q2.attrs)), needDistinct, resultHeader, q2)
       })
     }
 
@@ -1255,10 +1513,16 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         case (_, Some(j)) if j < fromn => DistinctiveQuery.empty(h)
         case _ =>
           val isOneRow = Some(fromn) == to
+          // Only the FIRST row of a bag is the first row of its set under the
+          // same order; at any later position a duplicate shifts which row is
+          // the n-th, so every other range needs a distinct input, made so
+          // here when the inner query could not (oracle O-26, item C17).
+          val needInner = !(isOneRow && fromn == 1)
           val u1 = TableName(freshName)
           val u2 = TableName(freshName)
-          DistinctiveQuery(h, needDistinct => q(!isOneRow) match {
-            case (d, q) => 
+          DistinctiveQuery(h, needDistinct => q(needInner) match {
+            case (d0, q0) =>
+              val (d, q) = if (needInner) satisfyDistinct(d0, true, h, q0) else (d0, q0)
               val actualOrder = if (!order.isEmpty) order
                                 else h.map { case (k,t) => (k, SortOrder.Asc) }.toList
               satisfyDistinct(d || isOneRow, needDistinct, h, emitter.implementLimit(asOrderable(h,q), h, u1, from, to, actualOrder.map {

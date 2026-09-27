@@ -220,7 +220,7 @@ gate_lean() {
   [[ $audit =~ axiom:\ 0$ ]]
 }
 
-gate_def db pr 900 "the DB suites (TestMsSqlSmoke, TestDbReports, TestPreviewDbLive, TestRenderTraceLive) against the local SQL Server + the SQLite twin; keyed also by ErmineSales's load stamp"
+gate_def db pr 900 "the DB suites (TestMsSqlSmoke, TestDbReports, TestPreviewDbLive, TestRenderTraceLive, TestSqlDifferentialDb) against the local SQL Server + the SQLite twin; keyed also by ErmineSales's load stamp"
 # DB-PLAN S1 (tracker/db/SERVER.md §5).  Without ERMINE_DB_* the two suites register NOTHING and print a
 # "DB suites: not requested" line, so `suites` (core/test) stays free of SKIPPED; this gate is where they
 # run.  UNAVAILABLE (3), the `lean` convention, when a precondition is missing: the container is not up
@@ -269,12 +269,14 @@ gate_db() {
   ERMINE_DB_URL="${ERMINE_DB_URL:-jdbc:sqlserver://127.0.0.1:1433;databaseName=ErmineSales;encrypt=true;trustServerCertificate=true}" \
   ERMINE_DB_USER="${ERMINE_DB_USER:-ermine}" \
   ERMINE_DB_SQLITE=$lite \
-    sbt -batch 'core/testOnly *TestMsSqlSmoke* *TestDbReports* *TestPreviewDbLive* *TestRenderTraceLive*'
+    sbt -batch 'core/testOnly *TestMsSqlSmoke* *TestDbReports* *TestPreviewDbLive* *TestRenderTraceLive* *TestSqlDifferentialDb*'
   rc=$?
   # the pattern goes in on a file descriptor, never on grep's command line (REVIEW-S1 R2-2)
   if grep -qFf <(printf '%s\n' "$pw") "$GATE_LOG"; then unset pw; echo "SUMMARY FAIL: the password reached the gate log"; return 1; fi
   unset pw
   if grep -q 'DB suites:.*not requested' "$GATE_LOG"; then echo "SUMMARY FAIL: a DB suite printed 'not requested' (the environment did not reach sbt)"; return 1; fi
+  # SQL audit (oracle): TestSqlDifferentialDb prints its own "[sqldiff] DB suites: not requested" line,
+  # matched by the grep above; its random property is env-gated the same way as TestDbReports.
   local n p f
   n=$(grep -cE '^\[info\] [+!x] ' "$GATE_LOG"); p=$(grep -cE '^\[info\] \+ ' "$GATE_LOG"); f=$((n - p))
   if [[ $rc == 0 && $f == 0 && $n -gt 0 ]]; then
