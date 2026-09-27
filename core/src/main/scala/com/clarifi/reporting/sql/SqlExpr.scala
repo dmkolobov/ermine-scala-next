@@ -99,8 +99,7 @@ sealed abstract class SqlExpr {
     case ParensSqlExpr(e1) => raw("(") |+| e1.emitSql(emitter) |+| ")"
     case OverSqlExpr(e1, over) => emitter.emitOver(e1, over)
     case Verbatim(s) => s
-    case CastSqlExpr(e, ty, nullIfFail) =>
-      emitter.emitTryCast(nullIfFail) |+| e.emitSql |+| " as " |+| emitter.sqlTypeName(ty) |+| ")"
+    case CastSqlExpr(e, ty, nullIfFail, from) => emitter.emitCast(e, from, ty, nullIfFail)
   }
 
   @annotation.tailrec
@@ -113,7 +112,7 @@ sealed abstract class SqlExpr {
     case l : LitSqlExpr => true
     case IntervalExpr(e, _) => e.isConstant
     case ParensSqlExpr(e) => e.isConstant
-    case CastSqlExpr(e,_,_) => e.isConstant
+    case CastSqlExpr(e,_,_,_) => e.isConstant
     case BinSqlExpr(_, e1, e2) => e1.isConstant && e2.isConstant
     case PrefixSqlExpr(_, e) => e.isConstant
     case PostfixSqlExpr(e, _) => e.isConstant
@@ -144,7 +143,10 @@ case class CaseSqlExpr(clauses: NonEmptyList[(SqlPredicate, SqlExpr)],
                        otherwise: SqlExpr) extends SqlExpr
 case class ParensSqlExpr(get: SqlExpr) extends SqlExpr
 case class OverSqlExpr(e: SqlExpr, over: SqlOver) extends SqlExpr
-case class CastSqlExpr(e: SqlExpr, ty: PrimT, nullIfFail: Boolean) extends SqlExpr
+/** `e` cast to `ty`; `from` is `e`'s type when the scanner could infer it
+  * (`Op.guessType`), which a dialect whose storage classes do not match the
+  * primitive types (SQLite's dates) needs to choose the conversion. */
+case class CastSqlExpr(e: SqlExpr, ty: PrimT, nullIfFail: Boolean, from: Option[PrimT] = None) extends SqlExpr
 case class Verbatim(sql: String) extends SqlExpr
 
 object SqlExpr {
@@ -162,7 +164,7 @@ object SqlExpr {
     case BooleanExpr(_,b) => LitSqlExpr(SqlBool(b))
     case UuidExpr(_,u) => LitSqlExpr(SqlUuid(u))
     case TimestampExpr(_,t) => LitSqlExpr(SqlTimestamp(t))
-    case NullExpr(_) => LitSqlExpr(SqlNull)
+    case NullExpr(t) => LitSqlExpr(SqlNullOf(t))
   }
 
   def backSubstitute(expr: SqlExpr, sub: (TableName, SqlColumn) => SqlExpr): SqlExpr =
@@ -210,17 +212,18 @@ object SqlExpr {
 
 sealed abstract class SqlLiteral {
   def emitSql(implicit emitter: SqlEmitter): RawSql = this match {
-    case SqlString(s) => raw("'") |+| s.replace("'","''") |+| "'"
+    case SqlString(s) => emitter.emitString(s)
     case SqlBool(b) => emitter.emitBoolean(b)
     case SqlInt(i) => i.toString
     case SqlLong(l) => l.toString
-    case SqlDouble(d) => d.toString
+    case SqlDouble(d) => emitter.emitDouble(d)
     case SqlByte(b) => b.toString
     case SqlShort(s) => s.toString
     case SqlDate(d) => emitter.emitDate(d)
     case SqlUuid(u) => emitter.emitUuid(u)
     case SqlTimestamp(t) => emitter.emitTimestamp(t)
     case SqlNull => emitter.emitNull
+    case SqlNullOf(t) => emitter.emitTypedNull(t)
   }
 }
 case class SqlString(get: String) extends SqlLiteral
@@ -234,4 +237,8 @@ case class SqlDate(get: Date) extends SqlLiteral
 case class SqlUuid(get: UUID) extends SqlLiteral
 case class SqlTimestamp(get: java.sql.Timestamp) extends SqlLiteral
 case object SqlNull extends SqlLiteral
+/** A NULL that knows its type: `cast(NULL as <type>)`.  An untyped NULL in a
+  * VALUES row or an empty relation is typed by the dialect's guess (SQL
+  * Server: int), and an aggregate over it is then refused (SQL audit E22). */
+case class SqlNullOf(t: PrimT) extends SqlLiteral
 

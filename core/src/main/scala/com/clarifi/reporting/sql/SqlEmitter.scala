@@ -208,6 +208,29 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
 
   def emitInterval(n: SqlExpr, u: TimeUnit): RawSql
 
+  /** `d` moved by `n` units of `u`.  Default: the T-SQL/MySQL shape
+    * `<emitDateAddName>(<emitInterval n u>, d)`.  SQLite overrides it (its
+    * dates are epoch-millisecond INTEGERs, not a date type).  SQL audit E2. */
+  def emitDateAdd(d: SqlExpr, n: SqlExpr, u: TimeUnit): SqlExpr =
+    FunSqlExpr(emitDateAddName, List(IntervalExpr(n, u), d))
+
+  /** The number of `u` boundaries crossed from `s` to `e` (T-SQL DATEDIFF's
+    * meaning: 2024-01-15 to 2024-03-01 is 2 months, 23:59 to 00:01 is one
+    * day).  Default: `datediff(<unit>, s, e)`.  SQL audit E2. */
+  def emitDateDiff(u: TimeUnit, s: SqlExpr, e: SqlExpr): SqlExpr =
+    FunSqlExpr("datediff", List(Verbatim(u.toString.toLowerCase), s, e))
+
+  /** A string literal.  Escaping `'` as `''` is common to every dialect;
+    * SQL Server prefixes `N` so that characters outside the database
+    * collation's code page survive (SQL audit E6). */
+  def emitString(s: String): RawSql = raw("'") |+| s.replace("'", "''") |+| "'"
+
+  /** A double literal.  NaN and the infinities have no SQL spelling on any
+    * dialect (SQLite parses `Infinity` as a column name; SQL Server `float`
+    * cannot hold it), so they are NULL (SQL audit decision D6). */
+  def emitDouble(d: Double): RawSql =
+    if (d.isNaN || d.isInfinite) emitNull else d.toString
+
   val dateFormatter = {
     val fmt = new java.text.SimpleDateFormat("yyyy-MM-dd")
     fmt setTimeZone util.YMDTriple.ymdPivotTimeZone
@@ -262,20 +285,30 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
     " on (" |+| onExpr |+| ")"
   }
 
-  /** Emits SQL for a Transact-SQL-style `OVER` clause.  Default
-    * implementation is a compatibility workaround; the MS SQL emitter
-    * should use `OVER` directly.
+  /** Emits SQL for a Transact-SQL-style `OVER` clause.  Emitters whose
+    * dialect has window functions mix in `EmitOver_UsingOver`; the default
+    * refuses, because the old placeholder text ("TODO I don't yet know how
+    * to play ...") was spliced into the SELECT list and reached the driver
+    * as a syntax error (SQL audit E1).
     */
   def emitOver(e: SqlExpr, over: SqlOver): RawSql =
-    "TODO I don't yet know how to play %s over %s".
-      format (e.emitSql(this), over)
+    sys.error(getClass.getName + " does not emit window functions (" +
+              e.emitSql(this).run + " over ...)")
 
   /** Emits SQL for the opening of a Transact-SQL `CAST` or `TRY_CAST` expression.
     * If `nullIfFail` is true, emits a cast that returns null if fail.
     */
   def emitTryCast(nullIfFail: Boolean): RawSql =
-    if (nullIfFail) { "TODO I don't yet know how to write try_cast" }
+    if (nullIfFail) sys.error(getClass.getName + " does not emit a null-on-failure cast (tryCast)")
     else raw("cast(")
+
+  /** The whole cast expression: `e`, whose type is `from` when the scanner
+    * could infer it, converted to `to`.  Default: `cast(e as <type>)`, or
+    * the dialect's TRY_CAST when `nullIfFail`.  SQLite overrides it, since
+    * its storage classes (dates are INTEGER milliseconds) make a plain
+    * CAST wrong between dates and strings (SQL audit E9, E18). */
+  def emitCast(e: SqlExpr, from: Option[PrimT], to: PrimT, nullIfFail: Boolean): RawSql =
+    emitTryCast(nullIfFail) |+| e.emitSql(this) |+| " as " |+| sqlTypeName(to) |+| ")"
 
   /** Build a query that chooses a range of rows in `query` by
     * ordering them according to `order` and choosing the rows
@@ -306,9 +339,30 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
   def fallbackEmitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql =
     SqlNaryOp(SqlUnion, n.map(t => SqlSelect(attrs = t))).emitSql(this)
 
-  /** Emit an empty relation */
+  /** The rows of a literal relation with duplicates removed and the column
+    * order fixed, for the VALUES-style emitters.  A relation literal is a
+    * set; `UNION` deduplicated the fallback form by accident, a
+    * table-value constructor keeps every row it is given (the oracle's O-2).
+    * Answers the sorted column names and the distinct rows in that order. */
+  protected final def literalRows(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): (List[SqlColumn], List[List[SqlExpr]]) = {
+    val cols = n.head.keys.toList.sorted
+    (cols, n.list.toList.map(r => cols.map(r)).distinct)
+  }
+
+  /** Emit an empty relation.  Each NULL is cast to the column's type:
+    * SQL Server refuses to aggregate an untyped NULL (`SUM(NULL)` is
+    * Msg 8117), and a typed column reads back through the same getter as
+    * a real one (SQL audit E10). */
   def emitEmpty(queryHeader: Header): RawSql =
-    SqlSelect(attrs = queryHeader.mapValues(_ => LitSqlExpr(SqlNull)).toMap, where = List(SqlTruth(false))).emitSql(this)
+    SqlSelect(attrs = queryHeader.map { case (c, t) => (c, typedNull(t)) },
+              where = List(SqlTruth(false))).emitSql(this)
+
+  protected def typedNull(t: PrimT): SqlExpr = LitSqlExpr(SqlNullOf(t))
+
+  /** `cast(NULL as <t>)`, with `t` made nullable so that the type name
+    * carries no `not null` (SQL audit E10/E22). */
+  def emitTypedNull(t: PrimT): RawSql =
+    raw("cast(") |+| emitNull |+| " as " |+| sqlTypeName(t.withNull) |+| ")"
 
   /**
    * Takes a list of SqlExprs and returns a SqlExpr representing that list
@@ -320,6 +374,14 @@ abstract class SqlEmitter(aliasParens: Boolean = true) {
 
   protected def emitConcat_helper(terms: NonEmptyList[SqlExpr]): SqlExpr =
     terms.foldLeft1(BinSqlExpr("||", _, _))
+
+  /** `AVG(e)`, where `ty` is `e`'s type when the scanner could infer it.
+    * SQL Server's average of an integer column is an integer (the sum
+    * divided by the count, truncated toward zero) and the header types it
+    * so; SQLite's `avg()` is always REAL, so an integral average there is
+    * cast back (SQL audit, found by the differential oracle under the
+    * emitter's E7 flag). */
+  def emitAvg(exp: SqlExpr, ty: Option[PrimT]): SqlExpr = FunSqlExpr("AVG", List(exp))
 
   /**
    * Emits the population standard deviation aggregation function.  Default
@@ -510,12 +572,18 @@ trait ImplementSubquery_MS extends SqlEmitter {
 }
 
 trait EmitLimit_AsLimit extends SqlEmitter {
+  /** The LIMIT count meaning "no bound", for an OFFSET with no upper
+    * row: SQLite and MySQL require a LIMIT before an OFFSET (SQL audit E5).
+    * SQLite takes -1, MySQL its 64-bit maximum, PostgreSQL and Vertica
+    * `ALL`. */
+  def unboundedLimit: String = "-1"
+
   /** Use PostgreSQL's 0-indexed `LIMIT ''length'' OFFSET ''from''`
     * syntax, which is also supported in MySQL.
     */
   override def emitLimit(from: Option[Int], to: Option[Int]): RawSql = (from, to) match {
     case (Some(x), Some(y)) => " limit %d offset %d" format (y - x + 1, x - 1)
-    case (Some(x), None) => " offset %d" format (x - 1)
+    case (Some(x), None) => " limit %s offset %d" format (unboundedLimit, x - 1)
     case (None, Some(y)) => " limit %d" format y
     case (None, None) => ""
   }
@@ -546,7 +614,7 @@ trait EmitOver_UsingOver extends SqlEmitter {
       def frameEx(oi: Option[Int], pos: String) = oi.map(frameIndex).getOrElse("unbounded " + pos)
 
       val rawPart = raw("partition by ") |+| partition.map(_ emitSql(this)).rawMkString(", ")
-      val rawOrder = raw("order by ") |+| order.map{ case (e, o) => e.emitSql(this) |+| o.emitSql }.rawMkString(", ")
+      val rawOrder = raw("order by ") |+| order.map{ case (e, o) => e.emitSql(this) |+| " " |+| o.emitSql }.rawMkString(", ")
       val rawFrame = raw("rows between ") |+|
                      frameEx(frameBegin, "preceding") |+|
                      " and " |+|
@@ -656,18 +724,65 @@ trait EmitCheckExists_AlwaysFails extends SqlEmitter {
 trait EmitLiteralTVC extends SqlEmitter {
   /** @todo Is it possible to avoid this redundant select? */
   override def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql = {
-    val cols = n.head.toIndexedSeq
-                     .map((_: (SqlColumn, SqlExpr))._1)
-                     .sortBy(x => x)
-                     .toList
+    val (cols, rows) = literalRows(n)
     (raw("select ") |+| cols.map(emitColumnName _).rawMkString(",")
       |+| " from (values "
-      |+| n.list.map(r => cols.map(c => r(c).emitSql(this))
-                              .rawMkString("(", ", ", ")"))
-                .rawMkString(", ")
+      |+| rows.map(r => r.map(_.emitSql(this)).rawMkString("(", ", ", ")"))
+             .rawMkString(", ")
       |+| ") as lit"
       |+| cols.map(emitColumnName _).rawMkString("(", ",", ")"))
   }
+}
+
+/** Emit a literal relation as a TVC on a dialect that names the columns of
+  * a `VALUES` table `column1`, `column2`, ... and takes no alias list on a
+  * derived table (SQLite).  One SELECT per literal instead of one per row
+  * chained with UNION (SQL audit E13). */
+trait EmitLiteralTVC_ColumnN extends SqlEmitter {
+  override def emitLiteral(n: NonEmptyList[Map[SqlColumn, SqlExpr]]): RawSql = {
+    val (cols, rows) = literalRows(n)
+    (raw("select ")
+      |+| cols.zipWithIndex.map { case (c, i) => raw("column" + (i + 1) + " ") |+| emitColumnName(c) }
+              .rawMkString(", ")
+      |+| " from (values "
+      |+| rows.map(r => r.map(_.emitSql(this)).rawMkString("(", ", ", ")"))
+             .rawMkString(", ")
+      |+| ")")
+  }
+}
+
+/** Parenthesise a right operand that is itself a join: `A JOIN (B JOIN C
+  * on ..) on ..`.  SQL Server re-associates the bare form, SQLite rejects
+  * it (`near "on": syntax error`), MySQL always wanted the parentheses
+  * (SQL audit E4). */
+trait EmitJoinOn_ParenthesizeRight extends SqlEmitter {
+  override def emitJoinOn(r1: SqlSource,
+                          r2: SqlSource,
+                          on: Set[(SqlExpr, SqlExpr)],
+                          op: SqlJoinOp): RawSql = {
+    val onExpr = if (on.isEmpty) SqlTruth(true).emitSql(this)
+                 else on.map {
+                   case (c1, c2) => c1.emitSql(this) |+| " = " |+| c2.emitSql(this)
+                 } intercalate raw(" and ")
+    val r2IsJoin = r2 match { case _ : SqlJoinOn => true ; case _ => false }
+    val preR2 = if (r2IsJoin) raw("(") else raw(" ")
+    val postR2 = if (r2IsJoin) raw(") on (") else raw(" on (")
+    r1.emitSql(this) |+| raw(" ") |+| op.emit |+| preR2 |+| r2.emitSql(this) |+|
+    postR2 |+| onExpr |+| ")"
+  }
+}
+
+/** String concatenation with `||` where a NULL operand would make the
+  * whole result NULL.  Every non-literal operand is wrapped in
+  * `coalesce(.., '')`, which is what `Concat` on SQL Server and the
+  * in-memory evaluator (`extractNullableString ""`) do with a NULL, and
+  * what the header promises: `Concat` is typed non-nullable (SQL audit E17). */
+trait EmitConcat_CoalesceNulls extends SqlEmitter {
+  override protected def emitConcat_helper(terms: NonEmptyList[SqlExpr]): SqlExpr =
+    terms.map {
+      case t@LitSqlExpr(SqlString(_)) => t
+      case t => FunSqlExpr("coalesce", List(t, LitSqlExpr(SqlString(""))))
+    }.foldLeft1(BinSqlExpr("||", _, _))
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -680,7 +795,12 @@ class SqliteEmitter extends SqlEmitter
     with ImplementLimit_AsLimit
     with EmitLimit_AsLimit
     with EagerlyDistinct
-    with EmitCheckExists_AlwaysFails {
+    with EmitCheckExists_AlwaysFails
+    with EmitOver_UsingOver
+    with EmitIntDivOp_MsSql
+    with EmitJoinOn_ParenthesizeRight
+    with EmitConcat_CoalesceNulls
+    with EmitLiteralTVC_ColumnN {
 
   def isTransactional: Boolean = true
   def setConstraints(enable: Boolean, t: Iterable[TableName]): List[RawSql] =
@@ -693,12 +813,164 @@ class SqliteEmitter extends SqlEmitter
   def emitBoolean(b: Boolean): RawSql = if (b) "1" else "0"
   def emitBoolean(stmt: PreparedStatement, i: Int, b: Boolean): Unit = stmt.setInt(i, if (b) 1 else 0)
 
+  /** Identifiers are double-quoted (`""` escapes a quote), so a field named
+    * `group`, `order`, `select` or `user` is legal SQL.  sqlite-jdbc's
+    * `getColumnLabel` answers the bare name, so `unemitColumnName` stays the
+    * identity (SQL audit E4). */
+  private[this] def quoteName(s: String): RawSql =
+    raw("\"") |+| raw(s.replace("\"", "\"\"")) |+| raw("\"")
+  override def emitTableName(s: TableName): RawSql =
+    (s.schema :+ s.name) map quoteName rawMkString "."
+  override def emitColumnName(s: String): RawSql = quoteName(s)
+
+  /** Dates AND timestamps are epoch-millisecond INTEGERs: that is what
+    * `bulkLoad`/`setTimestamp` store (sqlite-jdbc's default `DateClass`),
+    * what `sqlTypeName` declares, and what `getDate`/`getTimestamp` read
+    * back exactly.  A TEXT timestamp literal compared against an INTEGER
+    * column would sort every INTEGER below it (SQL audit E9). */
   override def emitDate(d: Date): RawSql = d.getTime.toString
+  override def emitTimestamp(t: java.sql.Timestamp): RawSql = t.getTime.toString
 
-
-  def emitDateAddName = sys.error("todo - sqlite dateadd function")
+  // Unreachable from the scanner since `emitDateAdd` below; kept because
+  // the abstract members must be defined.
+  def emitDateAddName = sys.error("sqlite dateadd goes through emitDateAdd")
   def emitInterval(n: SqlExpr, u: TimeUnit) =
-    sys.error("todo - sqlite dateadd function")
+    sys.error("sqlite dateadd goes through emitDateAdd")
+
+  // ---- date arithmetic over epoch milliseconds (SQL audit E2)
+
+  private[this] def lit(l: Long): SqlExpr = LitSqlExpr(SqlLong(l))
+  private[this] def str(s: String): SqlExpr = LitSqlExpr(SqlString(s))
+  /** `e` as fractional seconds since the epoch, for SQLite's date functions. */
+  private[this] def secs(e: SqlExpr): SqlExpr = BinSqlExpr("/", e, LitSqlExpr(SqlDouble(1000.0)))
+  private[this] def unixepochOf(e: SqlExpr, mods: SqlExpr*): SqlExpr =
+    FunSqlExpr("unixepoch", secs(e) :: str("unixepoch") :: mods.toList)
+  private[this] def asInteger(e: SqlExpr): SqlExpr = CastSqlExpr(e, LongT(true), false, None)
+  /** Fractional epoch seconds back to INTEGER milliseconds. */
+  private[this] def millisOf(secsExpr: SqlExpr): SqlExpr =
+    asInteger(FunSqlExpr("round", List(BinSqlExpr("*", secsExpr, lit(1000)))))
+  private[this] def dayStart(e: SqlExpr): SqlExpr = unixepochOf(e, str("start of day"))
+  private[this] def strfInt(fmt: String, e: SqlExpr): SqlExpr =
+    asInteger(FunSqlExpr("strftime", List(str(fmt), secs(e), str("unixepoch"))))
+
+  /** Millisecond, second, day and week steps are plain integer arithmetic
+    * (dates are GMT, so a day is always 86 400 000 ms).  Month and year
+    * steps go through SQLite's calendar with the `floor` modifier, which
+    * clamps an overflowing day-of-month to the month's last day exactly as
+    * `java.util.Calendar#add` (the in-memory evaluator) and T-SQL `DATEADD`
+    * do: 2024-01-31 + 1 month = 2024-02-29.  `subsec` keeps the
+    * milliseconds. */
+  override def emitDateAdd(d: SqlExpr, n: SqlExpr, u: TimeUnit): SqlExpr = {
+    import TimeUnit._
+    def plusMillis(perUnit: Long) = BinSqlExpr("+", d, BinSqlExpr("*", n, lit(perUnit)))
+    def calendar(unit: String) =
+      millisOf(unixepochOf(d, BinSqlExpr("||", n, str(" " + unit)), str("floor"), str("subsec")))
+    u match {
+      case Millisecond => BinSqlExpr("+", d, n)
+      case Second => plusMillis(1000L)
+      case Day => plusMillis(86400000L)
+      case Week => plusMillis(604800000L)
+      case Month => calendar("months")
+      case Year => calendar("years")
+    }
+  }
+
+  /** T-SQL DATEDIFF's boundary count: whole units are never rounded, the
+    * number of unit boundaries between `s` and `e` is.  Weeks start on
+    * Sunday, as SQL Server's default DATEFIRST has it. */
+  override def emitDateDiff(u: TimeUnit, s: SqlExpr, e: SqlExpr): SqlExpr = {
+    import TimeUnit._
+    def floorSecs(x: SqlExpr) = asInteger(FunSqlExpr("floor", List(secs(x))))
+    def weekStart(x: SqlExpr) =
+      unixepochOf(x, str("start of day"),
+                  BinSqlExpr("||", BinSqlExpr("||", str("-"), FunSqlExpr("strftime", List(str("%w"), secs(x), str("unixepoch")))),
+                             str(" days")))
+    def year(x: SqlExpr) = strfInt("%Y", x)
+    def month(x: SqlExpr) = strfInt("%m", x)
+    u match {
+      case Millisecond => BinSqlExpr("-", e, s)
+      case Second => BinSqlExpr("-", floorSecs(e), floorSecs(s))
+      case Day => BinSqlExpr("/", BinSqlExpr("-", dayStart(e), dayStart(s)), lit(86400L))
+      case Week => BinSqlExpr("/", BinSqlExpr("-", weekStart(e), weekStart(s)), lit(604800L))
+      case Month => BinSqlExpr("+", BinSqlExpr("*", BinSqlExpr("-", year(e), year(s)), lit(12L)),
+                               BinSqlExpr("-", month(e), month(s)))
+      case Year => BinSqlExpr("-", year(e), year(s))
+    }
+  }
+
+  // ---- casts (SQL audit E9, E18)
+
+  /** The rule: SQLite stores a Date or Timestamp as INTEGER milliseconds and
+    * a String as TEXT, so a plain CAST between them is a number/text
+    * conversion, not a date conversion.  Between a date and a string this
+    * emits the calendar conversion in ISO 8601 (`2024-01-15`,
+    * `2024-01-15 10:11:12.123`), the text SQL Server's CAST produces; a
+    * string that is not a date becomes NULL.  Every other pair is a plain
+    * `CAST` (dates to and from numbers are the milliseconds, as
+    * `PrimExpr.cast` reads them).  A null-on-failure cast to a number is
+    * guarded by a CASE, since SQLite's `CAST('abc' AS REAL)` is 0.0 rather
+    * than an error. */
+  override def emitCast(e: SqlExpr, from: Option[PrimT], to: PrimT, nullIfFail: Boolean): RawSql = {
+    def plain = raw("cast(") |+| e.emitSql(this) |+| " as " |+| sqlTypeName(to) |+| ")"
+    def isDate(t: PrimT) = t match { case DateT(_) | TimestampT(_) => true; case _ => false }
+    def isNum(t: PrimT) = t match {
+      case ByteT(_) | ShortT(_) | IntT(_) | LongT(_) | DoubleT(_) => true; case _ => false }
+    (from, to) match {
+      case (Some(DateT(_)), StringT(_, _)) =>
+        FunSqlExpr("strftime", List(str("%Y-%m-%d"), secs(e), str("unixepoch"))).emitSql(this)
+      case (Some(TimestampT(_)), StringT(_, _)) =>
+        FunSqlExpr("strftime", List(str("%Y-%m-%d %H:%M:%f"), secs(e), str("unixepoch"))).emitSql(this)
+      case (Some(StringT(_, _)), DateT(_)) =>
+        millisOf(FunSqlExpr("unixepoch", List(e, str("start of day"), str("subsec")))).emitSql(this)
+      case (Some(StringT(_, _)), TimestampT(_)) =>
+        millisOf(FunSqlExpr("unixepoch", List(e, str("subsec")))).emitSql(this)
+      case (Some(f), t) if nullIfFail && isNum(t) && !isNum(f) && !isDate(f) =>
+        // typeof answers the storage class of the VALUE; a TEXT is cast only
+        // when its trimmed form has T-SQL's numeric syntax
+        // `[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?` -- which these GLOBs spell
+        // out: a digit; the charset; one dot; one e; a sign only first or
+        // right after the e; nothing trailing but a digit; no dot after the
+        // e; a digit before the e.  Measured against TRY_CAST on SQL Server
+        // 2022 for 24 inputs; the one difference is '' (0 there, NULL here,
+        // as the in-memory tryCast answers).
+        val t = raw("trim(cast(") |+| e.emitSql(this) |+| " as text))"
+        def is(pat: String) = raw("(") |+| t |+| " glob '" |+| pat |+| "')"
+        def not(pat: String) = raw("(") |+| t |+| " not glob '" |+| pat |+| "')"
+        val numeric = List(is("*[0-9]*"), not("*[^0-9.eE+-]*"), not("*.*.*"), not("*[eE]*[eE]*"),
+                           not("*[^eE][+-]*"), not("*[+-]"), not("*[eE]"), not("*[eE]*.*"),
+                           not("[eE]*"), not("[+-.][eE]*"), not("[+-.][+-.][eE]*")).rawMkString(" and ")
+        (raw("(case when typeof(") |+| e.emitSql(this) |+| ") in ('integer', 'real') then " |+| plain
+          |+| " when " |+| numeric |+| " then cast(" |+| t |+| " as " |+| sqlTypeName(to) |+| ")"
+          |+| " else NULL end)")
+      case _ => plain
+    }
+  }
+
+  // ---- population/sample deviation and variance (SQL audit E3)
+
+  /** SQLite has no STDDEV/VARIANCE; these are the one-pass forms over
+    * `avg`, guarded against the tiny negative a rounding error can leave
+    * (sqrt of which is NULL).  One pass loses precision when the mean
+    * dwarfs the spread; report data is fine. */
+  private[this] def varPopOf(x: SqlExpr): SqlExpr = {
+    val avg = FunSqlExpr("avg", List(x))
+    FunSqlExpr("max", List(BinSqlExpr("-", FunSqlExpr("avg", List(BinSqlExpr("*", x, x))),
+                                      BinSqlExpr("*", avg, avg)),
+                           LitSqlExpr(SqlDouble(0.0))))
+  }
+  private[this] def sampleOf(x: SqlExpr): SqlExpr = {
+    val n = FunSqlExpr("count", List(x))
+    BinSqlExpr("/", BinSqlExpr("*", varPopOf(x), n), BinSqlExpr("-", n, LitSqlExpr(SqlDouble(1.0))))
+  }
+  override def emitAvg(exp: SqlExpr, ty: Option[PrimT]): SqlExpr = ty match {
+    case Some(ByteT(_) | ShortT(_) | IntT(_) | LongT(_)) => asInteger(FunSqlExpr("AVG", List(exp)))
+    case _ => FunSqlExpr("AVG", List(exp))
+  }
+  override def emitStddevPop(exp: SqlExpr): SqlExpr = FunSqlExpr("sqrt", List(varPopOf(exp)))
+  override def emitVarPop(exp: SqlExpr): SqlExpr = varPopOf(exp)
+  override def emitStddevSamp(un: TableName, col: SqlColumn): SqlExpr =
+    FunSqlExpr("sqrt", List(sampleOf(ColumnSqlExpr(un, col))))
+  override def emitVarSamp(un: TableName, col: SqlColumn): SqlExpr = sampleOf(ColumnSqlExpr(un, col))
 
   def sqlTypeId(p: PrimT): Int = p match {
     case StringT(_, _) => Types.VARCHAR
@@ -756,10 +1028,14 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                                       with EmitConcat_AsConcat
                                       with LazilyDistinct
                                       with EmitIntDivOp_MySQL
-                                      with EmitUuid_Strings {
+                                      with EmitUuid_Strings
+                                      with EmitJoinOn_ParenthesizeRight {
   override def emitTableName(tn: TableName): RawSql =
     (tn.schema :+ tn.name) map emitColumnName rawMkString "."
   override def emitColumnName(cn: String): RawSql = raw("`") |+| raw(cn) |+| raw("`")
+  override def unboundedLimit: String = "18446744073709551615"
+  // MySQL's CAST targets (SIGNED, CHAR, ...) are not its column types; untyped, as before.
+  override def emitTypedNull(t: PrimT): RawSql = emitNull
 
   def isTransactional: Boolean = innoDB
   def setConstraints(enable: Boolean, t: Iterable[TableName]): List[RawSql] =
@@ -813,27 +1089,14 @@ class MySqlEmitter(innoDB: Boolean) extends SqlEmitter(false) with EmitFromEmpty
                             query = SqlSelect(attrs = Map("qq" -> LitSqlExpr(SqlNull))))),
               where = List(SqlTruth(false))
              ).emitSql(this)
-
-  override
-  def emitJoinOn(r1: SqlSource,
-                 r2: SqlSource,
-                 on: Set[(SqlExpr, SqlExpr)],
-                 op: SqlJoinOp): RawSql = {
-    val onExpr = if (on.isEmpty) SqlTruth(true).emitSql(this)
-                 else on.map {
-                   case (c1, c2) => c1.emitSql(this) |+| " = " |+| c2.emitSql(this)
-                 } intercalate raw(" and ")
-    val r2IsJoin = r2 match { case _ : SqlJoinOn => true ; case _ => false }
-    val preR2 = if (r2IsJoin) raw("(") else raw(" ")
-    val postR2 = if (r2IsJoin) raw(") on (") else raw(" on (")
-    r1.emitSql(this) |+| raw(" ") |+| op.emit |+| preR2 |+| r2.emitSql(this) |+|
-    postR2 |+| onExpr |+| ")"
-  }
 }
 
 class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
                                       with EmitCreateTable_NoSuffix
-                                      with EmitNoDropTempTable
+                                      // `DROP TABLE ##x` is transaction-safe on SQL Server; without
+                                      // it every let/materialize/large-literal temp table lived in
+                                      // tempdb for the connection's lifetime (SQL audit E16).
+                                      with EmitDropTempTable_AsDropTable
                                       with EagerlyDistinct
                                       with EmitConcat_AsConcat
                                       with EmitIntDivOp_MsSql
@@ -860,14 +1123,40 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
   override def emitTimestamp(t: java.sql.Timestamp): RawSql = {
     raw("CAST('") |+| timestampFormatter.format(t) |+| raw("' AS DATETIME2)")
   }
+  /** `CAST('yyyy-MM-dd' AS DATE)`: a bare `'yyyy-MM-dd'` is converted
+    * through the login's `SET LANGUAGE`/`DATEFORMAT` (it is Msg 242 under
+    * French or dmy), `date` parses ISO 8601 regardless (SQL audit E11). */
+  override def emitDate(d: Date): RawSql =
+    raw("CAST('") |+| dateFormatter.format(d) |+| raw("' AS DATE)")
+
+  /** `N'...'`: without the prefix the literal is converted through the
+    * database collation's code page and every character outside it (CJK,
+    * emoji, Cyrillic under CP1252) arrives as `?` (SQL audit E6). */
+  override def emitString(s: String): RawSql = raw("N") |+| super.emitString(s)
+
+  /** A double literal is a `float`, never a DECIMAL: `1.0 / 3.0` as decimals is
+    * `0.333333`, and a UNION of a literal double with a decimal aggregate
+    * drops the scale.  T-SQL reads a literal with an exponent as float, so
+    * one without gets `E0` (SQL audit E24). */
+  override def emitDouble(d: Double): RawSql = {
+    val s = super.emitDouble(d).run
+    if (s.contains("E") || s == "NULL") s else s + "E0"
+  }
 
   private def nn(n: Boolean, s: String): RawSql = if (n) s else (s |+| " not null")
 
+  /** An unbounded string is `nvarchar(max)`: `nvarchar(1000)` truncated
+    * casts silently and refused longer loads.  Inside CREATE TABLE a key
+    * column cannot be `max` (SQL Server refuses to index it); `emitCreateTable`
+    * gives those `nvarchar(450)`, the longest that fits a clustered key
+    * (SQL audit E12). */
   def sqlTypeName(p: PrimT): RawSql = p match {
-    case StringT(l,n) => nn(n,"nvarchar(" |+| (if (l == 0) "1000" else l.toString) |+| ")")
+    case StringT(l,n) => nn(n,"nvarchar(" |+| (if (l == 0) "max" else l.toString) |+| ")")
     case TimestampT(n) => nn(n,"datetime2")
     case _ => SqlEmitter.fallbackSqlTypeName(p)
   }
+
+  private[this] val keyStringLength = 450
 
   def sqlTypeId(p: PrimT): Int = p match {
     case StringT(_,_) => Types.VARCHAR
@@ -881,6 +1170,7 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
   def sqlPrimT(x: Int, tn: String, cs: Int) = tn match {
     case "date" => Some(DateT()) // jtds gives x = varchar for dates
     case "datetime" | "datetime2" => Some(TimestampT())
+    case "uniqueidentifier" => Some(UuidT())
     case _ => SqlEmitter.defaultDecodeType(x)
   }
 
@@ -889,7 +1179,15 @@ class MsSqlEmitter extends SqlEmitter with EmitSqlColumns_Typed
       // we *assume* that `typeName` has the correct rowtype.
       raw("declare ") |+| emitTableName(s.table) |+| raw(" as ") |+| raw(typeName)
     case TableName.Persistent | TableName.Temporary =>
-      super.emitCreateTable(s)
+      val keyCols: Set[ColumnName] =
+        s.hints.primaryKey.toList.flatten.toSet ++
+        s.hints.indices.keys.flatten ++
+        s.hints.foreignKeys.values.flatten.flatten.map(_._1)
+      val bounded = s.header.map {
+        case (c, StringT(0, n)) if keyCols(c) => (c, StringT(keyStringLength, n))
+        case x => x
+      }
+      super.emitCreateTable(s.copy(header = bounded))
   }
 
   override def emitCreateTableStmt(t: TableName): RawSql =
@@ -916,7 +1214,14 @@ class VerticaSqlEmitter extends SqlEmitter(false) with EmitFromEmptyTable_FromDu
                                            with EmitNary_ExceptAsJoin
                                            with EagerlyDistinct
                                            with EmitUuid_Strings
-                                           with EmitCheckExists_AlwaysFails {
+                                           with EmitCheckExists_AlwaysFails
+                                           // Vertica has LIMIT/OFFSET and OVER; without the limit
+                                           // traits `firstK`/`topK` answered every row (SQL audit
+                                           // E19).  Text-level only: no Vertica to run against.
+                                           with ImplementLimit_AsLimit
+                                           with EmitLimit_AsLimit
+                                           with EmitOver_UsingOver {
+  override def unboundedLimit: String = "ALL"
 
   def isTransactional: Boolean = true
   def setConstraints(enable: Boolean, t: Iterable[TableName]): List[RawSql] =
@@ -957,8 +1262,12 @@ class PostgreSqlEmitter extends SqlEmitter(false)
                         with EmitLimit_AsLimit
                         with EagerlyDistinct
                         with EmitUuid_Strings
-                        with EmitCheckExists_AlwaysFails {
+                        with EmitCheckExists_AlwaysFails
+                        with EmitOver_UsingOver // text-level only, no live PostgreSQL here
+                        with EmitConcat_CoalesceNulls {
   import SqlEmitter.nn
+
+  override def unboundedLimit: String = "ALL"
 
   private[this] def quoteName(s: String): RawSql =
     "\"%s\"" format (s replaceAllLiterally ("\"", "\"\""))
@@ -1018,7 +1327,8 @@ object SqlEmitter {
          | T.LONGVARCHAR | T.LONGNVARCHAR => StringT(0)
       case T.DATE => DateT()
       case T.TIMESTAMP => TimestampT()
-      case T.FLOAT | T.DOUBLE | T.REAL | T.DECIMAL => DoubleT()
+      // mssql-jdbc reports `numeric(p,s)` as NUMERIC (2), not DECIMAL (3).
+      case T.FLOAT | T.DOUBLE | T.REAL | T.DECIMAL | T.NUMERIC => DoubleT()
       case T.BIGINT => LongT()
       case T.INTEGER => IntT()
       case T.SMALLINT => ShortT()

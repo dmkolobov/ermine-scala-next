@@ -90,13 +90,18 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
         BinSqlExpr("/", rec(a), rec(b))
       case Concat(as) =>
         emitter.emitConcat(as.map(rec))
+      // An `if` whose ALTERNATE is an `if` flattens into the same CASE:
+      // `case when t then c when t2 then x else y end` falls through to
+      // the inner tests exactly when `t` is false or unknown, as the nested
+      // form does.  An `if` whose CONSEQUENT is an `if` used to be merged
+      // as `case when not t then z when t2 ...`, which for an unknown `t`
+      // (a NULL operand) skips the `not t` clause and answers from the inner
+      // branches where the nested form answers `z`; it stays nested now
+      // (SQL audit E15).
       case If(test, conseq, altern) => (rec(conseq), rec(altern)) match {
         case (cConseq, CaseSqlExpr(clauses, oth)) =>
           CaseSqlExpr((compilePredicate(test, lookupColumn),
                        cConseq) <:: clauses, oth)
-        case (CaseSqlExpr(clauses, oth), cAltern) =>
-          CaseSqlExpr((compilePredicate(Predicate.Not(test), lookupColumn),
-                       cAltern) <:: clauses, oth)
         case (cConseq, cAltern) =>
           CaseSqlExpr(NonEmptyList((compilePredicate(test, lookupColumn),
                                     cConseq)),
@@ -104,17 +109,15 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       }
       case Coalesce(l, r) =>
         FunSqlExpr("coalesce", List(rec(l),rec(r)))
-      case DateAdd(d, n, u) =>
-        FunSqlExpr(emitter.emitDateAddName, List(IntervalExpr(rec(n), u), rec(d)))
-      case DateDiff(u, s, e) =>
-        FunSqlExpr("datediff", List(Verbatim(u.toString.toLowerCase), rec(s), rec(e)))
+      case DateAdd(d, n, u) => emitter.emitDateAdd(rec(d), rec(n), u)
+      case DateDiff(u, s, e) => emitter.emitDateDiff(u, rec(s), rec(e))
       case Funcall(name, db, ns, args, _) =>
         FunSqlExpr(emitter emitProcedureName (name, ns) run,
                    args map rec)
       case Windowed(agg, over) =>
         OverSqlExpr(compileWindowFunc(agg, lookupColumn), compileWindow(over, lookupColumn))
       case BuiltinCall(b,args) => FunSqlExpr(compileBuiltin(b), args.map(rec))
-      case Cast(o, ty, nullIfFail) => CastSqlExpr(rec(o), ty, nullIfFail)
+      case Cast(o, ty, nullIfFail) => CastSqlExpr(rec(o), ty, nullIfFail, o.guessType.toOption)
     }
     rec(op.simplify(Map()))
   }
@@ -135,10 +138,9 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
   def compileAggFunc(f: AggFunc, attrs: String => SqlExpr): SqlExpr = f match {
     case Count => FunSqlExpr("COUNT", List(Verbatim("*")))
     case Sum(x) => FunSqlExpr("SUM", List(compileOp(x, attrs)))
-    case Avg(x) => FunSqlExpr("AVG", List(compileOp(x, attrs)))
+    case Avg(x) => emitter.emitAvg(compileOp(x, attrs), x.guessType.toOption)
     case Min(x) => FunSqlExpr("MIN", List(compileOp(x, attrs)))
     case Max(x) => FunSqlExpr("MAX", List(compileOp(x, attrs)))
-    /** @todo MSP - SQLite does not support STDDEV or VAR, work around somehow? */
     case Stddev(x) => emitter.emitStddevPop(compileOp(x, attrs))
     case Variance(x) => emitter.emitVarPop(compileOp(x, attrs))
     case WMean(x,w) =>
@@ -168,13 +170,22 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
                        lookupColumn: String => SqlExpr)(
                        implicit emitter: SqlEmitter): SqlPredicate = {
     def subop(op: Op) = compileOp(op, lookupColumn)
+    // `Relation.Predicate`'s `a <= b` is `a < b || a == b`; with the same
+    // two operands on both sides it is one comparison (SQL audit E14).
+    def or(l: SqlPredicate, r: SqlPredicate): SqlPredicate = (l, r) match {
+      case (SqlLt(a, b), SqlEq(c, d)) if (a == c && b == d) || (a == d && b == c) => SqlLte(a, b)
+      case (SqlEq(c, d), SqlLt(a, b)) if (a == c && b == d) || (a == d && b == c) => SqlLte(a, b)
+      case (SqlGt(a, b), SqlEq(c, d)) if (a == c && b == d) || (a == d && b == c) => SqlGte(a, b)
+      case (SqlEq(c, d), SqlGt(a, b)) if (a == c && b == d) || (a == d && b == c) => SqlGte(a, b)
+      case _ => SqlOr(l, r)
+    }
     predicate.apply[SqlPredicate](
       atom = b => SqlTruth(b),
       lt = (s1, s2) => SqlLt(subop(s1), subop(s2)),
       gt = (s1, s2) => SqlGt(subop(s1), subop(s2)),
       eq = (s1, s2) => SqlEq(subop(s1), subop(s2)),
       not = e => SqlNot(e),
-      or = SqlOr(_, _),
+      or = or,
       and = SqlAnd(_, _),
       isNull = e => SqlIsNull(subop(e)),
       funtest = (name, db, ns, args) => SqlFun(emitter emitProcedureName (name, ns) run, args map subop)
