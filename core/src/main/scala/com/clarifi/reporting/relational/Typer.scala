@@ -17,6 +17,56 @@ case class Closed[F[_, _]](out: F[Nothing, Nothing], header: Header) {
 
 
 object Typer {
+  /** R2 (SQL audit O-7/S-02): the tag a binder (`letR`, `letRWithPK`, `letM`, `groupBy`,
+    * `accumulate`) puts on its `QuoteR`/`QuoteMem` when it knows the bound relation's
+    * header, so a header-inspecting helper (`projectEach`, `rheader`, `leftJoinOr`,
+    * `joinWithDefault`) applied to the bound variable can type instead of panicking
+    * "Asked for the header of a quote".  Quotes are matched by reference (`eq`), so the
+    * tag is a fresh object like the plain `new Object` it replaces. */
+  final class Quoted(val header: Header) {
+    override def toString = "quote:" + header.toList.sortBy(_._1).mkString("{", ",", "}")
+  }
+
+  /** R4 (SQL audit O-11/S-27/L-18/S-10, decision D4): the header of a join by mode.
+    * Columns that come only from the side an outer join NULL-fills are nullable; a
+    * column present on both sides keeps the type the join key has (an inner match on
+    * Left/Right, a coalesce on Full).  The scanner's `joinOn` header should agree with
+    * this, or the wire decoder still throws "Unexpected NULL" on an unmatched row. */
+  def joinHeader(left: Header, right: Header, mode: JoinMode): Header = {
+    val shared = left.keySet intersect right.keySet
+    def widen(h: Header, on: Boolean): Header =
+      if (!on) h else h map { case (c, t) => if (shared(c)) (c, t) else (c, t.withNull) }
+    val l = widen(left, mode == JoinMode.Right || mode == JoinMode.Full)
+    val r = widen(right, mode == JoinMode.Left || mode == JoinMode.Full)
+    // R4b: a shared column's two types may differ in the nullable flag only (an `unsafe*`
+    // outer join's result joined back to a plain relation); the value the join delivers
+    // is the left side's on Left, the right side's on Right, on Inner a match (never NULL
+    // unless both sides admit it), and on Full a coalesce -- where a NULL key never
+    // matches and survives as an unmatched row whose coalesced key is NULL, so the key is
+    // nullable if EITHER side's is (review-rel R4b-Full, measured on SQLite).
+    val sharedTyped = shared.toList.map { c =>
+      val (lt, rt) = (left(c), right(c))
+      val nullable = mode match {
+        case JoinMode.Left  => lt.nullable
+        case JoinMode.Right => rt.nullable
+        case JoinMode.Full  => lt.nullable || rt.nullable
+        case JoinMode.Inner => lt.nullable && rt.nullable
+      }
+      c -> (if (nullable) lt.withNull else lt.withoutNull)
+    }
+    l ++ r ++ sharedTyped
+  }
+
+  /** R4b: the header of a union/difference: the columns must agree up to the nullable
+    * flag, and a column is nullable iff it is on either side. */
+  def unionHeader(top: Header, bottom: Header): Option[Header] =
+    if (top.keySet != bottom.keySet) None
+    else {
+      val bad = top.keys.filter(c => top(c).withoutNull != bottom(c).withoutNull)
+      if (bad.nonEmpty) None
+      else Some(top map { case (c, t) => c -> (if (t.nullable || bottom(c).nullable) t.withNull else t) })
+    }
+
   /** The error-reporting capability the typer is parameterised over.
     *
     * This was `Errs[F]`, but Scala 3 does not allow a
@@ -102,13 +152,15 @@ object Typer {
   private def joinType[F[+_]](
     left: Header,
     right: Header,
-    extras: Set[(ColumnName, ColumnName)] = Set()
+    extras: Set[(ColumnName, ColumnName)] = Set(),
+    mode: JoinMode = JoinMode.Inner
   )(implicit F: Monad[F], err: Errs[F]): F[Header] = {
     val joinKey = (left.keySet intersect right.keySet map {x => (x,x)} toSet) ++ extras
+    // R4b: the nullable flag is not a type mismatch (`joinHeader` decides it)
     val badCols = joinKey collect {
-      case (lname,rname) if left(lname) != right(rname) => (lname, rname) -> (left(lname), right(rname))
+      case (lname,rname) if left(lname).withoutNull != right(rname).withoutNull => (lname, rname) -> (left(lname), right(rname))
     }
-    if(badCols isEmpty) (left ++ right).pure[F]
+    if(badCols isEmpty) joinHeader(left, right, mode).pure[F]
     else {
       val msgs = badCols.toList.map({
         case ((ln, rn), (l, r)) =>
@@ -147,10 +199,11 @@ object Typer {
     bottom: Header,
     operation: String
   )(implicit F: Monad[F], err: Errs[F]): F[Header] = {
-    if(top == bottom) top.pure[F]
-    else {
-      val msg = "Cannot %s columns: expected `" + top.toString + "', found `" + bottom.toString + "'."
-      err(msg format operation)
+    unionHeader(top, bottom) match {
+      case Some(h) => h.pure[F]
+      case None =>
+        val msg = "Cannot %s columns: expected `" + top.toString + "', found `" + bottom.toString + "'."
+        err(msg format operation)
     }
   }
 
@@ -179,7 +232,11 @@ object Typer {
     outer: Boolean,
     colMap: Map[ColumnName, (Record, Op, PrimExpr)]
   )(implicit f: Monad[F], err: Errs[F]): F[Header] = {
-    val pivCols = colMap mapValues { case (k,o,d) => o.guessTypeUnsafe }
+    // D4: a NULL default (`pivot`'s `Null Double`) makes the pivoted column nullable
+    val pivCols = colMap mapValues { case (k,o,d) =>
+      val t = o.guessTypeUnsafe
+      if (d.isNull) t.withNull else t
+    }
     val passCols = hunder -- pKey -- pVals
     val overlap = passCols.keySet intersect pivCols.keySet
 
@@ -207,7 +264,7 @@ object Typer {
       case UnionM(m1, m2)             => (go(m1) |@| go(m2))(unionType[F](_, _, "unionM")).join
       case DifferenceM(m1, m2)        => (go(m1) |@| go(m2))(unionType[F](_, _, "differenceM")).join
       case HashInnerJoin(e1, e2)      => (go(e1) |@| go(e2))(joinType[F](_,_)).join
-      case HashLeftJoin(inner, outer) => (go(inner) |@| go(outer))(joinType[F](_,_)).join // check nullability?
+      case HashLeftJoin(inner, outer) => (go(inner) |@| go(outer))(joinType[F](_, _, Set(), JoinMode.Left)).join // D4: `outer` is NULL-filled
       case AccumulateM(pid, nid, expr, leaves, _) =>
                                          go(leaves) flatMap { hvnid => accumulateType(
                                            pid.toHeader,
@@ -218,12 +275,13 @@ object Typer {
       case GroupByM(m, k, expr)       => go(m) flatMap (hvk => groupByType(
                                            hvk, k.map(_.tuple).toMap,
                                            (hv: Header) => go(Mem.instantiate(EmptyRel(hv), expr))))
-      case MergeOuterJoin(e1, e2)     => (go(e1) |@| go(e2))(joinType[F](_,_)).join
+      case MergeOuterJoin(e1, e2)     => (go(e1) |@| go(e2))(joinType[F](_, _, Set(), JoinMode.Full)).join // D4
       case EmbedMem(e)                => extTyperAux(e, rtype, mtype)
       case ProcedureCall(_, h, _, _)  => h.pure[F]
       case AugmentSM(m, cur, hist)    => memTyperAux(m, rtype, mtype) map (augmentType(_, cur, hist))
       case RenameM(m, attr, col, p)   => go(m) flatMap (renameType[F](_, attr, col, p))
       case MemoMem(m)                 => go(m)
+      case QuoteMem(q: Quoted)        => q.header.pure[F] // R2: a quote tagged by its binder
       case (h:HardMem)                => h.header.pure[F]
       case LetM(r, expr) =>
         val h = extTyperAux(r, rtype, mtype)
@@ -256,7 +314,7 @@ object Typer {
     rel match {
       case VarR(v)                 => rtype(v)
       case Limit(r, f, t, os)      => go(r) flatMap (limitType[F](_, f, t, os))
-      case JoinOn(fst, snd, k, _)  => (go(fst) |@| go(snd))(joinType[F](_, _, k)).join
+      case JoinOn(fst, snd, k, m)  => (go(fst) |@| go(snd))(joinType[F](_, _, k, m)).join
       case Union(fst, snd)         => (go(fst) |@| go(snd))(unionType[F](_, _, "union")).join
       case Minus(fst, snd)         => (go(fst) |@| go(snd))(unionType[F](_, _, "subtract")).join
       case Filter(r, p)            => go(r) flatMap (filterType[F](_, p))

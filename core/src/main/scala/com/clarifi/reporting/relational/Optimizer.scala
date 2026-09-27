@@ -258,64 +258,6 @@ object Optimizer {
   private def literalAsPredicate(litrel: NonEmptyList[Record]): Predicate =
     Predicates.any(litrel.map(Predicate.fromRecord).list.toList)
 
-  private def literalAsCases(jk: Set[ColumnName], litrel: NonEmptyList[Record]): Map[Attribute, Op] = {
-    val preds = litrel.map((r: Record) => (r filterKeys jk).toMap).map(Predicate.fromRecord)
-    (litrel.head.keySet -- jk).map {
-      n => Attribute(n, litrel.head(n).typ) -> ((preds zip litrel).foldRight(None : Option[Op]) {
-        case ((a, b), Some(r)) => Some(If(a, OpLiteral(b(n)), r))
-        case ((a, b), None) => Some(OpLiteral(b(n)))
-      }).get
-    } toMap
-  }
-
-  def collectJoin[M, R](rel: Relation[M, R]): List[Relation[M, R]] = rel match {
-    case Join(l, r) => collectJoin(l) ++ collectJoin(r)
-    case _          => List(rel)
-  }
-
-  def joinLiterals(jk: Set[String], ts1: List[Record], ts2: List[Record]): List[Record] =
-    Tee.hashJoin[Record, Record, Record]((r: Record) => (r filterKeys jk).toMap, (r: Record) => (r filterKeys jk).toMap).
-      capL(com.clarifi.machines.Source(ts1)).cap(com.clarifi.machines.Source(ts2)).foldMap {
-        case (x, y) => Vector(x ++ y)
-      }.toList
-
-  def renameAggregate[M, R](from: ColumnName, to: ColumnName, agg: AggregateByGroup[M,R]): AggregateByGroup[M, R] = agg match {
-    case AggregateByGroup(under, cs, aggs, group) =>
-      val newCs = cs.mapKeys {
-        case Attribute(n, t) if from == n => Attribute(to, t)
-        case attr => attr
-      }
-      val newAggs = aggs.map {
-        case (Attribute(n, t), fun) if from == n => (Attribute(to, t), fun)
-        case v => v
-      }
-      AggregateByGroup(under, newCs, newAggs, group)
-  }
-
-  // Determines if a set of projections is a simple renaming of columns.
-  def simpleProject(proj: Map[Attribute, Op]): Option[Map[Attribute, ColumnValue]] =
-    proj.toList.traverse[Option,(Attribute, ColumnValue)] {
-      case (to, op) => op match {
-        case from : ColumnValue => Some(to -> from)
-        case _ => None
-      }
-    }.map(_.toMap)
-
-  def projectAggregate[M, R](agg: AggregateByGroup[M, R], proj: Map[Attribute, ColumnValue]) = agg match {
-    case AggregateByGroup(under, cs, aggs, group) =>
-      val (ncp, nap) = proj.partition {
-        case (attr, ColumnValue(nm, _)) => cs.exists{case (Attribute(anm,_), _) => anm == nm }
-      }
-      val aggmap = aggs.map{ case (attr,aggf) => attr.name -> aggf }.toMap
-      val naggs = nap.mapValues((cv: ColumnValue) => aggmap(cv.col)).toList
-      AggregateByGroup(under, flattenProjection(ncp,cs), naggs, group)
-  }
-
-  def exceptAggregate[M, R](agg: AggregateByGroup[M, R], exc: Set[ColumnName]) = agg match {
-    case AggregateByGroup(under, cs, aggs, group) =>
-      AggregateByGroup(under, cs.filterKeys(k => !exc(k.name)).toMap, aggs.filter(v => !exc(v._1.name)), group)
-  }
-
   def optimizeRel[M: Equal, R: Equal](rel: Relation[M, R],
                                       hr: R => Header,
                                       hm: M => Header): (Header, Relation[M, R]) = rel match {
@@ -333,7 +275,18 @@ object Optimizer {
     case MinusI(r1, r2) =>
       val (h, rl) = optimizeRel(r1, hr, hm)
       val (_, rr) = optimizeRel(r2, hr, hm)
-      (h, Minus(rl, rr))
+      rr match {
+        // R5 (SQL audit S-25): `filterNEq f a r` = `difference r (join r (relation [{f = a}]))`
+        // reaches here as `r MINUS (r JOIN lit)` once the small literal's `letR` is
+        // inlined; a natural join with a literal whose columns `r` has is the filter
+        // "some literal row agrees with this row" (UNKNOWN on a NULL, like the join), so
+        // the difference is ONE filter over `r` (`Minus.apply` builds the exact
+        // not-TRUE form) instead of two scans and an EXCEPT.
+        case JoinOn(r3, lit@SmallLit(ts), cs, JoinMode.Inner)
+            if cs.isEmpty && r3 == rl && lit.header.keySet.subsetOf(h.keySet) =>
+          (h, Minus(rl, Filter(rl, literalAsPredicate(ts))))
+        case _ => (h, Minus(rl, rr))
+      }
     case Filter(r, p) =>
       val (h, ir) = optimizeRel(r, hr, hm)
       (h, Filter(ir, p))
@@ -401,28 +354,6 @@ object Optimizer {
       val h = Typer.relTyperAux[Id, M, R](r, hr, hm)
       (h, r)
   }
-
-  def headerOf[M, R](r: Relation[M, R], hr: R => Header, hm: M => Header): Header = {
-    implicit val iderr: Typer.Errs[Id] = new Typer.Errs[Id] {
-          def apply(x: String, xs: String*): Nothing = sys.error((x::xs.toList).mkString("\n"))
-        }
-    Typer.relTyperAux[Id, M, R](r, hr, hm)
-  }
-
-  private def reverseRename[K](m: Map[K, K]) =
-    m map {_.swap} withDefault identity
-
-  /**
-   * Answer whether natural joins can be combined into a single `select`.
-   * Rule 1: Every column in `joinKey` must appear as a ColumnValue reference in `prj1`
-   * for which the `Attribute` key in prj1 also appears as a key in `prj2`.
-   * Rule 2: For every key appearing in both `prj1` and `prj2`, the `Op` must be the same.
-   */
-  private def joinable(joinKey: JoinKey, prj1: Projection, prj2: Projection): Boolean =
-    (joinKey forall { (k:ColumnName) => prj1.exists {
-      case (a, ColumnValue(c, _)) => c == k && prj2.isDefinedAt(a)
-      case _ => false
-    }}) && ((prj1.keySet & prj2.keySet) forall { k => prj1(k) === prj2(k) })
 
 }
 
