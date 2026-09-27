@@ -284,7 +284,7 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case (e, LongT(n)) => LongExpr(n, e.extractLong)
     case (e, IntT(n)) => IntExpr(n, e.extractInt)
     case (e, ShortT(n)) => ShortExpr(n, e.extractShort)
-    case (e, ByteT(n)) => ShortExpr(n, e.extractShort)
+    case (e, ByteT(n)) => ByteExpr(n, e.extractByte)
     case (e, BooleanT(n)) => BooleanExpr(n, e.extractBool)
     case (e, DoubleT(n)) => DoubleExpr(n, e.extractDouble)
   }
@@ -312,11 +312,22 @@ sealed abstract class PrimExpr(val typ: PrimT) extends Product with Serializable
     case _ => false
   }
 
-  // NullExpr does not compare equal to itself in some contexts (evaluating predicates,
-  // doing joins in Mem)
-  def equalsIfNonNull(a: PrimExpr): Boolean =
-    if (this.isNull || a.isNull) false
-    else this == a
+  // SQL audit P2 (D3; S-16, L-13, S-29).  `equals` is `Order[PrimExpr].equal`, which
+  // ignores the nullable flag and compares strings case-insensitively, but the hash was
+  // `(nullable, value).hashCode` (case classes) or `(nullable, value).hashCode`
+  // (`NonNullPrimExpr`): equal values hashed apart, so `uniq`, `groupingBy`,
+  // `Tee.hashJoin` and every `Set[Record]`/`Map[Record, _]` split "a" from "A" and a
+  // nullable-typed key from a non-nullable one while `==`, `sort`, `min`/`max` and the
+  // merge joins treated them as one.  The hash is now a function of what `equals`
+  // compares.  (A concrete `hashCode` here is inherited by the case classes below, as
+  // `equals` and `toString` already are.)
+  override def hashCode: Int = this match {
+    case StringExpr(_, s) => s.toLowerCase.hashCode
+    case DateExpr(_, d) => d.getTime.hashCode
+    case TimestampExpr(_, t) => t.getTime.hashCode
+    case NullExpr(t) => t.hashCode
+    case _ => value.hashCode
+  }
 
   override def toString: String = cata(Option(value))(_.toString, "")
 }
@@ -327,7 +338,6 @@ sealed abstract class NonNullPrimExpr(typ: PrimT) extends PrimExpr(typ) {self =>
     type This = self.This
     type Value = self.Value
   }
-  override def hashCode: Int = (nullable, value).hashCode
   override def productArity = 2
   override def productElement(n: Int): Any = n match {
     case 0 => nullable
@@ -361,7 +371,10 @@ final class StringExpr private(val nullable: Boolean, val value: String)
   }
 }
 object StringExpr extends NonNullPrimExprCompanion[String, StringExpr] {
-  private[this] val cache = new SetAssociativeCache[StringExpr]("StringExprCache", 14)
+  // The cache compares by `==`, which after P2 (D3) ignores case and the nullable flag:
+  // canonicalizing by it would hand back "a" for "A".  It compares the fields instead.
+  private[this] val cache = new SetAssociativeCache[StringExpr]("StringExprCache", 14,
+    (a, b) => a.nullable == b.nullable && a.value == b.value)
   def apply(nullable: Boolean, value: String): StringExpr = Option(value) match {
     case Some(nonNull) => cache.canonicalize(new StringExpr(nullable, nonNull))
     case None => new StringExpr(nullable, value)
@@ -399,7 +412,8 @@ final class DateExpr private(val nullable: Boolean, val value: Date)
   }
 }
 object DateExpr extends NonNullPrimExprCompanion[Date, DateExpr] {
-  private[this] val cache = new SetAssociativeCache[DateExpr]("DateExprCache", 10)
+  private[this] val cache = new SetAssociativeCache[DateExpr]("DateExprCache", 10,
+    (a, b) => a.nullable == b.nullable && a.value.getTime == b.value.getTime)
   def apply(nullable: Boolean, value: Date): DateExpr = Option(value) match {
     case Some(nonNull) => cache.canonicalize(new DateExpr(nullable, nonNull))
     case None => new DateExpr(nullable, value)
@@ -417,7 +431,8 @@ final class TimestampExpr private(val nullable: Boolean, val value: Timestamp)
   }
 }
 object TimestampExpr extends NonNullPrimExprCompanion[Timestamp, TimestampExpr] {
-  private[this] val cache = new SetAssociativeCache[TimestampExpr]("TimestampExprCache", 10)
+  private[this] val cache = new SetAssociativeCache[TimestampExpr]("TimestampExprCache", 10,
+    (a, b) => a.nullable == b.nullable && a.value == b.value)
   def apply(nullable: Boolean, value: Timestamp): TimestampExpr = Option(value) match {
     case Some(nonNull) => cache.canonicalize(new TimestampExpr(nullable, nonNull))
     case None => new TimestampExpr(nullable, value)
@@ -431,8 +446,18 @@ case class BooleanExpr(nullable: Boolean, value: Boolean)
 
 final class NullExpr private(val t: PrimT) extends PrimExpr(t) {
   type Value = None.type
-  override def equals(that: Any): Boolean = false
-  override def hashCode: Int = 0
+  // SQL audit P2 (S-18): `equals` used to be `false` for every argument, itself included,
+  // and `hashCode` 0 for every type.  Since `NullExpr.apply` hands out ONE instance per
+  // type, generic `==` (`BoxesRunTime.equals`, which the collections use) already found a
+  // NULL key equal to itself by reference, so `groupingBy`/`uniq`/hash lookups grouped
+  // NULLs as SQL does; a direct `.equals` call and `canEqual` said the opposite.  They
+  // agree with `Order[PrimExpr]` now (same-typed NULLs equal, hash by the type).  The
+  // comparisons that must stay three-valued are `Predicates.compare3` (P3).
+  override def equals(that: Any): Boolean = that match {
+    case n: NullExpr => n.t == t
+    case _ => false
+  }
+  override def hashCode: Int = t.hashCode
   override def productArity = 1
   override def productElement(n: Int) = n match {
     case 0 => t
@@ -440,7 +465,7 @@ final class NullExpr private(val t: PrimT) extends PrimExpr(t) {
   }
   def value = None
   def nullable = true
-  def canEqual(a: Any) = false
+  def canEqual(a: Any) = a.isInstanceOf[NullExpr]
 }
 
 object NullExpr extends scala.runtime.AbstractFunction1[PrimT, NullExpr] {
@@ -487,7 +512,8 @@ object DoubleExpr extends NonNullPrimExprCompanion[Double, DoubleExpr] {
   private[this] val nZero = new DoubleExpr(true, 0.0)
   private[this] val nOne = new DoubleExpr(true, 1.0)
   private[this] val cache =
-    new SetAssociativeCache[DoubleExpr]("DoubleExprCache", 12)
+    new SetAssociativeCache[DoubleExpr]("DoubleExprCache", 12,
+      (a, b) => a.nullable == b.nullable && a.value == b.value)
 
   def apply(nullable: Boolean, value: Double): DoubleExpr =
     if (value == 0.0) if (nullable) nZero else sZero
@@ -682,15 +708,22 @@ object PrimExpr {
     case TimestampT(n) => TimestampExpr(n, new Timestamp(d.toLong)) // Hack
   }
 
+  // SQL audit P4 (S-13, D1): SQL's SUM skips NULL inputs; `+` propagates them, so one
+  // NULL used to turn the whole sum NULL.  The zero stays 0: an empty input sums to 0
+  // on both paths (D2: the SQL side is `coalesce(sum(..), 0)`).
   def sumMonoid(t: PrimT) = new Monoid[PrimExpr] {
     val zero = mkExpr(0, t)
-    def append(x: PrimExpr, y: => PrimExpr) = x + y
+    def append(x: PrimExpr, y: => PrimExpr) = (x, y) match {
+      case (_: NullExpr, yy) => yy
+      case (xx, _: NullExpr) => xx
+      case (xx, yy) => xx + yy
+    }
   }
 
   def minMonoid(t: PrimT) = new Monoid[PrimExpr] {
     val zero = NullExpr(t)
     def append(x: PrimExpr, y: => PrimExpr) = (x, y) match {
-      case (StringExpr(n, a), StringExpr(m, b)) => StringExpr(m && n, if (a <= b) a else b)
+      case (StringExpr(n, a), StringExpr(m, b)) => StringExpr(m && n, if (a.toLowerCase <= b.toLowerCase) a else b)
       case (ByteExpr(n, a), ByteExpr(m, b)) => ByteExpr(m && n, a min b)
       case (ShortExpr(n, a), ShortExpr(m, b)) => ShortExpr(m && n, a min b)
       case (IntExpr(n, a), IntExpr(m, b)) => IntExpr(m && n, a min b)
@@ -709,7 +742,7 @@ object PrimExpr {
   def maxMonoid(t: PrimT) = new Monoid[PrimExpr] {
     val zero = NullExpr(t)
     def append(x: PrimExpr, y: => PrimExpr) = (x, y) match {
-      case (StringExpr(n, a), StringExpr(m, b)) => StringExpr(m && n, if (a >= b) a else b)
+      case (StringExpr(n, a), StringExpr(m, b)) => StringExpr(m && n, if (a.toLowerCase >= b.toLowerCase) a else b)
       case (ByteExpr(n, a), ByteExpr(m, b)) => ByteExpr(m && n, a max b)
       case (ShortExpr(n, a), ShortExpr(m, b)) => ShortExpr(m && n, a max b)
       case (IntExpr(n, a), IntExpr(m, b)) => IntExpr(m && n, a max b)
