@@ -92,11 +92,15 @@ object Join {
     // aggregated columns have the same name, because coalescing would then be incorrect
     // wrt natural join semantics.
     (fst, snd) match {
+      // R7 (SQL audit O-10): the coalesced GROUP BY keeps a group whose key is NULL,
+      // the natural join it stands for drops it (`k = k` is UNKNOWN), so the rewrite
+      // is only exact when every group column is non-nullable.
       case (a: AggregateByGroup[M,R], b: AggregateByGroup[M,R])
         if a.rel == b.rel &&
            a.cs == b.cs &&
            a.group == b.group &&
-           (a.aggs.map(_._1.name).toSet intersect b.aggs.map(_._1.name).toSet isEmpty) =>
+           (a.aggs.map(_._1.name).toSet intersect b.aggs.map(_._1.name).toSet isEmpty) &&
+           a.cs.keys.forall(!_.t.nullable) && a.group.forall(!_.typ.nullable) =>
           a.copy(aggs = a.aggs ++ b.aggs)
       case _ =>
         Relation.combineFilters(fst, snd) {
@@ -111,13 +115,16 @@ object Join {
 }
 
 case class JoinOn[+M, +R](fst: Relation[M, R], snd: Relation[M, R], cs: Set[(String, String)], mode: JoinMode = JoinMode.Inner) extends Relation[M, R] {
-  def bimap[N, S](f: M => N, g: R => S) = JoinOn(fst bimap (f, g), snd bimap (f, g), cs)
-  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = JoinOn(fst subst (f, g), snd subst (f, g), cs)
+  // R1 (SQL audit O-1/L-1/S-01): the three rebuilds below used to drop `mode`, so every
+  // outer join under a `letR` body (rebuilt by `unquoteR` and by the optimizer's
+  // `fromScope`/`toScope`) or beside a `Mem` operand compiled as an INNER join.
+  def bimap[N, S](f: M => N, g: R => S) = JoinOn(fst bimap (f, g), snd bimap (f, g), cs, mode)
+  def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = JoinOn(fst subst (f, g), snd subst (f, g), cs, mode)
   def bifoldMap[Z: Monoid](f: M => Z, g: R => Z) = fst.bifoldMap(f, g) |+| snd.bifoldMap(f, g)
   def foreach(f: M => Any, g: R => Any): Unit = { fst foreach (f, g) ; snd foreach (f, g) }
   override def unquote[S >: R, N >: M](f: Object => Option[Relation[N, S]],
                                        g: Object => Option[Mem[S, N]]): Relation[N, S] =
-    JoinOn(fst.unquote(f, g), snd.unquote(f, g), cs)
+    JoinOn(fst.unquote(f, g), snd.unquote(f, g), cs, mode)
 }
 
 case class Union[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Relation[M, R] {
@@ -144,10 +151,26 @@ case class MinusI[+M, +R](fst: Relation[M, R], snd: Relation[M, R]) extends Rela
 // ^- actually exists but lives in package.scala where it must
 
 object Minus {
-  def apply[M,R](fst: Relation[M, R], snd: Relation[M, R]): Relation[M, R] =
-    Relation.combineFilters(fst, snd) {
-      (l, r) => Predicates.simplify(Predicate.And(l, Predicate.Not(r)))
-    }.getOrElse(MinusI[M,R](fst,snd))
+  /** `difference (filter p1 r) (filter p2 r)` is `filter (p1 AND p2-is-not-TRUE) r`, and
+    * `difference r (filter p2 r)` is `filter (p2-is-not-TRUE) r`.  R5 (SQL audit O-6/S-25):
+    * the rewrite used to be `p1 AND NOT p2`, which under three-valued logic DROPS a row
+    * where `p2` is UNKNOWN (a NULL in one of its columns) although the row is in the
+    * left side and not in the right; `ReportingUtils.notTrue` is the exact form
+    * (`NOT p2 OR <operand> IS NULL` per comparison).  A `p2` it cannot express
+    * (a `Funtest`) keeps the set difference. */
+  def apply[M,R](fst: Relation[M, R], snd: Relation[M, R]): Relation[M, R] = {
+    def minusFilter(r: Relation[M, R], p1: Option[Predicate], p2: Predicate): Relation[M, R] =
+      ReportingUtils.notTrue(p2) match {
+        case Some(np2) =>
+          Filter(r, Predicates.simplify(p1.map(Predicate.And(_, np2)).getOrElse(np2)))
+        case None => MinusI[M,R](fst, snd)
+      }
+    (fst, snd) match {
+      case (Filter(r1, p1), Filter(r2, p2)) if r1 == r2 => minusFilter(r1, Some(p1), p2)
+      case (r1, Filter(r2, p2)) if r1 == r2 => minusFilter(r1, None, p2)
+      case _ => MinusI[M,R](fst, snd)
+    }
+  }
   def unapply[M,R](x: Minus[M,R]): Some[(Relation[M,R],Relation[M,R])] = Some((x.fst, x.snd)) 
 }
 
@@ -171,7 +194,7 @@ case class Project[+M, +R](rel: Relation[M, R], cs: Map[Attribute, Op]) extends 
     Project(rel.unquote(f, g), cs)
 }
 
-/** Except gets optimized away in the Optimizer */
+/** Compiled by the scanner as is (`DistinctiveQuery.except`); the optimizer only recurses. */
 case class Except[+M, +R](rel: Relation[M, R], cs: Set[ColumnName]) extends Relation[M, R] {
   def bimap[N, S](f: M => N, g: R => S) = Except(rel bimap (f, g), cs)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Except(rel subst (f, g), cs)
@@ -182,7 +205,7 @@ case class Except[+M, +R](rel: Relation[M, R], cs: Set[ColumnName]) extends Rela
     Except(rel.unquote(f, g), cs)
 }
 
-/** Combine gets optimized away in the Optimizer */
+/** Compiled by the scanner as is (`DistinctiveQuery.combine`); the optimizer only recurses. */
 case class Combine[+M, +R](rel: Relation[M, R], attr: Attribute, op: Op) extends Relation[M, R] {
   def bimap[N, S](f: M => N, g: R => S) = Combine(rel bimap (f, g), attr, op)
   def subst[N, S](f: M => Mem[S, N], g: R => Relation[N, S]) = Combine(rel subst (f, g), attr, op)
@@ -193,7 +216,7 @@ case class Combine[+M, +R](rel: Relation[M, R], attr: Attribute, op: Op) extends
     Combine(rel.unquote(f, g), attr, op)
 }
 
-/** RenameR gets optimized away in the Optimizer */
+/** Compiled by the scanner as is (`DistinctiveQuery.rename`); the optimizer only recurses. */
 case class RenameR[+M, +R](rel: Relation[M, R], attr: Attribute, c: ColumnName) extends Relation[M, R] {
   def bimap[N, S](f: M => N, g: R => S) = RenameR(rel bimap (f, g), attr, c)
   def bifoldMap[Z:Monoid](f: M => Z, g: R => Z) = rel bifoldMap (f, g)
@@ -315,12 +338,19 @@ object TableProc {
 
 case class Table(header: Header, n: TableName) extends HardRel
 case class RelEmpty(header: Header) extends HardRel
-// Tiny literals turn into filters in the optimizer
+// A literal of at most 100 rows compiles to a table-value constructor (the scanner
+// squashes a one-row literal joined to a select into its WHERE); a let-bound literal
+// of at most `Optimizer.smallLitSize` rows is inlined by the optimizer.
 case class SmallLit(tups: NonEmptyList[Record]) extends HardRel {
   val header = recordHeader(tups.head)
 }
 case class QuoteR(n: Object) extends HardRel {
-  def header = sys.error("Panic: Asked for the header of a quote.")
+  /** R2 (SQL audit O-7/S-02): a binder that knows the bound relation's header tags the
+    * quote with a `Typer.Quoted`, so `projectEach`/`rheader` inside a `letR` body can type. */
+  def header = n match {
+    case q: Typer.Quoted => q.header
+    case _ => sys.error("Panic: Asked for the header of a quote.")
+  }
   override def unquote[R, M](f: Object => Option[Relation[M, R]],
                              g: Object => Option[Mem[R, M]]): Relation[M, R] =
     f(n) getOrElse this

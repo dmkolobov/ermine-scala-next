@@ -588,12 +588,27 @@ object Lib {
     primOp(Global("Relation.Row","projectEach"), fun3("Relation.Row.projectEach", { case Fun(f) => {
       case Rec(r) => {
         case EmptyRel => EmptyRel
-        case Rel(e) => Rel(ProjectE(e, Header.proj(Typer.closedExt(e).header) ++
+        case Rel(e) =>
+          // R2 (SQL audit S-02): inside a `letR`/`groupBy`/`accumulate` body `e` holds a
+          // quote; its binder tagged it with the bound header (`Typer.Quoted`), so this
+          // types instead of panicking.
+          val h = Typer.closedExt(e).header
+          Rel(ProjectE(e, Header.proj(h) ++
             {for {(k, v) <- r} yield {
               val Fun(g) = f(v).whnf
               val t = toPrimExpr(v).typ
-              val Prim(result: Op) = g(Prim(Op.ColumnValue(k,t))).whnf
-              Attribute(k,t) -> result
+              // R3 (SQL audit S-03): `unsafeLeftJoin r (relation [])` answers `r`, because
+              // the empty literal's header is erased, so a column the join should have
+              // NULL-filled is missing here.  It is NULL on every row by construction, so
+              // the caller's function is applied to a NULL literal of that type; for
+              // `leftJoinOr`'s `coalesce' o d` the column is then the default `d`.
+              val col: Op = if (h.isDefinedAt(k)) Op.ColumnValue(k,t) else Op.OpLiteral(NullExpr(t.withNull))
+              val Prim(result: Op) = g(Prim(col)).whnf
+              val folded = result match {
+                case Op.Coalesce(Op.OpLiteral(n), d) if n.isNull => d
+                case o => o
+              }
+              Attribute(k,t) -> folded
             }}
           ))
       }}}),
@@ -823,6 +838,21 @@ object Lib {
                  ->: listH(eitherH(pairH(string, relationT(sk)), primExpr))
                  ->: relationT(r))))
 
+    /** R2: the object a binder quotes its bound variable with.  When the bound
+      * relation types, the quote carries its header (`Typer.Quoted`) so the body can
+      * ask for it; otherwise a plain fresh object, as before. */
+    def quoteTag(h: Option[TypeTag]): Object =
+      h.flatMap(_.toOption) match {
+        case Some(hdr) => new Typer.Quoted(hdr)
+        case None => new Object
+      }
+
+    /** R8 (D7): the aggregates `groupBy` lowers to a SQL `group by`. */
+    def groupByInSql(agg: AggFunc): Boolean = agg match {
+      case AggFunc.Count | AggFunc.Sum(_) | AggFunc.Avg(_) | AggFunc.Min(_) | AggFunc.Max(_) => true
+      case _ => false
+    }
+
     primOp(Global("Native.Relation","relation#"), Fun(x => x.whnfMatch("Native.Relation.relation#") {
              case EmptyRel => Prim(Closed(ExtMem(relational.EmptyRel(Map())), Map()))
              case Rel(e) => Prim(Typer.closedExt(Optimizer.optimize(e)))
@@ -837,7 +867,7 @@ object Lib {
         case x: Bottom => -\/(x)
         case _ => -\/(Bottom(throw new RuntimeException("Expected a relation in a bound variable: Native.Relation.letR")))
       }
-      val unique = new Object
+      val unique = quoteTag(ext.toOption.map(Typer.extTyper))
       f.whnfMatch("Native.Relation.letR") {
         case Fun(g) => g(Rel(ExtRel(QuoteR(unique), ""))).whnfMatch("Native.Relation.letR") {
           case EmptyRel => EmptyRel
@@ -859,7 +889,7 @@ object Lib {
         case x: Bottom => -\/(x)
         case _ => -\/(Bottom(throw new RuntimeException("Expected a relation in a bound variable: Native.Relation.letRWithPK#")))
       }
-      val unique = new Object
+      val unique = quoteTag(ext.toOption.map(Typer.extTyper))
       pk.whnfMatch("Native.Relation.letRWithPK#") {
         case Prim(pk) => f.whnfMatch("Native.Relation.letRWithPK#") {
           case Fun(g) => g(Rel(ExtRel(QuoteR(unique), ""))).whnfMatch("Native.Relation.letRWithPK#") {
@@ -881,7 +911,7 @@ object Lib {
         case Rel(e) => Some(e)
         case _ => None
       }
-      val unique = new Object
+      val unique = quoteTag(ext.map(Typer.extTyper))
       f.whnfMatch("Native.Relation.letM") {
         case Fun(g) => g(Rel(ExtMem(QuoteMem(unique)))).whnfMatch("Native.Relation.letM") {
           case EmptyRel => EmptyRel
@@ -914,13 +944,27 @@ object Lib {
         case Prim(h: List[(String, PrimT)]) => h.map(p => Attribute(p._1, p._2))
         case _ => throw new RuntimeException("groupBy# first argument not a List[(String,PrimT)]: " + k)
       }
-      val h = new Object
-      val unique = new Object { override def toString = "groupBy-quote:"+h }
+      val keyNames = key.map(_.name).toSet
+      val unique = quoteTag(ext.map(m => Typer.memTyper(m).map(_ -- keyNames)))
       f.whnfMatch("Relation.Row.groupBy#") {
         case Fun(g) => g(Rel(ExtMem(QuoteMem(unique)))).whnfMatch("Relation.Row.groupBy#") {
           case EmptyRel => EmptyRel
-          case Rel(ExtMem(r)) => ext map (v => Rel(ExtMem(GroupByM(v, key, r.unquoteM(x =>
-            if (x eq unique) Some(VarM(MTop)) else None))))) getOrElse
+          case Rel(ExtMem(r)) => ext map (v => (r, v) match {
+            // R8 (SQL audit S-20, decision D7): `groupBy k (sumBy c) r`, `groupBy k count r`,
+            // `groupBy k (minBy/maxBy/meanBy c) r` over a relation that came from SQL is
+            // exactly one aggregate per group, so it is ONE `group by` in the database
+            // (`AggregateByGroup`) instead of every row fetched and reduced in memory.
+            // The Ermine type stays `Mem`; NULLs in `c` follow SQL (skipped), per D1.
+            case (AggregateM(QuoteMem(q), attr, agg), EmbedMem(ExtRel(rel, db)))
+                if (q eq unique) && groupByInSql(agg) && !keyNames(attr.name) =>
+              Rel(ExtMem(EmbedMem(ExtRel(AggregateByGroup(rel,
+                key.map(a => a -> (Op.ColumnValue(a.name, a.t): Op)).toMap,
+                List((attr, agg)),
+                key.map(a => Op.ColumnValue(a.name, a.t))), db))))
+            case _ =>
+              Rel(ExtMem(GroupByM(v, key, r.unquoteM(x =>
+                if (x eq unique) Some(VarM(MTop)) else None))))
+          }) getOrElse
               Bottom(throw new RuntimeException("Expected a relation in a bound variable: Native.Relation.groupBy#"))
         }
       }
@@ -964,7 +1008,7 @@ object Lib {
         case Rel(ExtMem(e)) => Some(e)
         case _ => None
       }
-      val unique = new Object
+      val unique = quoteTag(leaves.map(l => Typer.memTyper(l).map(_ - nodeId)))
       f.whnfMatch("Native.Relation.accumulate") {
         case Fun(g) => g(Rel(ExtMem(QuoteMem(unique)))).whnfMatch("Native.Relation.accumulate") {
           case EmptyRel => EmptyRel

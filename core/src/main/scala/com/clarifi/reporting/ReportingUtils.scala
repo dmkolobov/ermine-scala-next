@@ -30,8 +30,11 @@ object ReportingUtils {
                         falsehood: Reflexivity[ColumnName] = Reflexivity.zero
                        ): Predicate = {
     import Predicate._
+    // R10 (SQL audit O-25): a column known to be NULL is NOT substituted -- the untyped
+    // NULL literal it would become makes SQL Server reject a CASE whose results are all
+    // the NULL constant, and the column reference is right anyway.
     lazy val simplEnv = truth.consts collect {
-      case (k, Some(v)) => k -> Op.OpLiteral(v)
+      case (k, Some(v)) if !v.isNull => k -> Op.OpLiteral(v)
     }
     def rec(p: Predicate): Predicate = p match {
       case Lt(l, r) =>
@@ -39,11 +42,15 @@ object ReportingUtils {
       case Gt(l, r) =>
         Gt(l simplify simplEnv, r simplify simplEnv)
       case Eq(l, r) => (l simplify simplEnv, r simplify simplEnv) match {
-        case (l, r) if l === r => Atom(true)
+        // R6 (SQL audit O-9/S-30): `x = x` is UNKNOWN in SQL when `x` is NULL, so the
+        // fold to TRUE is only sound when the operand cannot be NULL by its own type.
+        case (l, r) if l === r && !mayBeNull(l) => Atom(true)
+        // R6: a singleton set is trivially "equivalent", so the same column on both sides
+        // must not reach these two cases (it is the guarded case above).
         case (Op.ColumnValue(l, _), Op.ColumnValue(r, _))
-            if truth equivalent Set(l, r) => Atom(true)
+            if l != r && (truth equivalent Set(l, r)) => Atom(true)
         case (Op.ColumnValue(l, _), Op.ColumnValue(r, _))
-            if falsehood equivalent Set(l, r) => Atom(false)
+            if l != r && (falsehood equivalent Set(l, r)) => Atom(false)
         case (l, r) => Eq(l, r)
       }
       case Not(p) => rec(p) match {
@@ -68,6 +75,62 @@ object ReportingUtils {
       case _ => p
     }
     rec(p)
+  }
+
+  /** Whether `op` may evaluate to NULL, by its guessed type: a nullable column, a NULL
+    * literal, an expression over either; an op that does not type is taken as nullable. */
+  def mayBeNull(op: Op): Boolean = op match {
+    case Op.OpLiteral(v) => v.isNull   // a NULL literal whatever its declared type says
+    case _ => op.guessType.fold(_ => true, _.nullable)
+  }
+
+  /** R5 (SQL audit O-6/S-25): the predicate that is TRUE exactly when `p` is NOT TRUE
+    * under SQL's three-valued logic (FALSE or UNKNOWN), and always definite itself:
+    *
+    *   notTrue(a < b)      = NOT (a < b) OR a IS NULL OR b IS NULL   (a comparison is UNKNOWN
+    *                                                                 iff an operand is NULL)
+    *   notTrue(a OR b)     = notTrue(a) AND notTrue(b)
+    *   notTrue(a AND b)    = notTrue(a) OR notTrue(b)
+    *   notTrue(NOT a)      = notFalse(a)
+    *   notTrue(x IS NULL)  = NOT (x IS NULL)                          (never UNKNOWN)
+    *
+    * and `notFalse` dually (TRUE or UNKNOWN).  A NULL test is left out for an operand
+    * that is a non-NULL literal.  Column operands keep their test whatever their declared
+    * type says: after an `unsafe*` outer join the surface type is not nullable while the
+    * column is.  `None` for a `Funtest`, whose truth table is the database's.
+    * `difference (filter p1 r) (filter p2 r)` is `filter (p1 AND notTrue(p2)) r` exactly,
+    * because a row of `r` is in the right side iff `p2` is TRUE of it. */
+  def notTrue(p: Predicate): Option[Predicate] = {
+    def nulls(l: Op, r: Op): List[Predicate] =
+      List(l, r) collect { case o if !definite(o) => IsNull(o) }
+    def definite(o: Op): Boolean = o match {
+      case Op.OpLiteral(v) => !v.isNull
+      case _ => false
+    }
+    def orAll(p: Predicate, ps: List[Predicate]): Predicate = ps.foldLeft(p)(Or(_, _))
+    def nt(p: Predicate): Option[Predicate] = p match {
+      case Atom(b)          => Some(Atom(!b))
+      case Lt(l, r)         => Some(orAll(Not(p), nulls(l, r)))
+      case Gt(l, r)         => Some(orAll(Not(p), nulls(l, r)))
+      case Eq(l, r)         => Some(orAll(Not(p), nulls(l, r)))
+      case IsNull(_)        => Some(Not(p))
+      case Or(a, b)         => for (x <- nt(a); y <- nt(b)) yield And(x, y)
+      case And(a, b)        => for (x <- nt(a); y <- nt(b)) yield Or(x, y)
+      case Not(q)           => nf(q)
+      case Funtest(_, _, _, _) => None
+    }
+    def nf(p: Predicate): Option[Predicate] = p match {
+      case Atom(b)          => Some(Atom(b))
+      case Lt(l, r)         => Some(orAll(p, nulls(l, r)))
+      case Gt(l, r)         => Some(orAll(p, nulls(l, r)))
+      case Eq(l, r)         => Some(orAll(p, nulls(l, r)))
+      case IsNull(_)        => Some(p)
+      case Or(a, b)         => for (x <- nf(a); y <- nf(b)) yield Or(x, y)
+      case And(a, b)        => for (x <- nf(a); y <- nf(b)) yield And(x, y)
+      case Not(q)           => nt(q)
+      case Funtest(_, _, _, _) => None
+    }
+    nt(p)
   }
 
   /**
