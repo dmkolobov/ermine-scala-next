@@ -87,3 +87,29 @@ who runs out of budget stops at a clean point and says which items are undone.
 | P5 | S-12 | in-memory variance/stddev formula. |
 | P6 | S-17 | `cast` to Byte. |
 | P7 | S-19 S-28 | in-memory `dateDiff` for day/week/month/year on the GMT calendar; `incrementTimestamp` in GMT. |
+
+## Wave 2 (00:20): classes the differential oracle found beyond the audits (FINDINGS-oracle.md)
+
+The oracle test is on `sql-audit` at `f2d9f9bf` as `scalacheck-binding/src/main/scala/TestSqlDifferential.scala`
+(+ `scripts/gates.sh`). Implementers take it into their tree with
+`git checkout sql-audit -- scalacheck-binding/src/main/scala/TestSqlDifferential.scala scripts/gates.sh`
+and run it with the flag of the class they fixed (`-Dermine.test.sqldiff.<flag>=true`) to see the
+random property cover the fix. Do NOT edit the exclusion list in the file (four trees would conflict):
+name the flags your fix closes in your report; the orchestrator removes them at landing.
+Every existing item keeps its priority; these are appended to each area's list.
+
+| item | oracle id / flag | area | what |
+|---|---|---|---|
+| C15 | O-14 `projectNonInjective` | scanner | `preservesDistinctness` treats any single-column op as injective: only a bare column (or an injective rename) preserves distinctness. |
+| C16 | O-28 `fullJoinNullKey` | scanner | a FULL (or any outer) join over a nullable key cannot claim distinctness. |
+| C17 | O-26 `limitOneRowOffset` | scanner | `Limit(from = to > 1)` must not skip DISTINCT on its input. |
+| C18 | O-9 `projectOverAggConst` | scanner | a projection over an ungrouped aggregate keeping none of its columns keeps the aggregate's one row. |
+| C19 | O-2 `dupLit` | scanner | a literal with duplicate rows is not distinct (dedupe at construction or mark d=false). |
+| C20 | O-19 | scanner | a let whose body never uses the binding creates no temp table. |
+| E21 | O-15 `groupByConst` | emitter | a GROUP BY whose expressions are all constants is not dropped (`SqlQuery.scala:29`); group by a typed constant or keep the clause. |
+| E22 | O-22/O-22b `emptyAgg` | emitter | NULL literals and empty relations carry their type (`cast(NULL as ...)`) in `compileLiteral`, `emitEmpty` and the TVC path (extends E10). |
+| E23 | O-24/O-27 `orderDupExpr`/`orderByConstExpr` | emitter | `SqlQuery.orderBy` orders by the select's ALIASES, not its expressions. |
+| E24 | O-21 `decimalLiteral` | emitter | double literals are floats on SQL Server (exponent form or `cast(... as float)`), never DECIMAL. |
+| R10 | O-25 `nullConstSubst` | rel | `ReportingUtils.simplEnv` must not substitute a one-row literal's NULL constant into predicates as an untyped NULL (skip NULLs, or substitute a typed one). |
+| -- | O-23 `mixedCase` | deferred (D9) | string comparison folded case-insensitively at compile time vs SQLite's byte-wise compare: the collation decision is the user's. |
+| -- | O-10, O-8, O-16, O-11, O-12, O-7, O-5, O-3, O-4, O-6, O-20, O-13, O-1 | already C3, E4, E15, R6, C1, E5, E17, R4, C6, E4, E16/C7, C4, R1 | the oracle's flags for these are removed at landing when the items land. |
