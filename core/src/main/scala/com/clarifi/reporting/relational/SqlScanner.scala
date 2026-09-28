@@ -1355,24 +1355,13 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
           }
           // The side an outer join pads is typed NULLABLE in the header the
           // rows are decoded with, else an unmatched row's NULL is refused at
-          // decode time (decision D4; `Typer.joinHeader` says the same for the
-          // document's types).  A join column keeps the type of the side whose
-          // value the select list takes (`joinAttrs`); on a FULL join it is
-          // coalesced, so it stays as the left side has it.
-          def padded(side: Header, other: Header): Header =
-            (side -- other.keySet).map { case (c, t) => (c, t.withNull) }
-          val jh: Header = mode match {
-            case JoinMode.Inner => other.h ++ h
-            case JoinMode.Left  => padded(other.h, h) ++ h
-            case JoinMode.Right => padded(h, other.h) ++ other.h
-            case JoinMode.Full  =>
-              // a shared column is `coalesce(l, r)`: NULL when the one side
-              // present has a NULL there, so nullable iff EITHER side's is
-              // (`Typer.joinHeader`'s rule; review-scanner's must-fix)
-              padded(other.h, h) ++ padded(h, other.h) ++ (h filterKeys other.h.keySet).toMap.map {
-                case (c, t) => (c, if (t.nullable || other.h(c).nullable) t.withNull else t)
-              }
-          }
+          // decode time (decision D4).  The rule is `Typer.joinHeader`'s, the
+          // one the document's types follow (R4/R4b): a padded side's own
+          // columns are nullable; a shared column takes the flag of the side
+          // whose value `joinAttrs` delivers (Left: left, Right: right, Inner:
+          // both), and on a FULL join it is `coalesce(l, r)`, nullable iff
+          // EITHER side's is (review-scanner's must-fix C22).
+          val jh: Header = Typer.joinHeader(h, other.h, mode)
           // An outer join over a NULLABLE join column cannot claim distinct
           // output: a left-only and a right-only row whose keys are NULL
           // coalesce to equal rows (oracle O-28, item C16).
@@ -1467,7 +1456,11 @@ class SqlScanner(sms: SMEnv[DB])(implicit emitter: SqlEmitter) extends Scanner[D
       * an aggregate query and answers one row PER INPUT ROW (oracle O-9).  Such
       * a select is wrapped. */
     private[this] def dropsUngroupedAggregate(v: SqlSelect, cols: Map[Attribute, Op]): Boolean =
-      v.isAggregated && v.groupBy.isEmpty && cols.values.forall(_.columnReferences.isEmpty)
+      // the ops are asked AFTER the folding `compileOp` applies (`op.simplify(Map())`):
+      // `if false then avg else 1/3` mentions the aggregate column but compiles to a
+      // constant, which left `having count(*) > 0` (C6) on a non-aggregate select
+      // (landing, oracle random case over C6 + C18)
+      v.isAggregated && v.groupBy.isEmpty && cols.values.forall(_.simplify(Map()).columnReferences.isEmpty)
 
     /** Distinctness is asked of the inner query only when the CONSUMER needs it
       * and this projection can pass it on (`needDistinct && preservesDistinct`),

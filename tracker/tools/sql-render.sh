@@ -26,13 +26,14 @@
 # the wrong `q_*` name.  The extractor now also FAILS LOUDLY if any name in the `.in` file
 # never appears in the transcript.
 #
-# WHY TWO EMITTERS.  `SqlEmitter.emitOver` is a stub on every emitter except MS SQL, so a
-# window function dumped through the SQLite scanner comes out as
-# `TODO I don't yet know how to play RANK over SqlOver(...)` spliced into the query text.
-# Dump window relations through `sqlServer` and non-window ones through `sqlite`;
-# `tsql2sqlite.py` fixes the two dialect differences that matter (table-value constructors,
-# and the missing space before `desc`).  The `OVER (partition by … order by … rows between …)`
-# clauses pass through untouched -- SQLite has parsed them since 3.25.
+# WHY TWO EMITTERS (HISTORY).  Until the SQL audit (2026-09-27, tracker/sql-audit/, items
+# E1/E4/F-2) the SQLite emitter spliced `TODO I don't yet know how to play RANK over
+# SqlOver(...)` into any windowed query, omitted the space before `desc`, and left a
+# right-nested join bare, so window relations had to be dumped through `sqlServer` and
+# rewritten by `tsql2sqlite.py`.  The SQLite emitter now emits `OVER (...)` itself,
+# parenthesises nested joins, quotes identifiers and prints literals as one `VALUES`
+# select, so `sqlite` is the route for every relation.  The `sqlServer` + `tsql2sqlite.py`
+# route below is kept only for reading old probes; nothing new needs it.
 #
 # WHY python3 AND NOT A JVM.  This script used to shell out to a 35-line `SqlRun.java` run by
 # single-file source launch, with the driver jar scraped out of `target/ermine-classpath`
@@ -49,14 +50,9 @@
 #   * any pivot PANICS in `Native.Record.scalaRecord#` before a query is ever produced;
 #   * one statement is executed per query, so a plan that emits an `insert` ahead of its
 #     `select` cannot run here;
-#   * `SqlEmitter.scala:262` emits a join's LEFT and RIGHT operands bare
-#     (`r1 … op … r2 on (…)`), so a right-nested join tree comes out as
-#     `A join C join D on (c2) on (c3)`.  SQL-92 makes a `<joined table>` a `<table
-#     reference>`, so T-SQL and Postgres re-associate that correctly; SQLite's join grammar is
-#     a FLAT list and rejects two stacked `ON`s outright.  That is a PORTABILITY BUG IN THE
-#     EMITTER, not in this route -- `SqliteEmitter` has the hook to parenthesise a join
-#     operand that is itself a join and does not use it.  `Wide/` never trips it because its
-#     join trees are left-deep (`fact ** dim ** dim`); `Algebra/` does.
+#   * (closed by the audit's E4) the SQLite emitter used to emit a right-nested join tree
+#     bare (`A join C join D on (c2) on (c3)`), which SQLite's flat join grammar rejects;
+#     `SqliteEmitter` now mixes in `EmitJoinOn_ParenthesizeRight`, so `Algebra/` renders.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$here"

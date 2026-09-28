@@ -25,10 +25,11 @@ import org.scalacheck.Prop.{ Result => _, _ }
   *
   * The reference is the SQL a relation SHOULD produce: a relation is a set (dedupe at
   * every step), predicates use SQL three-valued logic (a comparison with NULL is
-  * UNKNOWN, a filter keeps only TRUE), aggregates ignore NULLs and an aggregate over an
-  * empty input answers one row (COUNT 0, the others NULL) when there is no GROUP BY
-  * and no rows when there is.  Expressions delegate to `Op.eval` node by node with NULL
-  * propagated first, so the test is about relational structure, not arithmetic.
+  * UNKNOWN, a filter keeps only TRUE), aggregates ignore NULLs and an ungrouped aggregate
+  * over an empty input follows decision D2 (WORKLIST.md): SUM answers its typed zero and
+  * COUNT 0, AVG/MIN/MAX answer NO row; a grouped aggregate answers no rows (an absent
+  * group is absent).  Expressions delegate to `Op.eval` node by node with NULL propagated
+  * first, so the test is about relational structure, not arithmetic.
   *
   * HOW TO ADD A CONSTRUCTOR TO THE GENERATOR.  `SqlDifferential.Gens.genRel` is a
   * `Gen.frequency` over one generator per constructor, each answering `(Header, rel)`
@@ -42,8 +43,15 @@ import org.scalacheck.Prop.{ Result => _, _ }
   * `-Dermine.test.sqldiff.<class>=true` re-enables it; every exclusion is a ticket
   * in the findings file.
   *
-  * Column names avoid SQL keywords (`in`, `order`, ...): the SQLite emitter never quotes
-  * an identifier (finding O-6, pinned under `keyword`).
+  * DISAGREEMENT CLASSES.  Every class the audit's implementers closed is in `fixed` and
+  * is generated and pinned unconditionally (landing, 2026-09-27): letOuter eqSelf
+  * nullConstSubst keyword nestedJoinRight limitOffsetOnly ifNestedConsequent concatNull
+  * letTemp emptyAgg sumEmpty orderDupExpr orderByConstExpr decimalLiteral groupByConst
+  * dupLit setOpPrecedence outerJoinInlinedExpr limitTwoRowsDistinct projectNonInjective
+  * fullJoinNullKey limitOneRowOffset projectOverAggConst outerNull.  The one class still
+  * excluded is `mixedCase` (O-23): strings are compared case-insensitively in memory and
+  * in constant folding, byte-wise on SQLite; the collation is the user's decision (D9),
+  * so it stays behind `-Dermine.test.sqldiff.mixedCase=true`.
   *
   * Not covered, on purpose: `MemoR` creates a PERSISTENT `MemoHash_...` table (the
   * audit uses ErmineSales read-only), `PivotR`, `TableProc`, `Table` (needs schema),
@@ -57,6 +65,38 @@ object SqlDifferential {
   /** `-Dermine.test.sqldiff.<cls>=true` re-enables an excluded disagreement class. */
   def enabled(cls: String): Boolean =
     sys.props.get("ermine.test.sqldiff." + cls).exists(_.trim == "true")
+
+  /** The classes the SQL audit's implementers closed (WORKLIST.md items in brackets):
+    * always generated and always pinned, on both backends, whatever the flags say.
+    * `mixedCase` is NOT here (decision D9: the collation call is the user's). */
+  val fixed: Set[String] = Set(
+    "letOuter",                // R1
+    "eqSelf",                  // R6
+    "nullConstSubst",          // R10
+    "keyword",                 // E4
+    "nestedJoinRight",         // E4
+    "limitOffsetOnly",         // E5
+    "ifNestedConsequent",      // E15
+    "concatNull",              // E17
+    "letTemp",                 // E16 + C7
+    "emptyAgg",                // E10/E22 + C6
+    "sumEmpty",                // C6 (D2) + E22
+    "orderDupExpr",            // E23
+    "orderByConstExpr",        // E23
+    "decimalLiteral",          // E24
+    "groupByConst",            // E21
+    "dupLit",                  // C19 + E13
+    "setOpPrecedence",         // C1 (D5)
+    "outerJoinInlinedExpr",    // C3
+    "limitTwoRowsDistinct",    // C4
+    "projectNonInjective",     // C15
+    "fullJoinNullKey",         // C16
+    "limitOneRowOffset",       // C17
+    "projectOverAggConst",     // C18
+    "outerNull")               // R4 + C22 (D4)
+
+  /** A class is exercised when its flag is set or the audit closed it. */
+  def active(cls: String): Boolean = enabled(cls) || fixed(cls)
 
   /** `-Dermine.test.sqldiff.n=<int>` overrides minSuccessfulTests. */
   def minTests(default: Int): Int =
@@ -128,8 +168,9 @@ object SqlDifferential {
     import Op._
     import Predicate._
 
-    /** A class is produced when the flag is set OR the backend does not exhibit it. */
-    def on(cls: String): Boolean = SqlDifferential.enabled(cls) || profile(cls)
+    /** A class is produced when its flag is set, the audit closed it (`fixed`), OR
+      * the backend does not exhibit it. */
+    def on(cls: String): Boolean = SqlDifferential.active(cls) || profile(cls)
 
     def value(t: PrimT): Gen[PrimExpr] = genValue(t, decimal = on("decimalLiteral"), mixed = on("mixedCase"))
 
@@ -934,7 +975,22 @@ object SqlDifferential {
             val csVals: Record = if (g.isEmpty) Map() else cs.map { case (a, o) => a.name -> op(o, g.head) }
             csVals ++ as.map { case (a, f) => a.name -> agg(f, a.t, g) }
           }
-        case Aggregate(u, a, f) => List(Map(a.name -> agg(f, a.t, go(u))))
+        case Aggregate(u, a, f) =>
+          // Decision D2 (scanner C6, prims P4): over NO rows an ungrouped SUM answers
+          // its typed zero, COUNT 0, and AVG/MIN/MAX answer no row at all.  The SQL is
+          // `coalesce(SUM(x), 0)`, so an ungrouped SUM whose inputs are ALL NULL is 0 too
+          // (review-scanner NOTE 1; the in-memory `sumMonoid` skips NULLs and agrees).
+          // A GROUPED SUM is plain `SUM(x)`: NULL over an all-NULL group, as `agg` says.
+          val rs = go(u)
+          val zero = PrimExpr.sumMonoid(a.t).zero
+          if (rs.nonEmpty) {
+            val v = agg(f, a.t, rs)
+            List(Map(a.name -> (f match { case AggFunc.Sum(_) if v.isNull => zero; case _ => v })))
+          } else f match {
+            case AggFunc.Count  => List(Map(a.name -> IntExpr(false, 0)))
+            case AggFunc.Sum(_) => List(Map(a.name -> zero))
+            case _              => Nil
+          }
         case LetR(ExtRel(b, _), _, e) =>
           val bound = go(b)
           eval[RLevel[Nothing, R]](e, { case RTop => bound; case RPop(v) => go(v) },
@@ -1125,6 +1181,11 @@ object SqlDifferential {
      JoinOn(lit(Map("ia" -> i(1))),
             Combine(lit(Map("ia" -> i(2))), Attribute("p1", StringT(0, true)), Op.Concat(List(OpLiteral(StringExpr(false, "x")), OpLiteral(StringExpr(false, "y"))))),
             Set(), JoinMode.Left)),
+    ("O-9b (landing) a projection whose op mentions the aggregate column but FOLDS to a constant (if false ..) left having count(*) > 0 on a non-aggregate select", "projectOverAggConst",
+     Project(Aggregate(RelEmpty(Map("da" -> DoubleT(false))), Attribute("p3", DoubleT(true)), AggFunc.Avg(ColumnValue("da", DoubleT(false)))),
+             Map(Attribute("p5", DoubleT(true)) -> (Op.If(Predicate.Atom(false),
+                                                          Op.Sub(ColumnValue("p3", DoubleT(true)), ColumnValue("p3", DoubleT(true))),
+                                                          Op.DoubleDiv(OpLiteral(DoubleExpr(false, 1.0)), OpLiteral(DoubleExpr(false, 3.0)))): Op)))),
     ("O-9 a projection over an ungrouped aggregate that keeps no aggregate column loses the aggregate's one row", "projectOverAggConst",
      Project(Aggregate(RelEmpty(Map("ia" -> IntT(false))), Attribute("p1", IntT(false)), AggFunc.Count),
              Map(Attribute("p2", IntT(false)) -> (OpLiteral(i(3)): Op)))),
@@ -1168,7 +1229,7 @@ object TestSqlDifferential extends Properties("SQL differential oracle (in-memor
   property("random relations: reference == SQLite") = forAll(gens.genTop)(check)
 
   pins.foreach { case (name, cls, rel) =>
-    if (enabled(cls)) property("pin " + name) = secure(check(rel))
+    if (active(cls)) property("pin " + name) = secure(check(rel))
   }
 
   property("coverage: every constructor is generated, under 10% of candidates discarded") = secure(coverage(gens, 500))
@@ -1229,7 +1290,7 @@ object TestSqlDifferentialDb extends Properties("SQL differential oracle (SQL Se
       property("random relations: reference == SQL Server") = forAll(gens.genTop)(check)
 
       pins.foreach { case (name, cls, rel) =>
-        if (enabled(cls)) property("pin " + name) = secure(check(rel))
+        if (active(cls)) property("pin " + name) = secure(check(rel))
       }
 
 
@@ -1261,7 +1322,7 @@ object TestSqlDifferentialDb extends Properties("SQL differential oracle (SQL Se
                 " let-wrapped scans holding " + bindings + " let bindings")
         (scanned, bindings, mine)
       }
-      if (enabled("letTemp"))
+      if (active("letTemp"))
         property("pin O-20 tempdb holds no ##t table this suite's scans created") = secure {
           val (scanned, _, mine) = tempScan()
           (scanned > 0) :| "nothing scanned" &&

@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
 """Rewrite the MS SQL that `dumpQuery (sqlServer ...)` emits into SQLite.
 
-Only two constructs differ for the queries this corpus produces:
+HISTORY.  This existed because the SQLite emitter could not emit window functions
+(it spliced `TODO ... SqlOver` text) and omitted the space before `desc`, so
+windowed relations were dumped as T-SQL and rewritten here.  The SQL audit
+(2026-09-27, tracker/sql-audit/ items E1, E4, F-2) fixed the SQLite emitter:
+`dumpQuery (sqlite ...)` now runs windows, nested joins and keyword columns
+directly, and `sql-render.sh` needs this script only to re-run OLD T-SQL dumps.
+
+What it still rewrites, for those:
 
   1. table-value constructors --   (values (..),(..)) as lit([c1],[c2],...)
      become                        (select v as [c1], ... union all select ...) lit
-  2. `[col]desc` / `[col]asc`  --  the emitter omits the space.
+  2. `[col]desc` / `[col]asc`  --  the old emitter omitted the space (current
+     T-SQL output already has it; the rewrite is then a no-op).
 
 SQLite accepts [bracket] identifiers and supports OVER(...) since 3.25, so
-everything else -- the window clauses this whole exercise is about -- passes
-through untouched.
+everything else passes through untouched.  NOT handled: current T-SQL output
+carries `N'...'` string literals (audit E6), which SQLite rejects ("no such
+column: N"); `1.5E0` doubles (E24) it reads.  Dump through `sqlite` instead.
 """
 import re, sys
 
