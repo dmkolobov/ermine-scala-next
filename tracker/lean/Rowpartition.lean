@@ -264,6 +264,14 @@ first getting the module to build.
                                (`nd_derives_sound_on_vocab`, `Cut.CseStep.entails_iff`'s shape
                                for all four).  Both fragment identities are proved
                                (`loopRel_split`, `ndStep_split`)
+* `Rowpartition.LitLhs`        -- a literal column set on the LEFT of a partition,
+                               `(|K|) <- (p1..pk)`.  `Constraint.lhs` is a variable, so the
+                               shape is encoded with a variable of the encoder's own:
+                               `z <- (|K|)` and `z <- (p1..pk)`.  The encoding is exact for
+                               the signature judgement: `z` is chosen for an obligation
+                               (`wanted_enc_iff`), rigid for a given (`given_enc_iff`), and
+                               `sigEntailsL_iff_encoded` folds both over whole lists.  The
+                               module that prompted it is decided in `Example`
 * `Rowpartition.SubsumeEscape` -- S1a of `tracker/PROMPT-subsume-termination.md`: the
                                ESCAPING-SKOLEM CHECK at `Subst.scala:648`
                                (`hm.fskvs.filter(stss) ++ hm.kindVars.filter(skss)`) as a
@@ -377,4 +385,5 @@ import Rowpartition.Loop.TopNormalise
 import Rowpartition.RoseTheory
 import Rowpartition.Determined
 import Rowpartition.SigEntail
+import Rowpartition.LitLhs
 import Rowpartition.SubsumeEscape

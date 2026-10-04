@@ -42,6 +42,8 @@ Lang_ForeignJdk.e.out	LOADED
 Lang_FreeReportDsl.e.out	LOADED	
 Lang_Helpers.e.out	LOADED	
 Lang_LetSignatures.e.out	LOADED	
+Lang_LiteralRowContext.e.out	LOADED	
+Lang_LiteralRowJoin.e.out	LOADED	
 Lang_ProjectionCliff.e.out	LOADED	
 Lang_ReaderParams.e.out	LOADED	
 Lang_RunningState.e.out	LOADED	
@@ -124,7 +126,7 @@ shouldfail_der06_shared_two_var_remainder.e.out	REJECTED	core/examples/shouldfai
 shouldfail_der07_shared_three_var_remainder.e.out	REJECTED	core/examples/shouldfail/der07_shared_three_var_remainder.e:44:7: Row partitions are unsatisfiable at field 'Shouldfail.Der07.b': the whole contains it but no part does
 shouldfail_der08_shared_remainder_relations.e.out	REJECTED	core/examples/shouldfail/der08_shared_remainder_relations.e:42:7: Row partitions are unsatisfiable at field 'Shouldfail.Der08.b': the whole contains it but no part does
 shouldfail_dup01_partition_literal.e.out	REJECTED	core/examples/shouldfail/dup01_partition_literal.e:25:7: Fields appear twice in row: Shouldfail.Dup01.a
-shouldfail_dup02_signature_chain.e.out	REJECTED	core/examples/shouldfail/dup02_signature_chain.e:26:7: Row partitions are unsatisfiable at field 'Shouldfail.Dup02.a': a part contains it but the whole does not
+shouldfail_dup02_signature_chain.e.out	REJECTED	core/examples/shouldfail/dup02_signature_chain.e:26:7: Row partitions are unsatisfiable at field 'Shouldfail.Dup02.a': two parts of one partition both contain it
 shouldfail_dup03_join1_shared_column.e.out	REJECTED	core/examples/shouldfail/dup03_join1_shared_column.e:30:7: Row partitions are unsatisfiable at field 'Shouldfail.Dup03.x': the whole contains it but no part does
 shouldfail_dup04_joinby_shared_column.e.out	REJECTED	core/examples/shouldfail/dup04_joinby_shared_column.e:30:7: Row partitions are unsatisfiable at field 'Shouldfail.Dup04.x': the whole contains it but no part does
 shouldfail_dup05_row_witness.e.out	REJECTED	core/examples/shouldfail/dup05_row_witness.e:23:5: Fields appear twice in row: Shouldfail.Dup05.a
@@ -132,12 +134,12 @@ shouldfail_dup06_cons_existing_field.e.out	REJECTED	core/examples/shouldfail/dup
 shouldfail_dup07_append_overlapping_rows.e.out	REJECTED	core/examples/shouldfail/dup07_append_overlapping_rows.e:23:5: Fields appear twice in row: Shouldfail.Dup07.b
 shouldfail_dup08_copy_column_onto_itself.e.out	REJECTED	core/examples/shouldfail/dup08_copy_column_onto_itself.e:24:7: Fields appear twice in row: Shouldfail.Dup08.a
 shouldfail_inc01_project_from_emptied_row.e.out	REJECTED	core/examples/shouldfail/inc01_project_from_emptied_row.e:31:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc01.amount': a part contains it but the whole does not
-shouldfail_inc02_project_from_columnless_relation.e.out	REJECTED	core/examples/shouldfail/inc02_project_from_columnless_relation.e:29:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc02.amount': a part contains it but the whole does not
-shouldfail_inc03_project_absent_field.e.out	REJECTED	core/examples/shouldfail/inc03_project_absent_field.e:34:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc03.shipDate': a part contains it but the whole does not
+shouldfail_inc02_project_from_columnless_relation.e.out	REJECTED	core/examples/shouldfail/inc02_project_from_columnless_relation.e:29:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc02.amount': the whole contains it but no part does
+shouldfail_inc03_project_absent_field.e.out	REJECTED	core/examples/shouldfail/inc03_project_absent_field.e:34:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc03.shipDate': the whole contains it but no part does
 shouldfail_inc04_except_absent_field.e.out	REJECTED	core/examples/shouldfail/inc04_except_absent_field.e:34:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc04.shipDate': the whole contains it but no part does
 shouldfail_inc05_filter_absent_field.e.out	REJECTED	core/examples/shouldfail/inc05_filter_absent_field.e:35:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc05.region': a part contains it but the whole does not
 shouldfail_inc06_filter_dropped_column.e.out	REJECTED	core/examples/shouldfail/inc06_filter_dropped_column.e:36:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc06.amount': the whole contains it but no part does
-shouldfail_inc07_has_helper_missing_column.e.out	REJECTED	core/examples/shouldfail/inc07_has_helper_missing_column.e:37:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc07.customerId': a part contains it but the whole does not
+shouldfail_inc07_has_helper_missing_column.e.out	REJECTED	core/examples/shouldfail/inc07_has_helper_missing_column.e:37:7: Row partitions are unsatisfiable at field 'ShouldFail.Inc07.customerId': the whole contains it but no part does
 shouldfail_inc08_project_absent_from_join_result.e.out	REJECTED	core/examples/shouldfail/inc08_project_absent_from_join_result.e:48:12: Row partitions are unsatisfiable at field 'ShouldFail.Inc08.regionName': the whole contains it but no part does
 shouldfail_inf01_partition_literal.e.out	REJECTED	core/examples/shouldfail/inf01_partition_literal.e:26:7: Row partitions are unsatisfiable at field 'Shouldfail.Inf01.a': two parts of one partition both contain it
 shouldfail_inf02_substitution_chain.e.out	REJECTED	core/examples/shouldfail/inf02_substitution_chain.e:25:7: Row partitions are unsatisfiable at field 'Shouldfail.Inf02.b': a part contains it but the whole does not
@@ -160,6 +162,11 @@ shouldfail_sig02_wrong_label_signature.e.out	REJECTED	core/examples/shouldfail/s
 shouldfail_sig03_let_bound_signature.e.out	REJECTED	core/examples/shouldfail/sig03_let_bound_signature.e:70:25: the signature does not entail this row constraint
 shouldfail_sig04_unconstrained_modify.e.out	REJECTED	core/examples/shouldfail/sig04_unconstrained_modify.e:48:8: the signature does not entail this row constraint
 shouldfail_sig05_annotated_lambda.e.out	REJECTED	core/examples/shouldfail/sig05_annotated_lambda.e:48:19: the signature does not entail this row constraint
+shouldfail_sig06_join_declared_literal_row.e.out	REJECTED	core/examples/shouldfail/sig06_join_declared_literal_row.e:27:15: the signature does not entail this row constraint
+shouldfail_sig07_join_constant_any_row.e.out	REJECTED	core/examples/shouldfail/sig07_join_constant_any_row.e:20:12: the signature does not entail this row constraint
+shouldfail_sig08_join_two_literal_rows.e.out	REJECTED	core/examples/shouldfail/sig08_join_two_literal_rows.e:24:19: the signature does not entail this row constraint
+shouldfail_sig09_literal_given_wrong_half.e.out	REJECTED	core/examples/shouldfail/sig09_literal_given_wrong_half.e:25:19: the signature does not entail this row constraint
+shouldfail_sig10_literal_given_unrelated_row.e.out	REJECTED	core/examples/shouldfail/sig10_literal_given_unrelated_row.e:19:22: the signature does not entail this row constraint
 shouldfail_sk01_row_append_self.e.out	REJECTED	core/examples/shouldfail/sk01_row_append_self.e:1:1: core/examples/shouldfail/sk01_row_append_self.e:33:20: Cannot unify skolem variable with empty relation
 shouldfail_sk02_record_append_self.e.out	REJECTED	core/examples/shouldfail/sk02_record_append_self.e:1:1: core/examples/shouldfail/sk02_record_append_self.e:26:20: Cannot unify skolem variable with empty relation
 shouldfail_sk03_field_copy_append_self.e.out	REJECTED	core/examples/shouldfail/sk03_field_copy_append_self.e:1:1: <checkout>/core/target/scala-3.3.8/classes/modules/Field.e:22:24: Cannot unify skolem variable with empty relation

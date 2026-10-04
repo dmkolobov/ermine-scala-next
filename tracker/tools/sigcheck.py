@@ -76,18 +76,29 @@ def parse_constraints(t):
     S3: `(||) <- (p1..pk)` -- the EMPTY row on the left -- is normalised to `pi <- ()` for
     every part, which is equivalent (a whole that is empty forces every part empty, and
     conversely) and is what the model can state.  269 of the corpus's `ds` constraints have
-    this shape and two verdicts depend on them.  Any other concrete left-hand side is still
-    None, i.e. a DROP with its one-sided verdict."""
+    this shape and two verdicts depend on them.
+
+    A NON-EMPTY literal on the left, `(|K|) <- (p1..pk)`, is kept as it is: the constraint's
+    first field is then the frozenset `K` instead of a variable id, and `Problem` turns it
+    into a constant bit per label class.  The Scala engine instead mints a variable pinned
+    to `K`.  The two are deliberately different routes to the same answer, so the
+    differential test still compares two independent implementations."""
     if ' <- ' not in t: return None
     lhs, rhs = t.split(' <- ', 1)
     if not rhs.startswith('(') or not rhs.endswith(')'): return None
     l = parse_part(lhs)
     if l is None: return None
     if l[0] == 'c':
-        if l[1]: return None                     # a non-empty concrete lhs
         parts = [parse_part(x) for x in rhs[1:-1].split(', ')]
         if any(p is None for p in parts): return None
-        if any(p[0] == 'c' and p[1] for p in parts): return None
+        concs = [p[1] for p in parts if p[0] == 'c']
+        if l[1] or any(concs):                   # a literal whole: kept, see above
+            # (an EMPTY whole with a literal part is kept too: it is unsatisfiable at that
+            # part's labels, and the engine decides it the same way)
+            if len(concs) > 1: return None       # two literal parts: a drop, as in the engine
+            return [(l[1], [p[1] for p in parts if p[0] == 'v'],
+                     concs[0] if concs else frozenset(),
+                     {p[1]: p[2] for p in parts if p[0] == 'v'})]
         return [(p[1], [], frozenset(), {p[1]: p[2]}) for p in parts if p[0] == 'v']
     c = parse_constraint(t)
     return None if c is None else [c]
@@ -107,10 +118,20 @@ def parse_constraint(t):
             frozenset().union(*[p[1] for p in parts if p[0] == 'c']) if any(p[0]=='c' for p in parts) else frozenset(),
             tags)
 
+def is_lit(lhs):
+    """A literal whole: a frozenset of labels (in a parsed constraint) or, inside one label
+    class, the constant bit `('lit', 0|1)`."""
+    return isinstance(lhs, (frozenset, tuple))
+
 class Problem:
-    """One label class: constraints (lhs, vars, conc_bit)."""
+    """One label class: constraints (lhs, vars, conc_bit).  A literal whole becomes the
+    constant `('lit', bit)`: 1 if the class's label is in it, else 0."""
     def __init__(self, cs, label):
-        self.cs = [(lhs, vs, (1 if (label is not None and label in k) else 0)) for lhs, vs, k in [(c[0], c[1], c[2]) for c in cs]]
+        def has(k): return 1 if (label is not None and label in k) else 0
+        self.cs = [((('lit', has(c[0])) if is_lit(c[0]) else c[0]), c[1], has(c[2])) for c in cs]
+
+def lhs_bit(lhs, bits):
+    return lhs[1] if is_lit(lhs) else bits.get(lhs)
 
 def propagate(cs, bits, queue, nodes):
     """3-valued one-hot propagation.  bits: dict var -> 0/1/None."""
@@ -122,6 +143,7 @@ def propagate(cs, bits, queue, nodes):
         unk  = [v for v in vs if bits.get(v) is None]
         if ones > 1: return False
         def setbit(v, x):
+            if is_lit(v): return v[1] == x        # a literal whole is already decided
             if bits.get(v) is None:
                 bits[v] = x
                 for c in cs:
@@ -132,13 +154,13 @@ def propagate(cs, bits, queue, nodes):
             if not setbit(lhs, 1): return False
             for v in unk:
                 if not setbit(v, 0): return False
-        elif bits.get(lhs) == 0:
+        elif lhs_bit(lhs, bits) == 0:
             if conc: return False
             for v in unk:
                 if not setbit(v, 0): return False
         elif ones == 0 and not unk:
             if not setbit(lhs, 0): return False
-        elif bits.get(lhs) == 1 and ones == 0:
+        elif lhs_bit(lhs, bits) == 1 and ones == 0:
             if not unk: return False
             if len(unk) == 1 and not setbit(unk[0], 1): return False
     return True
@@ -147,7 +169,7 @@ def verify(cs, bits):
     for lhs, vs, conc in cs:
         ones = conc + sum(1 for v in vs if bits.get(v) == 1)
         if ones > 1: return False
-        if (ones == 1) != (bits.get(lhs) == 1): return False
+        if (ones == 1) != (lhs_bit(lhs, bits) == 1): return False
     return True
 
 def models(cs, vs, bits, nodes, out, limit):
@@ -183,7 +205,9 @@ def satisfiable(cs, vs, bits, nodes):
 
 def varsof(cs):
     s = set()
-    for c in cs: s.add(c[0]); s.update(c[1])
+    for c in cs:
+        if not is_lit(c[0]): s.add(c[0])
+        s.update(c[1])
     return s
 
 def tagsof(cs):
@@ -240,7 +264,9 @@ def decide(Q, W, DS=(), caveatQ=None, caveatW=None):
     F = {v for v in wv - qv if tags.get(v, '') in ('A', '')}
     R = (qv | wv) - F
     labels = set()
-    for c in Q + W: labels |= set(c[2])
+    for c in Q + W:
+        labels |= set(c[2])
+        if is_lit(c[0]): labels |= set(c[0])
     classes = sorted(labels) + [None]
     tot = [0, 0, len(classes)]
     for lab in classes:
@@ -272,7 +298,9 @@ def qsat(Q):
     """Design (a2): does every label class of the GIVENS have a model?  Completeness of the
     per-label reading needs it, so the oracle ASSERTS it rather than remarking on it."""
     labels = set()
-    for c in Q: labels |= set(c[2])
+    for c in Q:
+        labels |= set(c[2])
+        if is_lit(c[0]): labels |= set(c[0])
     for lab in sorted(labels) + [None]:
         pq = Problem(Q, lab).cs
         if satisfiable(pq, sorted(varsof(Q)), {}, [0]) is not True: return lab
@@ -380,7 +408,8 @@ for (mod, b), (v, ch) in sorted(best.items()):
               % sorted(vn(k) for k, x in m.items() if x == 1))
     if v[0] == 'NOVERDICT': print("    %s" % v[1])
     def show(cs):                                   # S3b: readable, with names
-        return ['%s <- (%s)' % (vn(c[0]), ', '.join([vn(x) for x in c[1]] +
+        def whole(l): return ('(|%s|)' % ','.join(sorted(l))) if is_lit(l) else vn(l)
+        return ['%s <- (%s)' % (whole(c[0]), ', '.join([vn(x) for x in c[1]] +
                 (['(|%s|)' % ','.join(sorted(c[2]))] if c[2] else []))) for c in cs]
     print("    Q: %s" % show(ch['Q']))
     print("    W: %s" % show(ch['W']))

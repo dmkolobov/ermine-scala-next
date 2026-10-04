@@ -86,6 +86,23 @@ object TestSigEntail extends Properties("Ermine signature entailment") {
       "let localWith : forall r t. r <- ((|health|), t) => {..r} -> Int\n" +
       "    localWith r = r ! health\nin localWith { position = 1.0, health = 10 }", imps)
 
+  /* ---- a literal column set on the LEFT of a partition ----------------------------- *
+   * A join against a literal row leaves `(|k|) <- (x, y)` in the residual.  Before
+   * 2026-10 the check dropped it, warned, and accepted both of these. */
+  val relImps: Map[String, ImportSpec] = Map("Builtin" -> all, "Test" -> all, "Prelude" -> all)
+
+  property("literal left: an honest join against a projection loads") =
+    typeChecks("field demoKey : Int\n" +
+      "keepKey : Has inputRow (|demoKey|) => Relation inputRow -> Relation inputRow\n" +
+      "keepKey rows = join (rows) (project {demoKey} rows)",
+      "keepKey", relImps)
+
+  property("literal left: a join declared to return a literal row is REJECTED") =
+    rejects(typeChecks("field jlA : Int\nfield jlB : Int\n" +
+      "joinLit : Relation r1 -> Relation r2 -> Relation (|jlA, jlB|)\n" +
+      "joinLit x y = join x y",
+      "joinLit", relImps))
+
   /* ---- the flag ------------------------------------------------------------------ *
    * `off` is the shipped pre-S3 behaviour: the same module the default rejects is
    * ACCEPTED, and the two fixtures run in ONE JVM with no `System.setProperty`. */

@@ -243,6 +243,15 @@ diagnostics and accepts.
 | `sig03_let_bound_signature.e` | 6 SIGNATURE CONTEXT TOO WEAK | **rejected** 70:25 (declared at 69:21, `sig local`) | **rejected** | **rejected** |
 | `sig04_unconstrained_modify.e` | 6 SIGNATURE CONTEXT TOO WEAK | **rejected** 48:8 (declared at 47:8) | **rejected** | **rejected** |
 | `sig05_annotated_lambda.e` | 6 SIGNATURE CONTEXT TOO WEAK (annotation site) | **rejected** 48:19 (declared at 48:12, `ann <annot>`) | **rejected** | **rejected** |
+| `sig06_join_declared_literal_row.e` | 6, literal row on the LEFT of the refuting partition | **rejected** 27:15 (declared at 26:23) | not run | not run |
+| `sig07_join_constant_any_row.e` | 6, same | **rejected** 20:12 (declared at 19:21) | not run | not run |
+| `sig08_join_two_literal_rows.e` | 6, two literal-left partitions needed together | **rejected** 24:19 (declared at 23:30) | not run | not run |
+| `sig09_literal_given_wrong_half.e` | 6, literal row on the left of a GIVEN | **rejected** 25:19 (declared at 24:30) | not run | not run |
+| `sig10_literal_given_unrelated_row.e` | 6, same (control: the given is irrelevant) | **rejected** 19:22 (declared at 18:31) | not run | not run |
+
+`sig06`-`sig10` were added 2026-10-03 (`tracker/SIG-LITLHS.md`).  Before that change all five
+loaded with a NO VERDICT warning; `sig06` and `sig09` have run-time failures, quoted in their
+headers.  They were measured under the default rules only.
 
 All five report `the signature does not entail this row constraint`, at the label class
 `health` (the one shape the plan's original refutation trick also decided), with the witness

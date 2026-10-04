@@ -64,6 +64,14 @@ ACCEPT	Lang.Helpers	sig:consRow
 ACCEPT	Lang.Helpers	sig:localField	
 ACCEPT	Lang.Helpers	sig:pRecord	
 ACCEPT	Lang.Helpers	sig:withRunning	
+ACCEPT	Lang.LiteralRowContext	sig:hasB	
+ACCEPT	Lang.LiteralRowContext	sig:joinInto	
+ACCEPT	Lang.LiteralRowJoin	sig:inner	
+ACCEPT	Lang.LiteralRowJoin	sig:keepKey	
+ACCEPT	Lang.LiteralRowJoin	sig:keepKeyLocal	
+ACCEPT	Lang.LiteralRowJoin	sig:keepKeySwapped	
+ACCEPT	Lang.LiteralRowJoin	sig:keepKeys	
+ACCEPT	Lang.LiteralRowJoin	sig:onlyKeyOne	
 ACCEPT	Lang.Signatures	sig:askFieldBack	
 ACCEPT	Lang.Signatures	sig:askFieldDeduped	
 ACCEPT	Lang.Signatures	sig:askFieldExpanded	
@@ -196,10 +204,10 @@ ACCEPT	Report.Keyed	sig:keyValueTabular
 ACCEPT	Report.Keyed	sig:pieChart	
 ACCEPT	Report.Keyed	sig:softRelation	
 ACCEPT	Report.Relation	sig:cutoffDrilldownRel	
-NOVERDICT	Report.Relation	sig:cutoffs	
-NOVERDICT	Report.Relation	sig:largers	
+ACCEPT	Report.Relation	sig:cutoffs	
+ACCEPT	Report.Relation	sig:largers	
 ACCEPT	Report.Relation	sig:others	
-NOVERDICT	Report.Relation	sig:small	
+ACCEPT	Report.Relation	sig:small	
 ACCEPT	Report.Relation	sig:smallcount	
 ACCEPT	Report.Relation	sig:smallgroup	
 ACCEPT	Report.Relation	sig:smallid	
@@ -312,3 +320,8 @@ REJECT	shouldfail.sig02_wrong_label_signature	sig:wrongLabel	ShouldFail.Sig02.he
 REJECT	shouldfail.sig03_let_bound_signature	sig:local	ShouldFail.Sig03.health
 REJECT	shouldfail.sig04_unconstrained_modify	sig:bump	ShouldFail.Sig04.health
 REJECT	shouldfail.sig05_annotated_lambda	ann:<annot>	ShouldFail.Sig05.health
+REJECT	shouldfail.sig06_join_declared_literal_row	sig:joinLit	ShouldFail.Sig06.a
+REJECT	shouldfail.sig07_join_constant_any_row	sig:onlyA1	ShouldFail.Sig07.a
+REJECT	shouldfail.sig08_join_two_literal_rows	sig:joinLitHalf	ShouldFail.Sig08.b
+REJECT	shouldfail.sig09_literal_given_wrong_half	sig:needA	ShouldFail.Sig09.a
+REJECT	shouldfail.sig10_literal_given_unrelated_row	sig:needZz	ShouldFail.Sig10.zz

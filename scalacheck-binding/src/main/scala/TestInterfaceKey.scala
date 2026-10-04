@@ -163,7 +163,7 @@ object TestInterfaceKey extends Properties("Interface key") {
     * the suffix is checked exactly, here. */
   private def sigEntailSuffix: String =
     if (com.clarifi.reporting.ermine.SigEntail.defaultMode ==
-        com.clarifi.reporting.ermine.SigEntail.Error) "|sigEntail=error" else ""
+        com.clarifi.reporting.ermine.SigEntail.Error) "|sigEntail=error.2" else ""
 
   property("key is <format version>|<GenRules>, and holds no non-key flag") = secure {
     val k0 = Session.interfaceKey

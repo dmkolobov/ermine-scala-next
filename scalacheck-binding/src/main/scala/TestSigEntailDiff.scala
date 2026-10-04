@@ -23,7 +23,7 @@ import scala.io.Source
   *      them, and `verdicts.tsv` is the verdict the committed PYTHON ORACLE
   *      (`tracker/tools/sigcheck.py`, an independent implementation of the same judgement,
   *      itself differentially tested against brute force and a DPLL at S2) reaches on each
-  *      of the 310 signatures.  Every one must agree, verdict AND label class.  Regenerate
+  *      signature.  Every one must agree, verdict AND label class.  Regenerate
   *      BOTH FROM ONE SWEEP -- the records carry the ids that sweep minted and the hash order
   *      its given sets came out in (a fresh sweep reproduces `verdicts.tsv` byte for byte but
   *      not `records.tsv`), so a records file from one run with a verdicts file from another is
@@ -39,6 +39,11 @@ import scala.io.Source
   *      `2^|R| x 2^|F|` per label class is affordable.  This is the property the shipped
   *      engine's optimisations (dedup, propagation) could break without any corpus
   *      signature noticing.
+  *      A second generator puts a literal column set on the LEFT of about one constraint
+  *      in three, among the givens, the obligations and the residual `ds`, and repeats
+  *      parts.  Its reference reads the literal as a constant, where the engine mints a
+  *      variable for it, and closes over `ds` itself, so a mistake in how that variable is
+  *      quantified or in the closure shows here.
   *
   * Both sides read the same input through the same reader, so a disagreement is a
   * disagreement about the JUDGEMENT, not about parsing. */
@@ -164,7 +169,7 @@ object TestSigEntailDiff extends Properties("Ermine signature entailment (differ
   private val recordFile  = new File("core/src/test/resources/sigentail/records.tsv")
   private val verdictFile = new File("core/src/test/resources/sigentail/verdicts.tsv")
 
-  property("the corpus: the shipped engine agrees with the committed oracle on all 310 signatures") = secure {
+  property("the corpus: the shipped engine agrees with the committed oracle on every signature") = secure {
     val groups = readRecords(recordFile)
     val src = Source.fromFile(verdictFile, "UTF-8")
     val expected = try src.getLines().toList.filter(_.nonEmpty).map { l =>
@@ -362,11 +367,106 @@ object TestSigEntailDiff extends Properties("Ermine signature entailment (differ
       }
     }
 
-  /** The `Part`-shape contract of design (e) 2b, as three properties rather than a promise.
+  /* ---- literal wholes: `(|K|) <- (p1..pk)` on either side --------------------------- *
+   * The engine encodes a literal on the left with a variable of its own.  The reference
+   * here does not: it reads the literal as a constant bit per label, so the two cannot
+   * share a mistake about how that variable is quantified. */
+  private type LitC = (Either[Int, Set[Name]], List[Int], Set[Name])
+
+  private def bruteLit(qs: List[LitC], ws: List[LitC], rigid: List[Int], minted: List[Int],
+                       labels: List[Option[Name]]): Boolean = {
+    def holds(cs: List[LitC], m: Map[Int, Boolean], lab: Option[Name]): Boolean =
+      cs.forall { case (lhs, ps, conc) =>
+        val ones  = ps.count(m) + (if (lab.exists(conc)) 1 else 0)
+        val whole = lhs match { case Left(v) => m(v); case Right(k) => lab.exists(k) }
+        ones <= 1 && ((ones == 1) == whole)
+      }
+    def assigns(vs: List[Int]): List[Map[Int, Boolean]] =
+      vs.foldLeft(List(Map[Int, Boolean]())) { (acc, v) =>
+        acc.flatMap(m => List(m + (v -> false), m + (v -> true)))
+      }
+    labels.forall { lab =>
+      assigns(rigid).forall { r =>
+        !holds(qs, r.withDefaultValue(false), lab) ||
+        assigns(minted).exists(f => holds(ws, (r ++ f).withDefaultValue(false), lab))
+      }
+    }
+  }
+
+  /** The obligations the judgement is about: `ws`, plus every member of `ds` that shares
+    * a minted variable with what is already in, to a fixpoint.  (No given mentions a
+    * minted variable here, so "minted and not in the givens" is just "minted".) */
+  private def closeOver(ws: List[LitC], ds: List[LitC], minted: Set[Int]): List[LitC] = {
+    def vars(c: LitC): Set[Int] = c._1.left.toOption.toSet ++ c._2
+    var sel = ws; var rest = ds; var grew = true
+    while (grew) {
+      val f = sel.flatMap(vars).toSet & minted
+      val (in, out) = rest.partition(c => (vars(c) & f).nonEmpty)
+      grew = in.nonEmpty; sel = sel ++ in; rest = out
+    }
+    sel
+  }
+
+  /** About one constraint in three has a literal whole.  A part may be repeated: that
+    * forces the repeated variable empty, on either kind of left-hand side. */
+  private def genLitC(nv: Int): Gen[LitC] = for {
+    lit  <- Gen.frequency(2 -> false, 1 -> true)
+    v    <- Gen.choose(0, nv - 1)
+    kset <- Gen.oneOf(Set[Name](labA), Set[Name](labB), Set[Name](labA, labB))
+    k    <- Gen.choose(0, 3)
+    ps   <- Gen.listOfN(k, Gen.choose(0, nv - 1))
+    conc <- Gen.oneOf(Set[Name](), Set[Name](), Set[Name](labA), Set[Name](labB))
+  } yield (if (lit) Right(kset) else Left(v), ps, conc)
+
+  /** At most 5 variables, 2 givens, 3 obligations and 2 members of the skolem-free
+    * residual `ds`.  A given mentions rigid variables only, as in `genSystem`.  `ds` is
+    * how a literal whole reaches the obligations from source: the closure pulls it in. */
+  private val genLitSystem: Gen[(Int, List[Boolean], List[LitC], List[LitC], List[LitC])] = for {
+    nv    <- Gen.choose(1, 5)
+    nq    <- Gen.choose(0, 2)
+    nw    <- Gen.choose(1, 3)
+    flags <- Gen.listOfN(nv, Gen.oneOf(true, false))           // true = minted
+    qs    <- Gen.listOfN(nq, genLitC(nv))
+    ws    <- Gen.listOfN(nw, genLitC(nv))
+    nd    <- Gen.choose(0, 2)
+    ds    <- Gen.listOfN(nd, genLitC(nv))
+  } yield {
+    val qs1 = qs.flatMap { case (lhs, ps, conc) =>
+      lhs match {
+        case Left(v) if flags(v) => None
+        case _                   => Some((lhs, ps.filter(i => !flags(i)), conc))
+      }
+    }
+    (nv, flags, qs1, ws, ds)
+  }
+
+  property("random systems with literal wholes: the engine agrees with exhaustive enumeration") =
+    // no shrinking: a shrunk system can name a variable the shrunk `nv` no longer has
+    Prop.forAllNoShrink(genLitSystem) { case (nv, flags, qs, ws, ds) =>
+      val vs = (0 until nv).map(i =>
+        V(Loc.builtin, 1000 + i, Some(Local("x" + i)),
+          if (flags(i)) Ambiguous(Free) else Skolem, Rho(Loc.builtin))).toList
+      val rigid  = (0 until nv).filter(i => !flags(i)).toList
+      val minted = (0 until nv).filter(i => flags(i)).toList
+      // `new Part`, not `Part(...)`: the smart constructor rewrites some of these shapes
+      // (it flips `(|K|) <- (v)` round), and the shape under test has to arrive as written
+      def ty(c: LitC): Type = new Part(Loc.builtin,
+        c._1 match { case Left(v) => VarT(vs(v)); case Right(k) => ConcreteRho(Loc.builtin, k) },
+        c._2.map(i => VarT(vs(i))) ++
+          (if (c._3.isEmpty) Nil else List(ConcreteRho(Loc.builtin, c._3))))
+      val labels: List[Option[Name]] = List(Some(labA), Some(labB), None)
+      val truth = bruteLit(qs, closeOver(ws, ds, minted.toSet), rigid, minted, labels)
+      SigEntail.check(qs.map(ty), ws.map(ty), ds.map(ty), rigid.map(vs), minted.map(vs)) match {
+        case SigEntail.Ok             => (truth ?= true)  :| s"engine ACCEPT, truth $truth: $qs |- $ws ; $ds"
+        case _: SigEntail.NotEntailed => (truth ?= false) :| s"engine REJECT, truth $truth: $qs |- $ws ; $ds"
+        case SigEntail.NoVerdict(why) => falsified :| ("no verdict: " + why)
+      }
+    }
+
+  /** The `Part`-shape contract of design (e) 2b, as properties rather than a promise.
     * A repeated variable part NORMALISES (it forces that variable empty); the empty row on
-    * the left normalises to "every part is empty"; a NON-EMPTY literal column set on the
-    * left is dropped by name, and the drop forbids one verdict -- here an ACCEPT becomes a
-    * NO VERDICT. */
+    * the left normalises to "every part is empty"; a non-empty literal column set on the
+    * left is decided, as an obligation and as a given. */
   property("encoding contract: a repeated part forces that variable empty") = secure {
     val sk = V(Loc.builtin, 9001, Some(Local("r")), Skolem, Rho(Loc.builtin))
     val f  = V(Loc.builtin, 9002, Some(Local("f")), Ambiguous(Free), Rho(Loc.builtin))
@@ -399,15 +499,62 @@ object TestSigEntailDiff extends Properties("Ermine signature entailment (differ
                     case o => falsified :| ("rs alone: expected acceptance, got " + o) }))
   }
 
-  property("encoding contract: a non-empty literal set on the left is dropped, and forbids ACCEPT") = secure {
-    val sk = V(Loc.builtin, 9021, Some(Local("r")), Skolem, Rho(Loc.builtin))
-    val f  = V(Loc.builtin, 9022, Some(Local("f")), Ambiguous(Free), Rho(Loc.builtin))
-    val g  = V(Loc.builtin, 9023, Some(Local("g")), Ambiguous(Free), Rho(Loc.builtin))
-    val w  = Part(Loc.builtin, VarT(sk), List(VarT(f)))                        // sk = f
-    val bad = Part(Loc.builtin, ConcreteRho(Loc.builtin, Set(labA)), List(VarT(f), VarT(g)))
-    SigEntail.check(Nil, List(w), List(bad), List(sk), List(f, g)) match {
-      case SigEntail.NoVerdict(why) => (why.contains("literal column set") ?= true) :| why
-      case other                    => falsified :| ("expected NO VERDICT, got " + other)
+  private def rowVar(id: Int, n: String, ty: VarType): TypeVar =
+    V(Loc.builtin, id, Some(Local(n)), ty, Rho(Loc.builtin))
+  private def lit(ls: Name*): Type = ConcreteRho(Loc.builtin, ls.toSet)
+
+  /** Before 2026-10 this was NO VERDICT: the literal-left partition was dropped. */
+  property("encoding contract: a literal set on the left of an obligation REJECTS") = secure {
+    val sk = rowVar(9021, "r", Skolem)
+    val f  = rowVar(9022, "f", Ambiguous(Free))
+    val g  = rowVar(9023, "g", Ambiguous(Free))
+    val w  = Part(Loc.builtin, VarT(sk), List(VarT(f)))                 // r = f
+    val d  = new Part(Loc.builtin, lit(labA), List(VarT(f), VarT(g)))   // (|a|) <- (f, g)
+    // so r is inside (|a|), which the signature never said
+    SigEntail.check(Nil, List(w), List(d), List(sk), List(f, g)) match {
+      case v: SigEntail.NotEntailed =>
+        // the message lists the solver's variables; the encoder's own is not one of them
+        (v.minted.map(_.id).sorted ?= List(9022, 9023)) :| ("minted: " + v.minted)
+      case other => falsified :| ("expected a rejection, got " + other)
     }
+  }
+
+  /** `keepKey : Has r (|a|) => ..`, `keepKey rows = join rows (project {a} rows)`: the
+    * residual of the module that was reported, by hand. */
+  property("encoding contract: a literal set on the left of an obligation ACCEPTS") = secure {
+    val r  = rowVar(9031, "r", Skolem)
+    val c  = rowVar(9032, "c", Ambiguous(Free))    // the given's remainder: not in `pxs`
+    val t1 = rowVar(9033, "t1", Ambiguous(Free))
+    val k  = rowVar(9034, "k", Ambiguous(Free))
+    val t2 = rowVar(9035, "t2", Ambiguous(Free))
+    val c2 = rowVar(9036, "c2", Ambiguous(Free))
+    val q  = Part(Loc.builtin, VarT(r), List(lit(labA), VarT(c)))
+    val ws = List(Part(Loc.builtin, VarT(r), List(VarT(t1), VarT(k))),
+                  Part(Loc.builtin, VarT(r), List(VarT(t1), VarT(k), VarT(t2))),
+                  Part(Loc.builtin, VarT(r), List(lit(labA), VarT(c2))))
+    val d  = new Part(Loc.builtin, lit(labA), List(VarT(k), VarT(t2)))
+    SigEntail.check(List(q), ws, List(d), List(r), List(t1, k, t2, c2)) match {
+      case SigEntail.Ok => proved
+      case other        => falsified :| ("expected acceptance, got " + other)
+    }
+  }
+
+  /** A given `(|a,b|) <- (s, t)` says `s` and `t` split the two columns, not which way. */
+  property("encoding contract: a literal set on the left of a GIVEN is read, both ways") = secure {
+    val s  = rowVar(9041, "s", Skolem)
+    val t  = rowVar(9042, "t", Skolem)
+    val c  = rowVar(9043, "c", Ambiguous(Free))
+    val split  = new Part(Loc.builtin, lit(labA, labB), List(VarT(s), VarT(t)))
+    val pinned = new Part(Loc.builtin, lit(labA, labB), List(lit(labA), VarT(t)))
+    // `s` has column a?  Not under `split`: s = (|b|), t = (|a|) is allowed.
+    val needA = Part(Loc.builtin, VarT(s), List(lit(labA), VarT(c)))
+    // `t` has column b?  Yes under `pinned`: t is exactly (|b|).
+    val needB = Part(Loc.builtin, VarT(t), List(lit(labB), VarT(c)))
+    val refused  = SigEntail.check(List(split), List(needA), Nil, List(s, t), List(c))
+    val accepted = SigEntail.check(List(pinned), List(needB), Nil, List(s, t), List(c))
+    ((refused match { case _: SigEntail.NotEntailed => proved
+                      case o => falsified :| ("split: expected a rejection, got " + o) }) &&
+     (accepted match { case SigEntail.Ok => proved
+                       case o => falsified :| ("pinned: expected acceptance, got " + o) }))
   }
 }

@@ -168,11 +168,10 @@ object Session {
   /** S3 (`SIG-ENTAIL-PLAN.md`): `sigEntail=error` CAN change what is published, by
     * REFUSING a module whose signature is not entailed, so a stale `.ei` written under
     * `off` would hide the diagnostic on the next run.  It is APPENDED rather than folded
-    * in, and only in `error` mode, because the staleness test is `key contains
-    * interfaceKey` (:472 below): an `.ei` written under `error` carries the suffix and so
-    * still matches under `off`, while one written under `off` does not contain the `error`
-    * key and is rebuilt -- exactly the direction wanted, and the default-mode baseline of
-    * an `off` run stays byte-identical to every interface written before S3.
+    * in, and only in `error` mode, so the default-mode baseline of an `off` run stays
+    * byte-identical to every interface written before S3.  The staleness test is
+    * `key contains interfaceKey` below, and `key` is an `Option`, so that is EQUALITY: an
+    * `.ei` written under one mode is rebuilt under the other, in both directions.
     *
     * S3 REVIEW D5, KNOWN AND LEFT: this reads the PROCESS default while the check reads the
     * SESSION mode (`SessionEnv.sigEntail`), so a session differing from the process default --
@@ -180,9 +179,14 @@ object Session {
     * wrong mode.  Harmless today: no production path sets a per-session mode, and every test
     * fixture that does also sets `useInterface = false`, so nothing reads or writes an `.ei`
     * under a session mode.  The fix threads a `SessionEnv` into this `def`; S4 item
-    * (`tracker/loopmodel/SIG-3-IMPL.md` §8). */
+    * (`tracker/loopmodel/SIG-3-IMPL.md` §8).
+    *
+    * The `.2` (2026-10): the check now decides a partition with a literal column set on
+    * its left, where it used to warn and accept.  A module it would now refuse may have an
+    * `.ei` cached from before, so the suffix changed and those interfaces are rebuilt once.
+    * Change the number again whenever the check starts refusing something it accepted. */
   def interfaceKey: String = interfaceFormatVersion.toString + "|" + Constraints.GenRules.toString +
-    (if (SigEntail.defaultMode == SigEntail.Error) "|sigEntail=error" else "")
+    (if (SigEntail.defaultMode == SigEntail.Error) "|sigEntail=error.2" else "")
 
   /** The header line an `.ei` carries.  It LOOKS like an Ermine line comment, and
     * that is deliberate -- but do not rely on it: `InterfaceParsers` does not accept

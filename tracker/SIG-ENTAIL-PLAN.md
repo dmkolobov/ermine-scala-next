@@ -209,6 +209,10 @@ orchestrator's (FIX-THEN-ADVANCE edits applied; BLOCK -> a fix round to the impl
   (SIG-3-CLASS-STATUS.md: same hole, pin it, fix constraint heads in the renamer, then the class
   check), keyValueTabular's degenerate wrapper (ticket), cutoffs NO VERDICT (decidable in principle).
 
+- 2026-10-03 LITERAL LEFT-HAND SIDE: `(|K|) <- (p1..pk)` is decided instead of dropped. This closes
+  "cutoffs NO VERDICT (decidable in principle)" above: `largers`, `cutoffs` and `small` are accepted
+  with no warning. Evidence, files and what is still open: `tracker/SIG-LITLHS.md`.
+
 ## Blocked / Awaiting the user (after S2)
 
 0. Read tracker/loopmodel/SIG-2-DESIGN.md before S3 starts (§(a) the judgement, §(b) the procedure,

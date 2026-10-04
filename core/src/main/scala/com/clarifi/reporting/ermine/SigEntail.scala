@@ -57,7 +57,7 @@ object SigEntail {
     * It is deliberately NOT a `Constraints.GenRules` field: `GenRules.toString` is
     * `Session.interfaceKey`'s second half, and a new field there invalidates every cached
     * `.ei`.  `error` CAN change what is published (by refusing), so `Session.interfaceKey`
-    * appends `|sigEntail=error` in that mode only -- see Session.scala.
+    * appends `|sigEntail=error.2` in that mode only -- see Session.scala.
     */
   sealed abstract class Mode { def on: Boolean = this != Off }
   case object Off   extends Mode
@@ -299,12 +299,16 @@ object SigEntail {
     * and can build a CONCRETE left-hand side, :421-424, while `RHS` has one `concr` field
     * and Lean's `Constraint` one `conc`), so the encoding contract of design (e) 2b is
     * explicit here: a repeated variable part is NORMALISED (it forces that variable empty --
-    * `Basic.Sat.eq_empty_of_dup`), and anything else the model cannot STATE is `Unreadable`,
-    * which means NO VERDICT with a named reason.  Never a silent merge: merging two
-    * overlapping concrete parts turns an unsatisfiable partition into a satisfiable one,
-    * which flips verdicts in both directions. */
+    * `Basic.Sat.eq_empty_of_dup`), a literal column set on the left is encoded with a
+    * variable of the encoder's own (see `encode`), and anything else the model cannot
+    * STATE is `Unreadable`, which means NO VERDICT with a named reason.  Never a silent
+    * merge: merging two overlapping concrete parts turns an unsatisfiable partition into a
+    * satisfiable one, which flips verdicts in both directions.
+    *
+    * `zs` are the variables `encode` minted for this constraint.  They occur in no other
+    * constraint. */
   private sealed abstract class Enc
-  private final case class Encoded(rows: List[Row]) extends Enc
+  private final case class Encoded(rows: List[Row], zs: List[TypeVar] = Nil) extends Enc
   private final case class Unreadable(why: String)  extends Enc
   private final case class NotRow(why: Option[String]) extends Enc
 
@@ -319,7 +323,7 @@ object SigEntail {
     case other      => other
   }
 
-  private def encode(t0: Type): Enc = strip(t0) match {
+  private def encode(t0: Type, mint: ConcreteRho => TypeVar): Enc = strip(t0) match {
     case p@Part(_, lhs0, rhs0) =>
       val lhs = strip(lhs0)
       val parts = rhs0.map(strip)
@@ -356,9 +360,32 @@ object SigEntail {
          * has two or more parts. */
         case c: ConcreteRho if c.fields.isEmpty && concs.forall(_.fields.isEmpty) =>
           Encoded(vs.distinct.map(v => Row(v, RHS(Set(), Set()), p)))
+        /* A literal column set on the left: `(|K|) <- (p1..pk)`.
+         *
+         * The engine's rows have a variable on the left, so the literal gets one.  For a
+         * fresh `z` this emits
+         *
+         *     z <- (|K|)        z is exactly the literal
+         *     z <- (p1..pk)     the partition, read at z
+         *
+         * which is what the solver does for the same shape (`Constraints.PQueue.build`,
+         * "lhs is not a variable").  A join against a literal row produces it, e.g.
+         * `join rows (project {key} rows)`.
+         *
+         * The caller decides how `z` is quantified: chosen when the constraint is an
+         * obligation, rigid when it is a given.  Both readings are proved exact in
+         * `tracker/lean/Rowpartition/LitLhs.lean` (`wanted_enc_iff`, `given_enc_iff`).
+         *
+         * A repeated variable part is handled as it is for a variable on the left: it
+         * is forced empty and removed.  That step is not part of the Lean proof; the
+         * random differential in `TestSigEntailDiff` covers it. */
         case c: ConcreteRho =>
-          Unreadable("the partition has a NON-EMPTY literal column set on its LEFT (" +
-                     render(c) + "), which the decision procedure's model cannot state")
+          val z    = mint(c)
+          val dups = vs.groupBy(x => x).collect { case (x, l) if l.length > 1 => x }.toList
+          val kept = vs.filterNot(dups.contains)
+          Encoded(Row(z, RHS(Set(), c.fields), p) ::
+                  Row(z, RHS(kept.toSet, concs.headOption.fold(Set[Name]())(_.fields)), p) ::
+                  dups.map(d => Row(d, RHS(Set(), Set()), p)), List(z))
         case other =>
           Unreadable("the partition's left-hand side is neither a row variable nor a " +
                      "literal column set (" + render(other) + ")")
@@ -428,30 +455,45 @@ object SigEntail {
      *     of `W` either -- while an ACCEPT may be a lie -> NO VERDICT.
      *
      * This is design (e) 2b's guarantee ("never a silent merge") with the one-sided verdict
-     * that monotonicity licenses, which is strictly more useful than refusing to decide:
-     * it is what lets `Time.Signatures.yearFrac365Simple` be REJECTED although its `ds`
-     * half contains `(||) <- (f, e)`, a partition with a LITERAL column set on the left
-     * that neither `Constraints.RHS` (whose left-hand side is a `TypeVar`) nor Lean's
-     * `Constraint` can express.  The encoding that would decide those cases -- a fresh
-     * determined variable `z` with `z <- (parts)` and `z <- (C)` -- is an S4 item with a
-     * Lean statement of its own. */
+     * that monotonicity licenses, which is strictly more useful than refusing to decide.
+     * The shapes still dropped are two literal column sets on the right of one partition,
+     * and a part or a left-hand side that is neither a row variable nor a literal
+     * (`f Int`). */
     var caveatQ: Option[String] = None   // a dropped given: forbids REJECT
+
+    /* The encoder's own variables, one per literal-left partition (see `encode`).  They are
+     * built here, not drawn from the `Supply`.  Their ids count up from `Int.MinValue`, far
+     * below any id the supply or the renamer hands out, and no message shows one.
+     *
+     * Each is named after its literal.  The canonical order below sorts by name before id,
+     * so the rows of two literal-left partitions are ordered by their literals, not by the
+     * order the constraints happened to arrive in. */
+    var minted = 0
+    def mint(c: ConcreteRho): TypeVar = {
+      minted += 1
+      V(Loc.builtin, Int.MinValue + minted, Some(Local(render(c))), Ambiguous(Free),
+        Rho(Loc.builtin))
+    }
+    /* The ones that belong to obligations.  The check chooses these, like the solver's own
+     * variables.  A given's stay rigid: its pin leaves exactly one value anyway. */
+    var chosenZ = Set[TypeVar]()
     var caveatW: Option[String] = None   // a dropped obligation: forbids ACCEPT
 
     // ---- 1. the givens -------------------------------------------------
-    val qEnc  = qs.map(q => (q, encode(q)))
+    val qEnc  = qs.map(q => (q, encode(q, mint)))
     qEnc.foreach { case (_, Unreadable(why)) => if (caveatQ.isEmpty) caveatQ = Some(why)
                    case _ => () }
-    val qRows = qEnc.flatMap { case (_, Encoded(rws)) => rws; case _ => Nil }
+    val qRows = qEnc.flatMap { case (_, Encoded(rws, _)) => rws; case _ => Nil }
     val ignored = qEnc.collect { case (_, NotRow(Some(why))) => why } ++
                   qEnc.collect { case (q, Unreadable(why)) => "`" + one(render(q)) + "`: " + why }
     val qv: Set[TypeVar] = qRows.flatMap(_.vars).toSet
 
     // ---- 2. the obligations, and the closure of design (a3) ------------
-    val rEnc = rs.map(r => (r, encode(r)))
+    val rEnc = rs.map(r => (r, encode(r, mint)))
     rEnc.foreach { case (_, Unreadable(why)) => if (caveatW.isEmpty) caveatW = Some(why)
                    case _ => () }
-    var wRows = rEnc.flatMap { case (_, Encoded(rws)) => rws; case _ => Nil }
+    var wRows = rEnc.flatMap { case (_, Encoded(rws, _)) => rws; case _ => Nil }
+    rEnc.foreach { case (_, Encoded(_, zs)) => chosenZ = chosenZ ++ zs; case _ => () }
     if (wRows.isEmpty)
       return caveatW.fold[Verdict](Ok)(why =>
         NoVerdict("every obligation was dropped as unreadable -- " + why))
@@ -461,7 +503,7 @@ object SigEntail {
      * F2's witness `ps = {sk <- (f1,f2), f1 <- (f3), f2 <- (f3)}` -- `rs` alone accepts,
      * all of `ps` rejects).  Not all of `ds`: a component sharing no minted variable with
      * any obligation constrains nothing this signature is responsible for. */
-    val dsCand = ds.map(d => (d, encode(d))).filter { case (_, e) => !e.isInstanceOf[NotRow] }
+    val dsCand = ds.map(d => (d, encode(d, mint))).filter { case (_, e) => !e.isInstanceOf[NotRow] }
     var taken  = Set[Int]()
     var grew   = true
     while (grew) {
@@ -472,11 +514,12 @@ object SigEntail {
         if (!taken(i)) dsCand(i) match {
           case (d, e) =>
             val shares = e match {
-              case Encoded(rws) => rws.exists(_.vars.exists(f))
+              case Encoded(rws, _) => rws.exists(_.vars.exists(f))
               case _            => Type.typeVars(d).exists(f)
             }
             if (shares) e match {
-              case Encoded(rws) => wRows = wRows ++ rws; taken = taken + i; grew = true
+              case Encoded(rws, zs) =>
+                wRows = wRows ++ rws; chosenZ = chosenZ ++ zs; taken = taken + i; grew = true
               case Unreadable(why) =>
                 // pinned to the obligations and unreadable: drop it, and forbid ACCEPT
                 if (caveatW.isEmpty) caveatW = Some(why)
@@ -488,7 +531,7 @@ object SigEntail {
       }
     }
     val wv: Set[TypeVar] = wRows.flatMap(_.vars).toSet
-    val F: Set[TypeVar]  = wv.filter(v => pxsSet(v) && !qv(v))
+    val F: Set[TypeVar]  = wv.filter(v => (pxsSet(v) || chosenZ(v)) && !qv(v))
     val rigidW: Set[TypeVar] = wv -- F
     /* A skolem of an ENCLOSING signature: rigid (conservative, design (a)) but its own row
      * facts are not in `Q`, so a rejection that leans on it may be a lie.  Named here and
@@ -598,8 +641,8 @@ object SigEntail {
                     "context may be stronger -- " + caveatQ.get)
               } else {
                 lastCost = Cost(spent, models, classes.length)
-                return NotEntailed(lab, m, blame(wRows, hasLabel, m, ones).src,
-                                   F.toList.sortBy(_.id), qs, ignored, qTups)
+                return NotEntailed(lab, m, blame(wRows, lab, hasLabel, m, ones).src,
+                                   F.toList.filterNot(chosenZ).sortBy(_.id), qs, ignored, qTups)
               }
             case None => ()
           }
@@ -618,18 +661,32 @@ object SigEntail {
   private def className(lab: Option[Name]): String =
     lab.fold("the generic column class")(l => "the column `" + l + "`")
 
-  /** WHICH obligation to blame: the first one that is unsatisfiable on its own under the
-    * refuting model, else the first one the model's true variables occur in, else the
-    * first. */
-  private def blame(ws0: List[Row], hasLabel: Set[Name] => Boolean,
+  /** Which obligation the message names.
+    *
+    * Rows are grouped by the constraint they came from, so the two rows of a literal-left
+    * partition are judged together.  In order of preference:
+    *
+    *   1. a constraint that cannot hold on its own under the refuting model;
+    *   2. a constraint that mentions a variable the model makes true;
+    *   3. a constraint that names the refuted column in a literal;
+    *   4. the first constraint.
+    *
+    * Rule 3 matters when the refutation needs two constraints together and the model puts
+    * the column in no row: the one that names the column is the one the reader can check. */
+  private def blame(ws0: List[Row], lab: Option[Name], hasLabel: Set[Name] => Boolean,
                     m: List[(TypeVar, Boolean)], ones: Set[TypeVar]): Row = {
-    // canonical order here too, or WHICH obligation the message names depends on the ids
+    // canonical order here too, or which obligation the message names depends on the ids
     val ws = ws0.sortBy(r => canonKey(canonTup(r)))
-    val alone = ws.find { r =>
-      val e = new Constraints.LabelSearch(List(r.tup), hasLabel, Nil, 10000L)
+    val groups = ws.foldLeft(Vector[List[Row]]()) { (acc, r) =>
+      val i = acc.indexWhere(_.head.src eq r.src)
+      if (i < 0) acc :+ List(r) else acc.updated(i, acc(i) :+ r)
+    }
+    val alone = groups.find { g =>
+      val e = new Constraints.LabelSearch(g.map(_.tup), hasLabel, Nil, 10000L)
       !(e.freeze(m) && e.searchSat(e.everyVar))
     }
-    alone orElse ws.find(_.vars.exists(ones)) getOrElse ws.head
+    def named = lab.flatMap(l => groups.find(_.exists(_.conc contains l)))
+    (alone orElse groups.find(_.exists(_.vars.exists(ones))) orElse named getOrElse groups.head).head
   }
 
   private def varShort(v: TypeVar): String = v.name.fold("_" + v.id)(_.toString)
