@@ -99,8 +99,21 @@ ACCEPT	shouldfail-controls.control08_sig_declared	sig:f
 ACCEPT	shouldfail-controls.control08_sig_declared	sig:healthHas	
 ACCEPT	shouldfail-controls.control08_sig_declared	sig:healthWith	
 ACCEPT	shouldfail-controls.control08_sig_declared	sig:tagged	
+ACCEPT	shouldfail-controls.control09_literal_row_join	sig:inner	
+ACCEPT	shouldfail-controls.control09_literal_row_join	sig:keepKey	
+ACCEPT	shouldfail-controls.control09_literal_row_join	sig:keepKeyLocal	
+ACCEPT	shouldfail-controls.control09_literal_row_join	sig:keepKeySwapped	
+ACCEPT	shouldfail-controls.control09_literal_row_join	sig:keepKeys	
+ACCEPT	shouldfail-controls.control09_literal_row_join	sig:onlyKeyOne	
+ACCEPT	shouldfail-controls.control10_literal_row_context	sig:hasB	
+ACCEPT	shouldfail-controls.control10_literal_row_context	sig:joinInto	
 REJECT	shouldfail.sig01_unconstrained_signature	sig:healthOpt	ShouldFail.Sig01.health
 REJECT	shouldfail.sig02_wrong_label_signature	sig:wrongLabel	ShouldFail.Sig02.health
 REJECT	shouldfail.sig03_let_bound_signature	sig:local	ShouldFail.Sig03.health
 REJECT	shouldfail.sig04_unconstrained_modify	sig:bump	ShouldFail.Sig04.health
 REJECT	shouldfail.sig05_annotated_lambda	ann:<annot>	ShouldFail.Sig05.health
+REJECT	shouldfail.sig06_join_declared_literal_row	sig:joinLit	ShouldFail.Sig06.a
+REJECT	shouldfail.sig07_join_constant_any_row	sig:onlyA1	ShouldFail.Sig07.a
+REJECT	shouldfail.sig08_join_two_literal_rows	sig:joinLitHalf	ShouldFail.Sig08.b
+REJECT	shouldfail.sig09_literal_given_wrong_half	sig:needA	ShouldFail.Sig09.a
+REJECT	shouldfail.sig10_literal_given_unrelated_row	sig:needZz	ShouldFail.Sig10.zz

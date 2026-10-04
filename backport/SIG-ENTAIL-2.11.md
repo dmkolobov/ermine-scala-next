@@ -402,3 +402,59 @@ Every `.scala` file is fully CRLF, as the branch is; `git diff --numstat` shows 
 changes and no whole-file line-ending churn.  The new `backport/` shell files and the two
 generated `.tsv` are LF (a CRLF shell script does not execute, and the `.tsv` were never
 CRLF).
+
+
+7.  Literal column set on the left (2026-10-03)
+-----------------------------------------------
+Ported from the Scala 3 branch `sig-litlhs` (commit 2fc98615).  A partition
+whose left-hand side is a written-out row, `(|K|) <- (p1..pk)`, used to be dropped by the
+check, which then warned "NO VERDICT" and accepted.  A join against a projection produces
+it, e.g. `join rows (project {key} rows)`.  The check now encodes it with a variable of its
+own, `z <- (|K|)` and `z <- (p1..pk)`, the same thing `Constraints.PQueue.build` does for
+the solver.  The variable is chosen when the constraint is an obligation and rigid when it
+is a given.
+
+What was ported:
+
+| File | Change |
+|---|---|
+| `core/.../SigEntail.scala` | every hunk of the Scala 3 diff: `encode` takes `mint`, `Encoded` carries `zs`, `chosenZ` joins `F`, the closure collects `zs`, `blame` groups rows by source constraint and has rule 3.  The three `SCALA 2.11` spots are kept; the closure-loop local is still `freeNow`.  One header sentence points here. |
+| `core/.../session/Session.scala` | suffix `|sigEntail=error.2`, the `.2` paragraph, and the corrected sentence: the staleness test is `key contains interfaceKey` on an `Option`, which is equality, so an `.ei` is rebuilt when the mode changes in either direction |
+| `scalacheck-binding/.../TestSigEntail.scala` | two literal-left properties (an honest join loads, a join declared to return a literal row is refused); the interface-key property now expects `|sigEntail=error.2` and its comment no longer claims an `error` interface is read under `off` |
+| `scalacheck-binding/.../TestSigEntailDiff.scala` | the random property with literal wholes (givens, obligations and `ds`, repeated parts), wrapped in `Test.check` at 2,000 like the first random property; the old "dropped, forbids ACCEPT" contract replaced by three that decide (obligation rejects, obligation accepts, given read both ways) |
+| `backport/sigcheck.py` | the Scala 3 oracle edits; the file is byte-identical to that branch's `tracker/tools/sigcheck.py` again |
+| `core/examples/shouldfail/sig06..sig10_*.e` | the five refused modules, text unchanged except the cross-references |
+| `core/examples/shouldfail-controls/control09_literal_row_join.e`, `control10_literal_row_context.e` | the two honest modules (`Lang/LiteralRowJoin.e`, `Lang/LiteralRowContext.e` on the Scala 3 branch), renamed to this directory's convention, modules `Shouldfail.Control09` and `Shouldfail.Control10` |
+| `core/src/test/resources/sigentail/{records,verdicts}.tsv` | regenerated from one warn-mode sweep, by the procedure in section 2 above |
+
+Measured on this branch, 2026-10-03.  Core and the suites were compiled with scalac 2.11.5
+outside the tree for rows 1-6; row 7 is the documented sbt route.
+
+| # | What | Result |
+|---|---|---|
+| 1 | core compile | 0 new warnings: the same 64 deprecation warnings as an unmodified compile of `fbd6826a`; no two class names differ only in case |
+| 2 | `TestSigEntailDiff` | 11 of 11 properties pass; random literal-wholes property: 2,000 systems, 0 discarded |
+| 3 | `TestSigEntail` | 16 of 16 properties pass |
+| 4 | corpus | 32 files under `core/examples` plus the stdlib boot; 614 probe records, 277 deduplicated, 119 signatures: 109 accepted, 10 refused.  The 106 earlier verdicts are unchanged; the 13 new ones are the 8 control signatures (accepted) and the 5 pins (refused).  The engine agrees with the oracle on all 119.  0 signatures with givens that have no model. |
+| 5 | stdlib boot, default mode | 129 modules, no warning |
+| 6 | new examples, default mode | control09 and control10 load; sig06..sig10 are each refused with "the signature does not entail this row constraint" |
+| 7 | `sbt211 core/test` | `Passed: Total 741, Failed 0, Errors 0, Passed 741`, 139 s (16 `TestSigEntail`, 11 `TestSigEntailDiff`) |
+
+The 25 probe modules of the investigation give the same verdicts here as on the Scala 3
+branch: 12 that used to be "NO VERDICT" are decided (7 load, 5 are refused), and the 4
+still "NO VERDICT" are the shapes the check still drops.
+
+Still dropped, as on the Scala 3 branch: two literal column sets on the right of one
+partition, and a part or a left-hand side that is neither a row variable nor a literal
+(`f Int`).
+
+Not on this branch:
+
+| Item | Where it is |
+|---|---|
+| the Lean proof (`wanted_enc_iff`, `given_enc_iff`) | `tracker/lean/Rowpartition/LitLhs.lean` on the Scala 3 branch |
+| the note `tracker/SIG-LITLHS.md` | Scala 3 branch |
+| `TestInterfaceKey` | not on this branch (section 5); its suffix assertion is the interface-key property in `TestSigEntail` |
+
+`backport/.classpath` was not regenerated: it still names the `ermine-scala-wt-backport`
+checkout.  The sweep used an equivalent classpath built outside the tree.

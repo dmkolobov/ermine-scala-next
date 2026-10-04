@@ -96,6 +96,24 @@ object TestSigEntail extends Properties("Ermine signature entailment") {
       "let localWith : forall r t. r <- ((|health|), t) => {..r} -> Int\n" +
       "    localWith r = r ! health\nin localWith { position = 1.0, health = 10 }", imps)
 
+  /* ---- a literal column set on the LEFT of a partition ----------------------------- *
+   * A join against a literal row leaves `(|k|) <- (x, y)` in the residual.  Before
+   * 2026-10 the check dropped it, warned, and accepted both of these. */
+  /* SCALA 2.11: `private`, for the same reason as `imps` above. */
+  private val relImps: Map[String, ImportSpec] = Map("Builtin" -> all, "Test" -> all, "Prelude" -> all)
+
+  property("literal left: an honest join against a projection loads") =
+    typeChecks("field demoKey : Int\n" +
+      "keepKey : Has inputRow (|demoKey|) => Relation inputRow -> Relation inputRow\n" +
+      "keepKey rows = join (rows) (project {demoKey} rows)",
+      "keepKey", relImps)
+
+  property("literal left: a join declared to return a literal row is REJECTED") =
+    rejects(typeChecks("field jlA : Int\nfield jlB : Int\n" +
+      "joinLit : Relation r1 -> Relation r2 -> Relation (|jlA, jlB|)\n" +
+      "joinLit x y = join x y",
+      "joinLit", relImps))
+
   /* ---- the flag ------------------------------------------------------------------ *
    * `off` is the shipped pre-S3 behaviour: the same module the default rejects is
    * ACCEPTED, and the two fixtures run in ONE JVM with no `System.setProperty`. */
@@ -135,13 +153,15 @@ object TestSigEntail extends Properties("Ermine signature entailment") {
 
   /** `TestInterfaceKey` is NOT on this branch (its warm-load step deadlocks the 2.11 module
     * loader, BACKPORT.md), so its one S3 assertion lives here: `error` -- and only `error` --
-    * APPENDS `|sigEntail=error` to the interface key, and the staleness test is `contains`, so
-    * an `.ei` written under `error` still matches under `off` while one written under `off`
-    * is rebuilt under `error`.  It reads the PROCESS default, which is what `Session` reads
-    * (S3 review D5), so the property states the implication rather than a literal. */
+    * APPENDS `|sigEntail=error.2` to the interface key.  The staleness test is `key contains
+    * interfaceKey` on an `Option`, i.e. equality, so an `.ei` written under one mode is
+    * rebuilt under the other, in both directions; the `.2` (2026-10, the literal-left
+    * change) rebuilds every interface written under the old suffix once.  It reads the
+    * PROCESS default, which is what `Session` reads (S3 review D5), so the property states
+    * the implication rather than a literal. */
   property("interface key: `error` appends the suffix, and nothing else does") = secure {
     val key = com.clarifi.reporting.ermine.session.Session.interfaceKey
-    val suffix = "|sigEntail=error"
+    val suffix = "|sigEntail=error.2"
     val header = com.clarifi.reporting.ermine.session.Session.interfaceHeader
     ((key.endsWith(suffix) ?= (SigEntail.defaultMode == SigEntail.Error)) :| key) &&
     ((key.indexOf(suffix) ?= key.lastIndexOf(suffix)) :| ("appended once: " + key)) &&

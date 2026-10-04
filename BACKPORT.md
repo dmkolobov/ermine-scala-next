@@ -48,7 +48,7 @@ per-label decision procedure), Constraints.LabelSearch (the one-hot engine
 lifted out of decideLabel so one search decides both satisfiability and
 entailment), the two call sites in Subst.subsumeType (`ann` and `sig`), the
 per-session mode SessionEnv.sigEntail -> SubstEnv.sigEntail, and
-Session.interfaceKey's `|sigEntail=error` suffix.
+Session.interfaceKey's `|sigEntail=error.2` suffix (`.2` since 2026-10-03, SIG-ENTAIL-2.11.md section 7).
   - DEFAULT `error` (-Dermine.sigEntail=off|warn|error); `off` is byte-identical
     to the pre-S3 behaviour and `warn` prints the probe records and accepts.
   - the mode is a SESSION option, not a read-once flag, so one JVM holds a
